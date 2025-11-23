@@ -5,12 +5,20 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+iced = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced", features = [
+    "tokio",
+    "image",
+] }
+iced_winit = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced" }
+iced_debug = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced" }
+iced_devtools = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced" }
 futures = "0.3.31"
-iced = { version = "0.13.1", features = ["tokio"] }
-thiserror = "2.0.17"
 tokio = { version = "1.48.0", features = ["full"] }
+thiserror = "2.0.17"
 windows = { version = "0.62.2", features = [
     "Win32",
+    "Win32_UI_Shell",
+    "Win32_System_Com",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
@@ -22,3 +30,4 @@ windows = { version = "0.62.2", features = [
     "System",
 ] }
 windows-core = "0.62.2"
+bytes = "1.11.0"

@@ -4,7 +4,7 @@ use crate::capture_providers::{
     CaptureError,
     windows::{
         capture::WindowsCaptureProvider,
-        d3d11_utils::{create_d3d_device, native_to_winrt_d3d11device, user_pick_capture_item},
+        d3d11_utils::{create_d3d_device, native_to_winrt_d3d11device},
     },
 };
 
@@ -47,16 +47,14 @@ impl WindowsCaptureProviderBuilder {
         Ok(self)
     }
 
-    pub async fn with_user_picked_capture_item(mut self) -> Result<Self> {
-        let item_result = user_pick_capture_item().await;
-        self.capture_item = Some(item_result?);
+    pub fn with_default_capture_item(mut self) -> Result<Self> {
+        self.capture_item = None;
         Ok(self)
     }
 
     /// Must be called from the main thread.
-    pub fn build_from_main_thread(self) -> Result<WindowsCaptureProvider> {
+    pub fn build(self) -> Result<WindowsCaptureProvider> {
         let device = self.device.ok_or(BuilderError::MissingDevice)?;
-        let item = self.capture_item.ok_or(BuilderError::MissingCaptureItem)?;
-        WindowsCaptureProvider::new_from_main_thread(device, item).map_err(Into::into)
+        WindowsCaptureProvider::new(device, self.capture_item).map_err(Into::into)
     }
 }

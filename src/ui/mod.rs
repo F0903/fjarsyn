@@ -1,3 +1,3 @@
 mod app;
 
-pub(crate) use app::run;
+pub(crate) use app::App;

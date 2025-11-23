@@ -1,11 +1,14 @@
 use std::sync::Arc;
-
 use tokio::sync::Mutex;
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 
 use crate::capture_providers::CaptureError;
 
 mod capture_providers;
 mod ui;
+mod utils;
+
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
@@ -17,24 +20,22 @@ enum Error {
     WindowsError(#[from] windows_core::Error),
     #[error("UI error: {0}")]
     UiError(#[from] iced::Error),
+    #[error("UI window management error: {0}")]
+    UiWindowMgmtError(#[from] iced_winit::Error),
+    #[error("Other error: {0}")]
+    OtherError(#[from] Box<dyn std::error::Error>),
 }
 
-fn main() -> Result<(), Error> {
-    let main_rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| CaptureError::FailedToInitialize)
-        .unwrap();
+fn main() -> Result<()> {
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? }
 
-    let windows_capture = main_rt.block_on(async {
-        capture_providers::windows::WindowsCaptureProviderBuilder::new()
-            .with_default_device()?
-            .with_user_picked_capture_item()
-            .await?
-            .build_from_main_thread()
-    })?;
+    let windows_capture = capture_providers::windows::WindowsCaptureProviderBuilder::new()
+        .with_default_device()?
+        .with_default_capture_item()?
+        .build()?;
     let windows_capture = Arc::new(Mutex::new(windows_capture));
 
-    ui::run("loki", windows_capture)?;
+    let app = ui::App::new(windows_capture)?;
+    app.run();
     Ok(())
 }

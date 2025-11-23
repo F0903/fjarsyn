@@ -11,6 +11,12 @@ pub enum CaptureError {
     AlreadyCapturing,
     #[error("Not capturing")]
     NotCapturing,
+    #[error("No frame pool available")]
+    NoFramePool,
+    #[error("No capture item available")]
+    NoCaptureItem,
+    #[error("Already initialized")]
+    AlreadyInitialized,
     #[error("Windows error: {0}")]
     WindowsError(#[from] windows_core::Error),
 }
