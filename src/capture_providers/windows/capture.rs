@@ -7,7 +7,7 @@ use windows::{
         Capture::*,
         DirectX::{Direct3D11::*, DirectXPixelFormat},
     },
-    Win32::Graphics::Direct3D11::*,
+    Win32::{Graphics::Direct3D11::*, System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess},
     core::*,
 };
 
@@ -104,6 +104,7 @@ impl WindowsCaptureProvider {
                     }
                 };
 
+                // Direct3D11CaptureFrame → IDirect3DSurface
                 let surface = match frame.Surface() {
                     Ok(surface) => surface,
                     Err(err) => {
@@ -112,10 +113,20 @@ impl WindowsCaptureProvider {
                     }
                 };
 
-                let texture: ID3D11Texture2D = match surface.cast() {
+                // IDirect3DSurface → IDirect3DDxgiInterfaceAccess
+                let access: IDirect3DDxgiInterfaceAccess = match surface.cast() {
+                    Ok(access) => access,
+                    Err(err) => {
+                        eprintln!("Failed to cast surface to access: {}", err);
+                        return Ok(());
+                    }
+                };
+
+                // IDirect3DDxgiInterfaceAccess → ID3D11Texture2D
+                let texture: ID3D11Texture2D = match unsafe { access.GetInterface() } {
                     Ok(texture) => texture,
                     Err(err) => {
-                        eprintln!("Failed to cast surface to texture: {}", err);
+                        eprintln!("Failed to cast access to texture: {}", err);
                         return Ok(());
                     }
                 };
@@ -135,15 +146,6 @@ impl WindowsCaptureProvider {
                     texture.as_raw()
                 );
 
-                let desc = unsafe {
-                    let mut d = std::mem::zeroed::<D3D11_TEXTURE2D_DESC>();
-                    texture.GetDesc(&mut d);
-                    d.BindFlags = 0;
-                    d.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
-                    d.Usage = D3D11_USAGE_STAGING;
-                    d
-                };
-
                 let device = unsafe {
                     match texture.GetDevice() {
                         Ok(device) => device,
@@ -153,6 +155,22 @@ impl WindowsCaptureProvider {
                         }
                     }
                 };
+
+                let desc = unsafe {
+                    let mut d = std::mem::zeroed::<D3D11_TEXTURE2D_DESC>();
+                    texture.GetDesc(&mut d);
+                    d.BindFlags = 0;
+                    d.MiscFlags = 0;
+                    d.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
+                    d.Usage = D3D11_USAGE_STAGING;
+                    d.MipLevels = 1;
+                    d.ArraySize = 1;
+                    d.SampleDesc.Count = 1;
+                    d.SampleDesc.Quality = 0;
+                    d
+                };
+
+                //TODO: fix crash
 
                 let staging_tex = { staging_tex_ptr.blocking_read().clone() };
                 let staging_tex = match staging_tex {
