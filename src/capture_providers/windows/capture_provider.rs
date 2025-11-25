@@ -13,7 +13,7 @@ use windows::{
 
 use crate::capture_providers::{
     CaptureError, CaptureResult,
-    shared::{Frame, Vector2},
+    shared::{BytesPerPixel, Frame, PixelFormat, ToDirectXPixelFormat, Vector2},
     windows::{WindowsCaptureStream, d3d11_utils::read_texture},
 };
 
@@ -35,8 +35,7 @@ pub struct WindowsCaptureProvider {
 
 impl WindowsCaptureProvider {
     const FRAME_COUNT: i32 = 2;
-    const PIXEL_FORMAT: DirectXPixelFormat = DirectXPixelFormat::B8G8R8A8UIntNormalized;
-    const BYTES_PER_PIXEL: usize = 4; // Match the pixel format, 4 bytes per pixel for BGRA8
+    const PIXEL_FORMAT: PixelFormat = PixelFormat::BGRA8;
 
     pub fn new(device: IDirect3DDevice, item: Option<GraphicsCaptureItem>) -> CaptureResult<Self> {
         let (stream_close_tx, stream_close_rx) = tokio::sync::mpsc::channel(32);
@@ -63,7 +62,7 @@ impl WindowsCaptureProvider {
 
         let frame_pool = Direct3D11CaptureFramePool::Create(
             &self.device,
-            Self::PIXEL_FORMAT,
+            Self::PIXEL_FORMAT.to_directx_pixel_format(),
             Self::FRAME_COUNT,
             size,
         )?;
@@ -207,11 +206,12 @@ impl WindowsCaptureProvider {
                     }
                 };
 
-                let data = read_texture::<{ Self::BYTES_PER_PIXEL }>(
+                let data = read_texture(
                     &context,
                     texture,
                     staging_tex,
                     &desc,
+                    Self::PIXEL_FORMAT.bytes_per_pixel(),
                 )
                 .expect("Unable to read texture into byte array!");
 

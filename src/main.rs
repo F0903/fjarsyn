@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 
 use crate::capture_providers::CaptureError;
 
@@ -22,20 +21,21 @@ enum Error {
     UiError(#[from] iced::Error),
     #[error("UI window management error: {0}")]
     UiWindowMgmtError(#[from] iced_winit::Error),
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
     #[error("Other error: {0}")]
     OtherError(#[from] Box<dyn std::error::Error>),
 }
 
 fn main() -> Result<()> {
-    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? }
-
     let windows_capture = capture_providers::windows::WindowsCaptureProviderBuilder::new()
         .with_default_device()?
         .with_default_capture_item()?
         .build()?;
     let windows_capture = Arc::new(Mutex::new(windows_capture));
 
-    let app = ui::App::new(windows_capture)?;
-    app.run();
+    let app = ui::app::App::new(windows_capture)?;
+    app.run()?;
+
     Ok(())
 }

@@ -1,3 +1,1 @@
-mod app;
-
-pub(crate) use app::App;
+pub mod app;

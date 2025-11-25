@@ -1,10 +1,4 @@
-use crate::capture_providers::shared::{Rect, Vector2};
-
-#[derive(Debug, Clone)]
-pub enum PixelFormat {
-    RGBA8,
-    BGRA8,
-}
+use crate::capture_providers::shared::{PixelFormat, Rect, Vector2};
 
 #[derive(Debug, Clone)]
 pub struct Frame {

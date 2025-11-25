@@ -1,6 +1,5 @@
 use std::mem::MaybeUninit;
 
-use bytes::Bytes;
 use windows::{
     Graphics::{
         Capture::{GraphicsCaptureItem, GraphicsCapturePicker},
@@ -103,11 +102,12 @@ pub(crate) fn user_pick_capture_item(
     Ok(item_future)
 }
 
-pub(super) fn read_texture<const BYTES_PER_PIXEL: usize>(
+pub(super) fn read_texture(
     context: &ID3D11DeviceContext,
     source_tex: ID3D11Texture2D,
     staging_tex: ID3D11Texture2D,
     tex_desc: &D3D11_TEXTURE2D_DESC,
+    bytes_per_pixel: u32,
 ) -> std::result::Result<Vec<u8>, crate::CaptureError> {
     unsafe {
         context.CopyResource(&staging_tex, &source_tex);
@@ -123,7 +123,7 @@ pub(super) fn read_texture<const BYTES_PER_PIXEL: usize>(
         let mapped = mapped.assume_init_ref();
 
         let height = tex_desc.Height as usize;
-        let bytes_per_row = tex_desc.Width as usize * BYTES_PER_PIXEL; // e.g., BGRA8
+        let bytes_per_row = tex_desc.Width as usize * bytes_per_pixel as usize;
         let row_pitch = mapped.RowPitch as usize;
         let total_bytes = bytes_per_row * height;
 
