@@ -1,13 +1,11 @@
 use std::env;
+
 use winres::{VersionInfo, WindowsResource};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn normalized_version_components(version: &str) -> [u16; 4] {
-    let numeric = version
-        .split(|c| c == '-' || c == '+')
-        .next()
-        .unwrap_or(version);
+    let numeric = version.split(|c| c == '-' || c == '+').next().unwrap_or(version);
     let mut parts = [0u16; 4];
     for (idx, piece) in numeric.split('.').take(4).enumerate() {
         if let Ok(value) = piece.parse::<u16>() {

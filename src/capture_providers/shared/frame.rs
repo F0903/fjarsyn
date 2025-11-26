@@ -1,8 +1,9 @@
+use bytes::Bytes;
+
 use crate::{
     capture_providers::shared::{PixelFormat, Rect, Vector2},
     utils::image_utils::ensure_image_rgba,
 };
-use bytes::Bytes;
 
 #[derive(Debug, Clone)]
 pub struct Frame {
@@ -32,12 +33,6 @@ impl Frame {
         timestamp: i64,
         dirty_rects: Vec<Rect<i32>>,
     ) -> Self {
-        Frame {
-            data,
-            format,
-            size,
-            timestamp,
-            dirty_rects,
-        }
+        Frame { data, format, size, timestamp, dirty_rects }
     }
 }

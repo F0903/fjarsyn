@@ -1,4 +1,5 @@
 use std::{mem::MaybeUninit, sync::Arc};
+
 use tokio::sync::{RwLock, mpsc::error::TryRecvError};
 use windows::{
     Foundation::TypedEventHandler,
@@ -36,7 +37,7 @@ impl WindowsCaptureProvider {
     pub fn new(device: IDirect3DDevice, item: Option<GraphicsCaptureItem>) -> CaptureResult<Self> {
         let (stream_close_tx, stream_close_rx) = tokio::sync::mpsc::channel(32);
         Ok(Self {
-            device: device,
+            device,
             frame_pool: None,
             capture_item: item,
             session: None,
@@ -140,12 +141,7 @@ impl WindowsCaptureProvider {
                     }
                 };
 
-                println!(
-                    "Frame: {} x {}, ptr={:?}",
-                    size.Width,
-                    size.Height,
-                    texture.as_raw()
-                );
+                println!("Frame: {} x {}, ptr={:?}", size.Width, size.Height, texture.as_raw());
 
                 let device = unsafe {
                     match texture.GetDevice() {
@@ -184,9 +180,8 @@ impl WindowsCaptureProvider {
                             }
                         }
 
-                        let staging_tex = tex
-                            .assume_init()
-                            .expect("Failed to create staging texture!");
+                        let staging_tex =
+                            tex.assume_init().expect("Failed to create staging texture!");
                         *staging_tex_ptr.blocking_write() = Some(staging_tex.clone());
                         staging_tex
                     },
@@ -229,10 +224,7 @@ impl WindowsCaptureProvider {
                 let send_result = tx.blocking_send(Frame::new_ensure_rgba(
                     data,
                     crate::capture_providers::shared::PixelFormat::BGRA8,
-                    Vector2 {
-                        x: size.Width,
-                        y: size.Height,
-                    },
+                    Vector2 { x: size.Width, y: size.Height },
                     sys_time.Duration,
                     dirty_regions,
                 ));

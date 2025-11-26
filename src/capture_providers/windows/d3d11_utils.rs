@@ -113,13 +113,7 @@ pub(super) fn read_texture(
         context.CopyResource(&staging_tex, &source_tex);
 
         let mut mapped = MaybeUninit::uninit();
-        context.Map(
-            &staging_tex,
-            0,
-            D3D11_MAP_READ,
-            0,
-            Some(mapped.as_mut_ptr()),
-        )?;
+        context.Map(&staging_tex, 0, D3D11_MAP_READ, 0, Some(mapped.as_mut_ptr()))?;
         let mapped = mapped.assume_init_ref();
 
         let height = tex_desc.Height as usize;

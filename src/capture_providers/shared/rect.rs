@@ -9,14 +9,8 @@ pub struct Rect<N = f32> {
 impl From<windows::Foundation::Rect> for Rect<f32> {
     fn from(rect: windows::Foundation::Rect) -> Self {
         Rect {
-            position: Vector2 {
-                x: rect.X,
-                y: rect.Y,
-            },
-            size: Vector2 {
-                x: rect.Width,
-                y: rect.Height,
-            },
+            position: Vector2 { x: rect.X, y: rect.Y },
+            size: Vector2 { x: rect.Width, y: rect.Height },
         }
     }
 }
@@ -35,14 +29,8 @@ impl From<Rect<f32>> for windows::Foundation::Rect {
 impl From<windows::Graphics::RectInt32> for Rect<i32> {
     fn from(rect: windows::Graphics::RectInt32) -> Self {
         Rect {
-            position: Vector2 {
-                x: rect.X,
-                y: rect.Y,
-            },
-            size: Vector2 {
-                x: rect.Width,
-                y: rect.Height,
-            },
+            position: Vector2 { x: rect.X, y: rect.Y },
+            size: Vector2 { x: rect.Width, y: rect.Height },
         }
     }
 }

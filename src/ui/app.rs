@@ -1,3 +1,17 @@
+use std::{
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
+
+use bytes::Bytes;
+use iced::{
+    Element, Length, Program, Subscription, Task, executor,
+    widget::{self, button, column, container, row},
+    window,
+};
+use tokio::sync::Mutex;
+use windows::Graphics::Capture::GraphicsCaptureItem;
+
 use crate::{
     capture_providers::{
         shared::{Frame, PixelFormat, Vector2},
@@ -5,16 +19,6 @@ use crate::{
     },
     ui::frame_viewer,
 };
-use bytes::Bytes;
-use iced::widget::{self, button, column, container, row};
-use iced::window;
-use iced::{Element, Length, Program, Subscription, Task, executor};
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
-use tokio::sync::Mutex;
-use windows::Graphics::Capture::GraphicsCaptureItem;
 
 #[derive(Debug, Clone)]
 struct FrameReceiverSubData {
@@ -70,10 +74,7 @@ impl App {
     }
 
     fn create_frame_receiver_subscription(data: &FrameReceiverSubData) -> WindowsCaptureStream {
-        data.capture
-            .blocking_lock()
-            .create_stream()
-            .expect("Failed to create stream!")
+        data.capture.blocking_lock().create_stream().expect("Failed to create stream!")
     }
 
     pub fn run(self) -> crate::Result<()> {
@@ -269,9 +270,7 @@ impl Program for App {
     ) -> Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         let control_buttons: Element<'a, Self::Message, Self::Theme, Self::Renderer> = container(
             row([
-                button("Start Capture")
-                    .on_press(Message::StartCapture)
-                    .into(),
+                button("Start Capture").on_press(Message::StartCapture).into(),
                 button("Stop Capture").on_press(Message::StopCapture).into(),
             ])
             .spacing(10),

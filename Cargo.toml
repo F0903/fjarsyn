@@ -4,9 +4,6 @@ description = "An extremely work-in-progress screen sharing application."
 version = "0.1.0"
 edition = "2024"
 
-[toolchain]
-channel = "nightly"
-
 [build-dependencies]
 winres = "0.1"
 

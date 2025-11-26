@@ -1,12 +1,11 @@
 use bytes::Bytes;
-use iced::advanced;
-use iced::advanced::widget::Tree;
 use iced::{
-    Element, Length, Rectangle, Size,
+    Element, Length, Rectangle, Size, advanced,
     advanced::{
         Widget,
         layout::{self, Layout},
         mouse, renderer,
+        widget::Tree,
     },
 };
 
@@ -18,11 +17,7 @@ pub struct FrameViewer {
 
 impl FrameViewer {
     pub fn new(frame_data: Bytes, width: u32, height: u32) -> Self {
-        Self {
-            frame_data,
-            width,
-            height,
-        }
+        Self { frame_data, width, height }
     }
 }
 
@@ -35,10 +30,7 @@ where
     Renderer: iced::advanced::image::Renderer<Handle = iced::advanced::image::Handle>,
 {
     fn size(&self) -> iced::Size<Length> {
-        iced::Size::new(
-            Length::Fixed(self.width as f32),
-            Length::Fixed(self.height as f32),
-        )
+        iced::Size::new(Length::Fixed(self.width as f32), Length::Fixed(self.height as f32))
     }
 
     fn layout(

@@ -1,5 +1,6 @@
-use crate::capture_providers::shared::Frame;
 use futures::Stream;
+
+use crate::capture_providers::shared::Frame;
 
 #[derive(Debug)]
 pub struct WindowsCaptureStream {
@@ -15,11 +16,7 @@ impl WindowsCaptureStream {
         channel: tokio::sync::mpsc::Receiver<Frame>,
         frame_arrived_token: i64,
     ) -> Self {
-        Self {
-            closer: Some(closer),
-            channel,
-            frame_arrived_token,
-        }
+        Self { closer: Some(closer), channel, frame_arrived_token }
     }
 }
 
