@@ -279,18 +279,15 @@ impl Program for App {
         .center_x(Length::Fill)
         .into();
 
-        let frame_data = match &state.frame_data {
-            Some(frame_data) => frame_data.clone(),
-            None => return widget::text("No preview available.").into(),
-        };
-
-        let screen_share_preview: Element<'a, Self::Message, Self::Theme, Self::Renderer> =
-            frame_viewer::frame_viewer(
-                frame_data,
+        let screen_share_preview = match &state.frame_data {
+            Some(frame_data) => frame_viewer::frame_viewer(
+                frame_data.clone(),
                 state.frame_dimensions.x as u32,
                 state.frame_dimensions.y as u32,
             )
-            .into();
+            .into(),
+            None => widget::text("No preview available.").into(),
+        };
 
         column([control_buttons, screen_share_preview]).into()
     }
