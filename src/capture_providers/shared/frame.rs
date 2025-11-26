@@ -5,6 +5,7 @@ use crate::{
     utils::image_utils::ensure_image_rgba,
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Frame {
     pub data: Bytes,

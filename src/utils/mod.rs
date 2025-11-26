@@ -1,4 +1,4 @@
 pub(crate) mod image_utils;
-mod unsafe_send_wrapper;
 
-pub(crate) use unsafe_send_wrapper::UnsafeSendWrapper;
+#[allow(dead_code)]
+mod unsafe_send_wrapper;

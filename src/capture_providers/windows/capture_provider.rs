@@ -218,16 +218,19 @@ impl WindowsCaptureProvider {
                     Ok(regions) => regions.into_iter().map(Into::into).collect(),
                     Err(err) => {
                         eprintln!("Failed to get dirty regions: {}", err);
-                        Vec::new()
+                        Vec::new() // Dirty regions are currently not used, and should generally be safe to skip in this case.
                     }
                 };
-                let send_result = tx.blocking_send(Frame::new_ensure_rgba(
+
+                let frame = Frame::new_ensure_rgba(
                     data,
                     crate::capture_providers::shared::PixelFormat::BGRA8,
                     Vector2 { x: size.Width, y: size.Height },
                     sys_time.Duration,
                     dirty_regions,
-                ));
+                );
+
+                let send_result = tx.blocking_send(frame);
                 if let Err(err) = send_result {
                     eprintln!("Could not send frame! {}", err);
                 }

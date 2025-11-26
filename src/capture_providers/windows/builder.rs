@@ -14,8 +14,6 @@ type Result<T> = std::result::Result<T, BuilderError>;
 pub enum BuilderError {
     #[error("Missing device")]
     MissingDevice,
-    #[error("Missing capture item")]
-    MissingCaptureItem,
     #[error("Initialization error: {0}")]
     InitializationError(#[from] CaptureError),
     #[error("Windows error: {0}")]
@@ -32,6 +30,7 @@ impl WindowsCaptureProviderBuilder {
         WindowsCaptureProviderBuilder { device: None, capture_item: None }
     }
 
+    #[allow(dead_code)]
     pub fn with_device(mut self, device: IDirect3DDevice) -> Self {
         self.device = Some(device);
         self

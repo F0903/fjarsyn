@@ -62,6 +62,7 @@ pub(super) fn native_to_winrt_d3d11device(device: &ID3D11Device) -> Result<IDire
     unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device)?.cast() }
 }
 
+#[allow(dead_code)]
 pub(super) fn winrt_to_native_d3d11device(device: &IDirect3DDevice) -> Result<ID3D11Device> {
     // WinRT device implements IDirect3DDxgiInterfaceAccess, which lets you retrieve
     // the underlying DXGI/D3D interfaces.
