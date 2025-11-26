@@ -1,10 +1,11 @@
 use crate::{
     capture_providers::{
-        shared::{BytesPerPixel, Frame, PixelFormat, Vector2},
+        shared::{Frame, PixelFormat, Vector2},
         windows::{WindowsCaptureProvider, WindowsCaptureStream, user_pick_capture_item},
     },
-    utils::image_utils::ensure_image_rgba,
+    ui::frame_viewer,
 };
+use bytes::Bytes;
 use iced::widget::{self, button, column, container, row};
 use iced::window;
 use iced::{Element, Length, Program, Subscription, Task, executor};
@@ -49,7 +50,7 @@ pub enum Message {
 pub(crate) struct MutableState {
     pub active_window_handle: Option<u64>,
     pub capturing: bool,
-    pub frame_buffer: Vec<u8>,
+    pub frame_data: Option<Bytes>,
     pub frame_dimensions: Vector2<i32>,
     pub frame_format: PixelFormat,
 }
@@ -113,7 +114,7 @@ impl Program for App {
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
         (
             MutableState {
-                frame_buffer: Vec::new(),
+                frame_data: None,
                 frame_dimensions: Vector2::new(0, 0),
                 frame_format: PixelFormat::BGRA8,
                 capturing: false,
@@ -246,42 +247,11 @@ impl Program for App {
                 state.capturing = false;
                 Task::none()
             }
-            Message::FrameReceived(mut frame) => {
-                if let Err(err) = ensure_image_rgba(&mut frame.data, &mut frame.format) {
-                    return Task::done(Message::Error(format!(
-                        "Frame format conversion failed: {}",
-                        err
-                    )));
-                }
+            Message::FrameReceived(frame) => {
+                // Frame is already ensured to be RGBA by the provider
                 state.frame_format = frame.format;
-
-                let bytes_per_pixel = state.frame_format.bytes_per_pixel() as usize;
-
-                if state.frame_dimensions != frame.size {
-                    state.frame_dimensions = frame.size;
-                    state.frame_buffer = frame.data;
-                } else {
-                    if frame.dirty_rects.is_empty() {
-                        state.frame_buffer.copy_from_slice(&frame.data);
-                    } else {
-                        for rect in &frame.dirty_rects {
-                            for y in rect.position.y..(rect.position.y + rect.size.y) {
-                                let stride = state.frame_dimensions.x as usize * bytes_per_pixel;
-
-                                let row_start_in_buffer = y as usize * stride;
-                                let col_start_in_buffer =
-                                    rect.position.x as usize * bytes_per_pixel;
-
-                                let start_index = row_start_in_buffer + col_start_in_buffer;
-                                let end_index =
-                                    start_index + (rect.size.x as usize * bytes_per_pixel);
-
-                                state.frame_buffer[start_index..end_index]
-                                    .copy_from_slice(&frame.data[start_index..end_index]);
-                            }
-                        }
-                    }
-                }
+                state.frame_dimensions = frame.size;
+                state.frame_data = Some(frame.data);
 
                 Task::none()
             }
@@ -310,17 +280,18 @@ impl Program for App {
         .center_x(Length::Fill)
         .into();
 
+        let frame_data = match &state.frame_data {
+            Some(frame_data) => frame_data.clone(),
+            None => return widget::text("No preview available.").into(),
+        };
+
         let screen_share_preview: Element<'a, Self::Message, Self::Theme, Self::Renderer> =
-            if state.frame_buffer.is_empty() {
-                widget::text("No preview available.").into()
-            } else {
-                widget::image(iced::widget::image::Handle::from_rgba(
-                    state.frame_dimensions.x as u32,
-                    state.frame_dimensions.y as u32,
-                    state.frame_buffer.clone(),
-                ))
-                .into()
-            };
+            frame_viewer::frame_viewer(
+                frame_data,
+                state.frame_dimensions.x as u32,
+                state.frame_dimensions.y as u32,
+            )
+            .into();
 
         column([control_buttons, screen_share_preview]).into()
     }

@@ -1,12 +1,8 @@
 use std::{mem::MaybeUninit, sync::Arc};
-
 use tokio::sync::{RwLock, mpsc::error::TryRecvError};
 use windows::{
     Foundation::TypedEventHandler,
-    Graphics::{
-        Capture::*,
-        DirectX::{Direct3D11::*, DirectXPixelFormat},
-    },
+    Graphics::{Capture::*, DirectX::Direct3D11::*},
     Win32::{Graphics::Direct3D11::*, System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess},
     core::*,
 };
@@ -230,17 +226,16 @@ impl WindowsCaptureProvider {
                         Vec::new()
                     }
                 };
-
-                let send_result = tx.blocking_send(Frame {
+                let send_result = tx.blocking_send(Frame::new_ensure_rgba(
                     data,
-                    format: crate::capture_providers::shared::PixelFormat::BGRA8,
-                    size: Vector2 {
+                    crate::capture_providers::shared::PixelFormat::BGRA8,
+                    Vector2 {
                         x: size.Width,
                         y: size.Height,
                     },
-                    timestamp: sys_time.Duration,
-                    dirty_rects: dirty_regions,
-                });
+                    sys_time.Duration,
+                    dirty_regions,
+                ));
                 if let Err(err) = send_result {
                     eprintln!("Could not send frame! {}", err);
                 }

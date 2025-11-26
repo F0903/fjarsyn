@@ -1,5 +1,3 @@
-use windows::Graphics::{Capture::GraphicsCaptureItem, DirectX::Direct3D11::IDirect3DDevice};
-
 use crate::capture_providers::{
     CaptureError,
     windows::{
@@ -7,6 +5,7 @@ use crate::capture_providers::{
         d3d11_utils::{create_d3d_device, native_to_winrt_d3d11device},
     },
 };
+use windows::Graphics::{Capture::GraphicsCaptureItem, DirectX::Direct3D11::IDirect3DDevice};
 
 type Result<T> = std::result::Result<T, BuilderError>;
 

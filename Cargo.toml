@@ -12,8 +12,10 @@ iced = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced", featur
     "tokio",
     "image",
     "canvas",
+    "advanced",
 ] }
 iced_winit = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced" }
+iced_core = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced" }
 iced_debug = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced" }
 iced_devtools = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced" }
 futures = "0.3.31"

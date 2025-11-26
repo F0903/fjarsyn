@@ -1,1 +1,5 @@
+# Rust artifacts
 /target
+
+# Gemini configuration
+.gemini

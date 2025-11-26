@@ -1888,6 +1888,7 @@ dependencies = [
  "bytes",
  "futures",
  "iced",
+ "iced_core",
  "iced_debug",
  "iced_devtools",
  "iced_winit",
