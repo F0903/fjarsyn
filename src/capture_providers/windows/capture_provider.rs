@@ -1,4 +1,11 @@
-use std::{mem::MaybeUninit, ops::Div, sync::Arc};
+use std::{
+    mem::MaybeUninit,
+    ops::Div,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
 use tokio::sync::{RwLock, mpsc::error::TryRecvError};
 use windows::{
@@ -217,6 +224,28 @@ impl WindowsCaptureProvider {
         // We can't send self raw to the closure, so we need to just copy the staging texture which is inside an Arc Mutex.
         let staging_tex_ptr = self.staging_texture.clone();
 
+        #[cfg(debug_assertions)]
+        let frame_counter = Arc::new(AtomicUsize::new(0));
+        #[cfg(debug_assertions)]
+        let frame_counter_weak = Arc::downgrade(&frame_counter);
+
+        #[cfg(debug_assertions)]
+        tokio::spawn(async move {
+            let mut last_count = 0;
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if let Some(counter) = frame_counter_weak.upgrade() {
+                    let current_count = counter.load(Ordering::Relaxed);
+                    let fps = current_count.wrapping_sub(last_count);
+                    tracing::debug!("Capture stream FPS: {}", fps);
+                    last_count = current_count;
+                } else {
+                    tracing::debug!("Capture stream FPS task exited.");
+                    break;
+                }
+            }
+        });
+
         let frame_pool = match &self.frame_pool {
             Some(frame_pool) => frame_pool,
             None => {
@@ -236,6 +265,9 @@ impl WindowsCaptureProvider {
 
         let frame_arrived_token =
             frame_pool.FrameArrived(&TypedEventHandler::new(move |sender, _args| {
+                #[cfg(debug_assertions)]
+                frame_counter.fetch_add(1, Ordering::Relaxed);
+
                 let sender = match &*sender {
                     Some(sender) => sender,
                     None => {
