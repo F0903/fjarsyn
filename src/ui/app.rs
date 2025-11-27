@@ -78,7 +78,7 @@ impl App {
     }
 
     fn create_frame_receiver_subscription(data: &FrameReceiverSubData) -> WindowsCaptureStream {
-        println!("Creating frame receiver sub with framerate: {}", data.framerate);
+        tracing::info!("Creating frame receiver sub with framerate: {}", data.framerate);
         data.capture
             .blocking_lock()
             .create_stream(data.framerate)
@@ -236,10 +236,10 @@ impl Program for App {
             Message::TryStopCapture => match self.capture.try_lock() {
                 Ok(mut capture) => {
                     if let Err(err) = capture.stop_capture() {
-                        eprintln!("Failed to stop capture: {}", err);
+                        tracing::error!("Failed to stop capture: {}", err);
                     }
                     if let Err(err) = capture.poll_stream_closer() {
-                        eprintln!("Failed to poll stream closer: {}", err);
+                        tracing::error!("Failed to poll stream closer: {}", err);
                     }
 
                     Task::done(Message::CaptureStopped)
@@ -271,7 +271,7 @@ impl Program for App {
                 Task::none()
             }
             Message::Error(err) => {
-                eprintln!("Error: {}", err);
+                tracing::error!("Error: {}", err);
                 Task::none()
             }
         }

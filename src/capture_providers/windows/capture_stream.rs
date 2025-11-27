@@ -16,6 +16,7 @@ impl WindowsCaptureStream {
         channel: tokio::sync::mpsc::Receiver<Frame>,
         frame_arrived_token: i64,
     ) -> Self {
+        tracing::debug!("Creating WindowsCaptureStream with token: {}", frame_arrived_token);
         Self { closer: Some(closer), channel, frame_arrived_token }
     }
 }
@@ -33,8 +34,11 @@ impl Stream for WindowsCaptureStream {
 
 impl Drop for WindowsCaptureStream {
     fn drop(&mut self) {
+        tracing::debug!("Dropping WindowsCaptureStream (token: {})", self.frame_arrived_token);
         if let Some(closer) = self.closer.take() {
-            closer.try_send(self.frame_arrived_token).ok();
+            if let Err(err) = closer.try_send(self.frame_arrived_token) {
+                tracing::warn!("Failed to send stream close signal: {}", err);
+            }
         }
     }
 }

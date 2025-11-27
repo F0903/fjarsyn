@@ -8,6 +8,8 @@ edition = "2024"
 winres = "0.1"
 
 [dependencies]
+tracing = "0.1"
+tracing-subscriber = "0.3"
 iced = { version = "0.14.0-dev", git = "https://github.com/iced-rs/iced", features = [
     "tokio",
     "image",

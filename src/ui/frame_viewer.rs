@@ -58,7 +58,7 @@ where
         let alloc = match renderer.load_image(&img_handle) {
             Ok(alloc) => alloc,
             Err(err) => {
-                eprintln!("Failed to allocate image: {}", err);
+                tracing::error!("Failed to allocate image: {}", err);
                 return;
             }
         };

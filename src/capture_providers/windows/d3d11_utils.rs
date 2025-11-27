@@ -28,6 +28,7 @@ use windows::{
 use windows_core::*;
 
 pub(super) fn create_d3d_device() -> Result<ID3D11Device> {
+    tracing::debug!("Creating D3D11 device...");
     // We’ll request hardware device with default feature levels.
     const FEATURE_LEVELS: &[D3D_FEATURE_LEVEL] = &[
         D3D_FEATURE_LEVEL_11_1,
@@ -54,16 +55,20 @@ pub(super) fn create_d3d_device() -> Result<ID3D11Device> {
         )?;
     }
 
+    tracing::info!("D3D11 device created successfully with feature level: {:?}", chosen_level);
+
     Ok(device.expect("ID3D11Device"))
 }
 
 pub(super) fn native_to_winrt_d3d11device(device: &ID3D11Device) -> Result<IDirect3DDevice> {
+    tracing::trace!("Converting native D3D11 device to WinRT D3D11 device");
     let dxgi_device: IDXGIDevice = device.cast()?;
     unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device)?.cast() }
 }
 
 #[allow(dead_code)]
 pub(super) fn winrt_to_native_d3d11device(device: &IDirect3DDevice) -> Result<ID3D11Device> {
+    tracing::trace!("Converting WinRT D3D11 device to native D3D11 device");
     // WinRT device implements IDirect3DDxgiInterfaceAccess, which lets you retrieve
     // the underlying DXGI/D3D interfaces.
     let access: IDirect3DDxgiInterfaceAccess = device.cast()?;
@@ -96,10 +101,23 @@ impl IntoHWND for u64 {
 pub(crate) fn user_pick_capture_item(
     window: impl IntoHWND,
 ) -> Result<impl Future<Output = Result<GraphicsCaptureItem>>> {
+    tracing::info!("Initializing GraphicsCapturePicker...");
     let picker = GraphicsCapturePicker::new()?;
     let init_with_window: IInitializeWithWindow = picker.cast()?;
     unsafe { init_with_window.Initialize(window.into_hwnd())? };
-    let item_future = async move { picker.PickSingleItemAsync()?.await };
+
+    tracing::info!("Waiting for user to pick capture item...");
+    let item_future = async move {
+        let result = picker.PickSingleItemAsync()?.await;
+        match &result {
+            Ok(item) => tracing::info!(
+                "User picked capture item: {:?}",
+                item.DisplayName().unwrap_or_default()
+            ),
+            Err(e) => tracing::error!("Error picking capture item: {:?}", e),
+        }
+        result
+    };
     Ok(item_future)
 }
 

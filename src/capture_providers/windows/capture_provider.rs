@@ -48,7 +48,7 @@ impl WindowsCaptureProvider {
     }
 
     pub fn set_capture_item(&mut self, capture_item: GraphicsCaptureItem) -> super::Result<()> {
-        println!(
+        tracing::info!(
             "Setting capture item: {}",
             capture_item.DisplayName().unwrap_or("<no name>".into())
         );
@@ -79,7 +79,7 @@ impl WindowsCaptureProvider {
         let surface = match frame.Surface() {
             Ok(surface) => surface,
             Err(err) => {
-                eprintln!("Failed to get surface: {}", err);
+                tracing::error!("Failed to get surface: {}", err);
                 return Ok(());
             }
         };
@@ -88,7 +88,7 @@ impl WindowsCaptureProvider {
         let access: IDirect3DDxgiInterfaceAccess = match surface.cast() {
             Ok(access) => access,
             Err(err) => {
-                eprintln!("Failed to cast surface to access: {}", err);
+                tracing::error!("Failed to cast surface to access: {}", err);
                 return Ok(());
             }
         };
@@ -97,7 +97,7 @@ impl WindowsCaptureProvider {
         let texture: ID3D11Texture2D = match unsafe { access.GetInterface() } {
             Ok(texture) => texture,
             Err(err) => {
-                eprintln!("Failed to cast access to texture: {}", err);
+                tracing::error!("Failed to cast access to texture: {}", err);
                 return Ok(());
             }
         };
@@ -105,18 +105,18 @@ impl WindowsCaptureProvider {
         let size = match frame.ContentSize() {
             Ok(size) => size,
             Err(err) => {
-                eprintln!("Failed to get content size: {}", err);
+                tracing::error!("Failed to get content size: {}", err);
                 return Ok(());
             }
         };
 
-        println!("Frame: {} x {}, ptr={:?}", size.Width, size.Height, texture.as_raw());
+        tracing::debug!("Frame: {} x {}, ptr={:?}", size.Width, size.Height, texture.as_raw());
 
         let device = unsafe {
             match texture.GetDevice() {
                 Ok(device) => device,
                 Err(err) => {
-                    eprintln!("Failed to get device: {}", err);
+                    tracing::error!("Failed to get device: {}", err);
                     return Ok(());
                 }
             }
@@ -144,7 +144,7 @@ impl WindowsCaptureProvider {
                 match device.CreateTexture2D(&desc, None, Some(tex.as_mut_ptr())) {
                     Ok(_) => (),
                     Err(err) => {
-                        eprintln!("Failed to create staging texture: {}", err);
+                        tracing::error!("Failed to create staging texture: {}", err);
                         return Ok(());
                     }
                 }
@@ -159,7 +159,7 @@ impl WindowsCaptureProvider {
             match device.GetImmediateContext() {
                 Ok(context) => context,
                 Err(err) => {
-                    eprintln!("Failed to get immediate context: {}", err);
+                    tracing::error!("Failed to get immediate context: {}", err);
                     return Ok(());
                 }
             }
@@ -177,7 +177,7 @@ impl WindowsCaptureProvider {
         let sys_time = match frame.SystemRelativeTime() {
             Ok(time) => time,
             Err(err) => {
-                eprintln!("Failed to get system relative time: {}", err);
+                tracing::error!("Failed to get system relative time: {}", err);
                 return Ok(());
             }
         };
@@ -185,7 +185,7 @@ impl WindowsCaptureProvider {
         let dirty_regions = match frame.DirtyRegions() {
             Ok(regions) => regions.into_iter().map(Into::into).collect(),
             Err(err) => {
-                eprintln!("Failed to get dirty regions: {}", err);
+                tracing::warn!("Failed to get dirty regions: {}", err);
                 Vec::new() // Dirty regions are currently not used, and should generally be safe to skip in this case.
             }
         };
@@ -200,7 +200,7 @@ impl WindowsCaptureProvider {
 
         let send_result = tx.blocking_send(frame);
         if let Err(err) = send_result {
-            eprintln!("Could not send frame! {}", err);
+            tracing::error!("Could not send frame! {}", err);
         }
 
         Ok(())
@@ -220,7 +220,7 @@ impl WindowsCaptureProvider {
         let frame_pool = match &self.frame_pool {
             Some(frame_pool) => frame_pool,
             None => {
-                eprintln!("No frame pool available!");
+                tracing::error!("No frame pool available!");
                 return Err(WindowsCaptureError::NoFramePool);
             }
         };
@@ -230,7 +230,7 @@ impl WindowsCaptureProvider {
                 Duration: framerate.to_frametime().as_nanos().div(100) as i64,
             })
         {
-            eprintln!("Failed to set min update interval: {}", err);
+            tracing::error!("Failed to set min update interval: {}", err);
             return Err(WindowsCaptureError::SetMinUpdateIntervalFailed(err));
         }
 
@@ -239,7 +239,7 @@ impl WindowsCaptureProvider {
                 let sender = match &*sender {
                     Some(sender) => sender,
                     None => {
-                        eprintln!("No sender provided with FrameArrived!");
+                        tracing::error!("No sender provided with FrameArrived!");
                         return Ok(());
                     }
                 };
@@ -248,13 +248,13 @@ impl WindowsCaptureProvider {
                 let frame = match sender.TryGetNextFrame() {
                     Ok(frame) => frame,
                     Err(err) => {
-                        eprintln!("Failed to get next frame: {}", err);
+                        tracing::error!("Failed to get next frame: {}", err);
                         return Ok(());
                     }
                 };
 
                 if let Err(err) = Self::process_frame(frame, staging_tex_ptr.clone(), tx.clone()) {
-                    eprintln!("Failed to process frame: {}", err);
+                    tracing::error!("Failed to process frame: {}", err);
                 }
 
                 Ok(())
@@ -275,7 +275,7 @@ impl WindowsCaptureProvider {
         let frame_pool = match &self.frame_pool {
             Some(frame_pool) => frame_pool,
             None => {
-                eprintln!("No frame pool set!");
+                tracing::error!("No frame pool set!");
                 return Err(WindowsCaptureError::NoFramePool);
             }
         };
@@ -283,7 +283,7 @@ impl WindowsCaptureProvider {
         let capture_item = match &self.capture_item {
             Some(capture_item) => capture_item,
             None => {
-                eprintln!("No capture item set!");
+                tracing::error!("No capture item set!");
                 return Err(WindowsCaptureError::NoCaptureItem);
             }
         };
