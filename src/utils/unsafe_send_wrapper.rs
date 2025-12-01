@@ -7,11 +7,7 @@ pub struct UnsafeSendWrapper<T>(pub T);
 unsafe impl<T> Send for UnsafeSendWrapper<T> {}
 unsafe impl<T> Sync for UnsafeSendWrapper<T> {}
 
-impl<T> UnsafeSendWrapper<T> {
-    pub fn take_inner(self) -> T {
-        self.0
-    }
-}
+impl<T> UnsafeSendWrapper<T> {}
 
 impl<T> Deref for UnsafeSendWrapper<T> {
     type Target = T;
@@ -26,3 +22,5 @@ impl<T> DerefMut for UnsafeSendWrapper<T> {
         &mut self.0
     }
 }
+
+impl<T: Copy> Copy for UnsafeSendWrapper<T> {}

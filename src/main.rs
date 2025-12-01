@@ -1,32 +1,9 @@
 use std::sync::Arc;
 
+use loki::{Result, capture_providers, ui};
 use tokio::sync::Mutex;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
-
-mod capture_providers;
-mod ui;
-mod utils;
-
-type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug, thiserror::Error)]
-enum Error {
-    #[error("Capture error: {0}")]
-    CaptureError(#[from] capture_providers::CaptureError),
-    #[error("Windows capture builder error: {0}")]
-    WindowsCaptureBuilderError(#[from] capture_providers::windows::BuilderError),
-    #[error("Windows capture error: {0}")]
-    WindowsError(#[from] windows_core::Error),
-    #[error("UI error: {0}")]
-    UiError(#[from] iced::Error),
-    #[error("UI window management error: {0}")]
-    UiWindowMgmtError(#[from] iced_winit::Error),
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
-    #[error("Other error: {0}")]
-    OtherError(#[from] Box<dyn std::error::Error>),
-}
 
 fn main() -> Result<()> {
     let subscriber = FmtSubscriber::builder().with_max_level(Level::TRACE).finish();
@@ -36,7 +13,7 @@ fn main() -> Result<()> {
     tracing::info!("Starting up...");
 
     tracing::info!("Initializing windows capture provider...");
-    let windows_capture = capture_providers::windows::WindowsCaptureProviderBuilder::new()
+    let windows_capture = capture_providers::windows::WgcCaptureProviderBuilder::new()
         .with_default_device()?
         .with_default_capture_item()?
         .build()?;

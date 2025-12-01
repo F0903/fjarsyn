@@ -43,7 +43,7 @@ pub enum Message {
     PlatformUserPickedCaptureItem(Result<PlatformCaptureItem, String>),
     TryStartCapture(PlatformCaptureItem),
     TryStopCapture,
-    FrameReceived(Frame),
+    FrameReceived(Arc<Frame>),
     FrameRateSelected(CaptureFramerate),
 
     WindowOpened(window::Id),
@@ -53,7 +53,7 @@ pub enum Message {
 }
 
 #[derive(Debug)]
-pub(crate) struct MutableState {
+pub struct MutableState {
     pub active_window_handle: Option<u64>,
     pub capturing: bool,
     pub capture_frame_rate: CaptureFramerate,
@@ -64,7 +64,7 @@ pub(crate) struct MutableState {
 }
 
 #[derive(Debug)]
-pub(crate) struct App {
+pub struct App {
     capture: Arc<Mutex<PlatformCaptureProvider>>,
 }
 
@@ -137,7 +137,7 @@ impl Program for App {
                     },
                     Self::create_frame_receiver_subscription,
                 )
-                .map(Message::FrameReceived),
+                .map(|f| Message::FrameReceived(Arc::new(f))),
             );
         }
         subscriptions.push(iced::window::open_events().map(Message::WindowOpened));
@@ -251,9 +251,9 @@ impl Program for App {
             }
             Message::FrameReceived(frame) => {
                 // Frame is already ensured to be RGBA by the provider
-                state.frame_format = frame.format;
+                state.frame_format = frame.format.clone();
                 state.frame_dimensions = frame.size;
-                state.frame_data = Some(frame.data);
+                state.frame_data = Some(Bytes::copy_from_slice(&frame.data));
 
                 Task::none()
             }

@@ -12,11 +12,11 @@ pub enum CaptureError {
 }
 
 #[cfg(target_os = "windows")]
-pub use windows::WindowsCaptureProvider as PlatformCaptureProvider;
+pub use windows::WgcCaptureProvider as PlatformCaptureProvider;
 #[cfg(target_os = "windows")]
 pub use windows::WindowsCaptureStream as PlatformCaptureStream;
 #[cfg(target_os = "windows")]
 pub use windows::user_pick_capture_item as user_pick_platform_capture_item;
 
 #[cfg(target_os = "windows")]
-pub type PlatformCaptureItem = <windows::WindowsCaptureProvider as CaptureProvider>::CaptureItem;
+pub type PlatformCaptureItem = <PlatformCaptureProvider as CaptureProvider>::CaptureItem;

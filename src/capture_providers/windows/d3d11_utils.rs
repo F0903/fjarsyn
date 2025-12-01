@@ -18,9 +18,11 @@ use windows::{
                 ID3D11Texture2D,
             },
             Dxgi::IDXGIDevice,
+            Gdi::{MONITOR_DEFAULTTOPRIMARY, MonitorFromWindow},
         },
-        System::WinRT::Direct3D11::{
-            CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
+        System::WinRT::{
+            Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess},
+            Graphics::Capture::IGraphicsCaptureItemInterop,
         },
         UI::Shell::IInitializeWithWindow,
     },
@@ -29,7 +31,6 @@ use windows_core::*;
 
 pub(super) fn create_d3d_device() -> Result<ID3D11Device> {
     tracing::debug!("Creating D3D11 device...");
-    // We’ll request hardware device with default feature levels.
     const FEATURE_LEVELS: &[D3D_FEATURE_LEVEL] = &[
         D3D_FEATURE_LEVEL_11_1,
         D3D_FEATURE_LEVEL_11_0,
@@ -55,9 +56,21 @@ pub(super) fn create_d3d_device() -> Result<ID3D11Device> {
         )?;
     }
 
-    tracing::info!("D3D11 device created successfully with feature level: {:?}", chosen_level);
+    let device = device.expect("ID3D11Device");
+    let dxgi_device: IDXGIDevice = device.cast()?;
+    let adapter = unsafe { dxgi_device.GetAdapter()? };
 
-    Ok(device.expect("ID3D11Device"))
+    let desc = unsafe { adapter.GetDesc()? };
+    let description = String::from_utf16_lossy(&desc.Description);
+    let description = description.trim_matches(char::from(0));
+
+    tracing::info!(
+        "D3D11 device created successfully on adapter: '{}' with feature level: {:?}",
+        description,
+        chosen_level
+    );
+
+    Ok(device)
 }
 
 pub(super) fn native_to_winrt_d3d11device(device: &ID3D11Device) -> Result<IDirect3DDevice> {
@@ -69,18 +82,14 @@ pub(super) fn native_to_winrt_d3d11device(device: &ID3D11Device) -> Result<IDire
 #[allow(dead_code)]
 pub(super) fn winrt_to_native_d3d11device(device: &IDirect3DDevice) -> Result<ID3D11Device> {
     tracing::trace!("Converting WinRT D3D11 device to native D3D11 device");
-    // WinRT device implements IDirect3DDxgiInterfaceAccess, which lets you retrieve
-    // the underlying DXGI/D3D interfaces.
     let access: IDirect3DDxgiInterfaceAccess = device.cast()?;
-
     unsafe {
-        // Request the ID3D11Device interface (identified by its IID).
         let raw = access.GetInterface::<ID3D11Device>()?;
         Ok(raw)
     }
 }
 
-pub(crate) trait IntoHWND {
+pub trait IntoHWND {
     fn into_hwnd(self) -> HWND;
 }
 
@@ -121,35 +130,89 @@ pub fn user_pick_capture_item(
     Ok(item_future)
 }
 
-pub(super) fn read_texture(
+pub fn create_capture_item_for_primary_monitor() -> Result<GraphicsCaptureItem> {
+    tracing::info!("Creating capture item for primary monitor...");
+    let monitor_handle =
+        unsafe { MonitorFromWindow(HWND(std::ptr::null_mut()), MONITOR_DEFAULTTOPRIMARY) };
+
+    let interop = windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
+    unsafe { interop.CreateForMonitor(monitor_handle) }
+}
+
+// Copy the texture from source to staging texture.
+// This operation happens on the GPU.
+pub(super) fn copy_texture(
     context: &ID3D11DeviceContext,
-    source_tex: ID3D11Texture2D,
-    staging_tex: ID3D11Texture2D,
+    source_tex: &ID3D11Texture2D,
+    staging_tex: &ID3D11Texture2D,
+) {
+    unsafe {
+        context.CopyResource(staging_tex, source_tex);
+    }
+}
+
+// Map the staging texture for reading and copy the data to memory.
+// This operation happens on the CPU.
+pub(super) fn map_read_texture(
+    memory: &mut [u8],
+    context: &ID3D11DeviceContext,
+    staging_tex: &ID3D11Texture2D,
     tex_desc: &D3D11_TEXTURE2D_DESC,
     bytes_per_pixel: u32,
-) -> super::Result<Vec<u8>> {
+) -> super::Result<()> {
+    let start = std::time::Instant::now();
     unsafe {
-        context.CopyResource(&staging_tex, &source_tex);
-
+        let map_start = std::time::Instant::now();
         let mut mapped = MaybeUninit::uninit();
-        context.Map(&staging_tex, 0, D3D11_MAP_READ, 0, Some(mapped.as_mut_ptr()))?;
+        context.Map(staging_tex, 0, D3D11_MAP_READ, 0, Some(mapped.as_mut_ptr()))?;
         let mapped = mapped.assume_init_ref();
+        let map_duration = map_start.elapsed();
 
         let height = tex_desc.Height as usize;
         let bytes_per_row = tex_desc.Width as usize * bytes_per_pixel as usize;
         let row_pitch = mapped.RowPitch as usize;
         let total_bytes = bytes_per_row * height;
 
-        let mut frame_bytes = vec![0u8; total_bytes];
-        for y in 0..height {
-            let src_row = mapped.pData.add(y * row_pitch);
-            let dst_row_start = y * bytes_per_row;
-            let dst_row_end = (y + 1) * bytes_per_row;
-            let dst_row = &mut frame_bytes[dst_row_start..dst_row_end];
-            std::ptr::copy_nonoverlapping(src_row.cast(), dst_row.as_mut_ptr(), bytes_per_row);
+        let copy_start = std::time::Instant::now();
+        if row_pitch == bytes_per_row {
+            // Optimization: If the pitch matches the width, we can copy the entire buffer in one go.
+            std::ptr::copy_nonoverlapping(mapped.pData.cast(), memory.as_mut_ptr(), total_bytes);
+        } else {
+            // Strided copy (handling padding bytes)
+            for y in 0..height {
+                let src_row = mapped.pData.add(y * row_pitch);
+                let dst_row = memory.as_mut_ptr().add(y * bytes_per_row);
+                std::ptr::copy_nonoverlapping(src_row.cast(), dst_row, bytes_per_row);
+            }
         }
-        context.Unmap(&staging_tex, 0);
+        let copy_duration = copy_start.elapsed();
 
-        Ok(frame_bytes)
+        context.Unmap(staging_tex, 0);
+
+        let total = start.elapsed();
+        if total.as_millis() > 2 {
+            tracing::trace!(
+                "map_read_texture perf: Total={:?}, Map={:?}, MemCpy={:?}",
+                total,
+                map_duration,
+                copy_duration
+            );
+        }
+
+        Ok(())
     }
+}
+
+// Copies the source texture to the staging texture on the GPU. Then maps the staging texture for reading, and copies its contents into the provided memory buffer.
+#[allow(dead_code)]
+pub(super) fn fetch_texture(
+    dest: &mut [u8],
+    context: &ID3D11DeviceContext,
+    source_tex: ID3D11Texture2D,
+    staging_tex: ID3D11Texture2D,
+    tex_desc: &D3D11_TEXTURE2D_DESC,
+    bytes_per_pixel: u32,
+) -> super::Result<()> {
+    copy_texture(context, &source_tex, &staging_tex);
+    map_read_texture(dest, context, &staging_tex, tex_desc, bytes_per_pixel)
 }
