@@ -1,4 +1,6 @@
 pub mod capture_providers;
+pub mod media;
+pub mod networking;
 pub mod ui;
 pub mod utils;
 
@@ -16,6 +18,8 @@ pub enum Error {
     UiWindowMgmtError(#[from] iced_winit::Error),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("WebRTC error: {0}")]
+    WebRtcError(#[from] crate::networking::webrtc::WebRTCError),
     #[error("Other error: {0}")]
     OtherError(#[from] Box<dyn std::error::Error>),
 }

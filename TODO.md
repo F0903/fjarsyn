@@ -7,3 +7,4 @@ Each TODO is somewhat abstract and may require a lot of work to implement.
 - Figure out and implement the networking structure to send and receive the captured frames.
 - Overhaul UI to display the networked frames and the perhaps also the local preview.
 - Contacts system for easily setting up screen sharing.
+- Audio capture, streaming and playback.

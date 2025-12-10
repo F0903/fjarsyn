@@ -2,6 +2,7 @@ use std::{
     iter::IntoIterator,
     mem::MaybeUninit,
     sync::{Arc, RwLock},
+    time::Duration,
 };
 
 use windows::{
@@ -25,7 +26,7 @@ use windows_core::Interface;
 
 use crate::{
     capture_providers::{
-        CaptureProvider,
+        self, CaptureProvider,
         shared::{BytesPerPixel, Frame, PixelFormat, ToDirectXPixelFormat, Vector2},
         windows::{
             WindowsCaptureError, WindowsCaptureStream,
@@ -59,7 +60,7 @@ pub struct WgcCaptureProvider {
 
 impl WgcCaptureProvider {
     const WGC_FRAME_BUFFERS: i32 = 2;
-    const PIXEL_FORMAT: PixelFormat = PixelFormat::RGBA8;
+    const PIXEL_FORMAT: PixelFormat = capture_providers::TARGET_PIXEL_FORMAT; // It might be an idea to not have this as a const, but a constructor parameter and field instead.
     const PIPELINE_DEPTH: usize = 2;
     const TX_QUEUE_SIZE: usize = 2;
     const BUFFER_POOL_SIZE: usize = 4;
@@ -155,13 +156,19 @@ impl WgcCaptureProvider {
 
         staging.frame_count += 1;
 
-        let sys_time = frame
+        let rel_time = frame
             .SystemRelativeTime()
             .map_err(|e| {
                 tracing::warn!("Failed to get frame system relative time: {}", e);
                 e
             })
             .unwrap_or_default();
+
+        // Convert TimeSpan to a Duration
+        let duration = Duration::from_nanos((rel_time.Duration / 100) as u64);
+
+        // Create a SystemTime from the Duration
+        let sys_time = std::time::UNIX_EPOCH + duration;
 
         let dirty_regions = match frame.DirtyRegions() {
             Ok(regions) => regions.into_iter().map(Into::into).collect(),
@@ -175,7 +182,7 @@ impl WgcCaptureProvider {
             frame_buffer,
             Self::PIXEL_FORMAT,
             Vector2 { x: size.Width, y: size.Height },
-            sys_time.Duration,
+            sys_time,
             dirty_regions,
         );
 

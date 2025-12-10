@@ -14,16 +14,21 @@ use tokio::sync::Mutex;
 use crate::{
     capture_providers::{
         CaptureProvider, PlatformCaptureItem, PlatformCaptureProvider, PlatformCaptureStream,
+        TARGET_PIXEL_FORMAT,
         shared::{CaptureFramerate, Frame, PixelFormat, Vector2},
         user_pick_platform_capture_item,
     },
+    media::h264::H264Encoder,
+    networking::webrtc::{WebRTC, WebRTCError},
     ui::frame_viewer,
 };
 
 #[derive(Debug, Clone)]
 struct FrameReceiverSubData {
     capture: Arc<Mutex<PlatformCaptureProvider>>,
+
     framerate: CaptureFramerate,
+
     stream_name: &'static str,
 }
 
@@ -39,31 +44,40 @@ pub enum Message {
     CaptureStarted,
     StopCapture,
     CaptureStopped,
-
-    PlatformUserPickedCaptureItem(Result<PlatformCaptureItem, String>),
     TryStartCapture(PlatformCaptureItem),
     TryStopCapture,
-    FrameReceived(Arc<Frame>),
+
+    PlatformUserPickedCaptureItem(Result<PlatformCaptureItem, String>),
+
+    FrameCaptured(Arc<Frame>),
     FrameRateSelected(CaptureFramerate),
+
+    WebRTCInitialized(Result<WebRTC, Arc<WebRTCError>>),
 
     WindowOpened(window::Id),
     WindowIdFetched(u64),
 
     Error(String),
+    NoOp,
 }
 
 #[derive(Debug)]
 pub struct MutableState {
     pub active_window_handle: Option<u64>,
+
     pub capturing: bool,
     pub capture_frame_rate: CaptureFramerate,
 
     pub frame_data: Option<Bytes>,
     pub frame_dimensions: Vector2<i32>,
     pub frame_format: PixelFormat,
+
+    pub webrtc: Option<WebRTC>,
+    pub encoder: Option<H264Encoder>,
 }
 
 #[derive(Debug)]
+
 pub struct App {
     capture: Arc<Mutex<PlatformCaptureProvider>>,
 }
@@ -79,6 +93,7 @@ impl App {
 
     fn create_frame_receiver_subscription(data: &FrameReceiverSubData) -> PlatformCaptureStream {
         tracing::info!("Creating frame receiver sub with framerate: {}", data.framerate);
+
         data.capture
             .blocking_lock()
             .create_stream(data.framerate)
@@ -87,6 +102,7 @@ impl App {
 
     pub fn run(self) -> crate::Result<()> {
         iced_winit::run(self)?;
+
         Ok(())
     }
 }
@@ -118,9 +134,12 @@ impl Program for App {
                 capture_frame_rate: CaptureFramerate::FPS60,
                 frame_data: None,
                 frame_dimensions: Vector2::new(0, 0),
-                frame_format: PixelFormat::BGRA8,
+                frame_format: TARGET_PIXEL_FORMAT,
+                webrtc: None,
+                encoder: None,
             },
-            Task::none(),
+            Task::future(async { WebRTC::new().await.map_err(Arc::new) })
+                .map(Message::WebRTCInitialized),
         )
     }
 
@@ -137,25 +156,40 @@ impl Program for App {
                     },
                     Self::create_frame_receiver_subscription,
                 )
-                .map(|f| Message::FrameReceived(Arc::new(f))),
+                .map(|f| Message::FrameCaptured(Arc::new(f))),
             );
         }
-        subscriptions.push(iced::window::open_events().map(Message::WindowOpened));
 
+        subscriptions.push(iced::window::open_events().map(Message::WindowOpened));
         Subscription::batch(subscriptions)
     }
 
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
         match message {
+            Message::WebRTCInitialized(result) => {
+                match result {
+                    Ok(webrtc) => {
+                        state.webrtc = Some(webrtc);
+                        tracing::info!("WebRTC state initialized.");
+                    }
+                    Err(err) => {
+                        tracing::error!("Failed to initialize WebRTC: {}", err);
+                    }
+                }
+                Task::none()
+            }
+
             Message::WindowOpened(id) => {
                 let fetch_id_task =
                     iced::window::raw_id::<Message>(id).map(Message::WindowIdFetched);
                 fetch_id_task
             }
+
             Message::WindowIdFetched(id) => {
                 state.active_window_handle = Some(id);
                 Task::none()
             }
+
             Message::StartCapture => {
                 let window_handle = match state.active_window_handle {
                     Some(handle) => handle,
@@ -177,6 +211,7 @@ impl Program for App {
                     }
                 }
             }
+
             Message::PlatformUserPickedCaptureItem(capture_item_result) => {
                 let capture_item = match capture_item_result {
                     Ok(item) => item,
@@ -190,15 +225,29 @@ impl Program for App {
 
                 Task::done(Message::TryStartCapture(capture_item))
             }
+
             Message::TryStartCapture(capture_item) => match self.capture.try_lock() {
                 Ok(mut capture) => {
                     // Lock acquired on main thread. It's safe to call COM methods.
-                    if let Err(err) = capture.set_capture_item(capture_item) {
+                    if let Err(err) = capture.set_capture_item(capture_item.clone()) {
                         return Task::done(Message::Error(format!(
                             "Failed to set capture item: {}",
                             err
                         )));
                     }
+
+                    match H264Encoder::new() {
+                        Ok(encoder) => {
+                            state.encoder = Some(encoder);
+                        }
+                        Err(e) => {
+                            return Task::done(Message::Error(format!(
+                                "Failed to create H.264 encoder: {}",
+                                e
+                            )));
+                        }
+                    }
+
                     if let Err(err) = capture.start_capture() {
                         return Task::done(Message::Error(format!(
                             "Failed to start capture: {}",
@@ -213,16 +262,20 @@ impl Program for App {
                     let capture_arc = self.capture.clone();
                     Task::future(async move {
                         // Asynchronously wait for lock to become available.
+
                         let _lock = capture_arc.lock().await;
                     })
                     .map(move |_| Message::TryStartCapture(capture_item.clone()))
                 }
             },
+
             Message::CaptureStarted => {
                 state.capturing = true;
                 Task::none()
             }
+
             Message::StopCapture => Task::done(Message::TryStopCapture),
+
             Message::TryStopCapture => match self.capture.try_lock() {
                 Ok(mut capture) => {
                     if let Err(err) = capture.stop_capture() {
@@ -231,36 +284,82 @@ impl Program for App {
 
                     Task::done(Message::CaptureStopped)
                 }
+
                 Err(_) => {
                     // Could not get lock, wait for it to be free and try again.
                     let capture_arc = self.capture.clone();
                     Task::future(async move {
                         // Asynchronously wait for lock to become available.
+
                         let _lock = capture_arc.lock().await;
                     })
                     .map(move |_| Message::TryStopCapture)
                 }
             },
+
             Message::CaptureStopped => {
                 state.capturing = false;
+                state.encoder = None;
+
                 Task::none()
             }
+
             Message::FrameRateSelected(rate) => {
                 state.capture_frame_rate = rate;
+
                 Task::none()
             }
-            Message::FrameReceived(frame) => {
-                // Frame is already ensured to be RGBA by the provider
+
+            Message::FrameCaptured(frame) => {
+                // Update local preview
                 state.frame_format = frame.format.clone();
                 state.frame_dimensions = frame.size;
                 state.frame_data = Some(Bytes::copy_from_slice(&frame.data));
 
-                Task::none()
+                // Encode and send frame over WebRTC
+                let mut tasks = vec![];
+
+                let (Some(encoder), Some(webrtc)) = (&mut state.encoder, &state.webrtc) else {
+                    return Task::done(Message::Error(
+                        "Encoder or WebRTC not initialized".to_owned(),
+                    ));
+                };
+
+                match encoder.encode(&frame.data, frame.size.x, frame.size.y) {
+                    Ok(nal_units) => {
+                        let frame_timestamp = frame.timestamp.clone();
+                        let frame_duration = state.capture_frame_rate.to_frametime();
+                        for nal in nal_units {
+                            let webrtc_clone = webrtc.clone();
+                            tasks.push(Task::future(async move {
+                                if let Err(e) = webrtc_clone
+                                    .write_frame(Bytes::from(nal), frame_timestamp, frame_duration)
+                                    .await
+                                {
+                                    tracing::error!("Failed to write frame to WebRTC track: {}", e);
+                                }
+
+                                Message::NoOp
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to encode frame: {}", e);
+                    }
+                }
+
+                Task::batch(tasks)
             }
+
             Message::Error(err) => {
-                tracing::error!("Error: {}", err);
+                if !err.is_empty() {
+                    tracing::error!("Error: {}", err);
+                }
+
                 Task::none()
             }
+
+            Message::NoOp => Task::none(),
         }
     }
 
