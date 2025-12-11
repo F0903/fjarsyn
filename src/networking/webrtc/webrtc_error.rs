@@ -18,4 +18,8 @@ pub enum WebRTCError {
     SignalingError(#[from] SignalingError),
     #[error("Media error: {0}")]
     MediaError(#[from] webrtc::media::Error),
+    #[error("Write RTP error: {0}")]
+    WriteRTPError(webrtc::Error),
+    #[error("System time error: {0}")]
+    SystemTimeError(std::time::SystemTimeError),
 }

@@ -1,11 +1,10 @@
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use loki_shared::{SignalingMessage, SignalingType};
 use tokio::sync::mpsc;
+#[cfg(debug_assertions)]
+use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
 use webrtc::{
     api::{
         APIBuilder,
@@ -21,9 +20,9 @@ use webrtc::{
         peer_connection_state::RTCPeerConnectionState,
         sdp::session_description::RTCSessionDescription,
     },
-    rtp::packet::Packet,
+    rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication,
     rtp_transceiver::rtp_codec::{RTCRtpCodecCapability, RTPCodecType},
-    track::track_local::{TrackLocalWriter, track_local_static_rtp::TrackLocalStaticRTP},
+    track::track_local::track_local_static_sample::TrackLocalStaticSample,
 };
 
 use crate::networking::{
@@ -36,13 +35,15 @@ use crate::networking::{
 pub struct WebRTC {
     pub peer_connection: Arc<RTCPeerConnection>,
     pub signaling_tx: mpsc::Sender<SignalingMessage>,
-    pub video_track: Arc<TrackLocalStaticRTP>,
+    pub video_track: Arc<TrackLocalStaticSample>,
 }
 
 impl WebRTC {
+    const STREAM_ID: &str = "loki";
+
     pub async fn new() -> WebRTCResult<Self> {
-        let (to_webrtc_tx, mut to_webrtc_rx) = mpsc::channel(100);
-        let signaling_tx = signaling::connect(to_webrtc_tx).await?;
+        let (signal_tx, mut signal_rx) = mpsc::channel(100);
+        let signaling_tx = signaling::connect(signal_tx).await?;
 
         let mut m = MediaEngine::default();
         m.register_default_codecs().map_err(WebRTCError::CodecError)?;
@@ -58,21 +59,31 @@ impl WebRTC {
             api.new_peer_connection(config).await.map_err(WebRTCError::PeerConnectionError)?;
         let peer_connection = Arc::new(peer_connection);
 
-        let video_track = Arc::new(TrackLocalStaticRTP::new(
+        let video_track = Arc::new(TrackLocalStaticSample::new(
             RTCRtpCodecCapability { mime_type: MIME_TYPE_H264.to_owned(), ..Default::default() },
             "video".to_owned(),
-            "loki".to_owned(),
+            Self::STREAM_ID.to_owned(),
         ));
-        peer_connection
+        let rtc_rtp_sender = peer_connection
             .add_track(Arc::clone(&video_track)
                 as Arc<dyn webrtc::track::track_local::TrackLocal + Send + Sync>)
             .await
             .map_err(WebRTCError::PeerConnectionError)?;
 
+        tokio::spawn(async move {
+            let Ok((packets, _attributes)) = rtc_rtp_sender.read_rtcp().await else {
+                tracing::error!("Error reading RTCP packets");
+                return;
+            };
+            for packet in packets {
+                tracing::debug!("Received RTCP packet: {:?}", packet);
+            }
+        });
+
         // Task to handle incoming signaling messages
         let pc_reader_clone = Arc::clone(&peer_connection);
         tokio::spawn(async move {
-            while let Some(msg) = to_webrtc_rx.recv().await {
+            while let Some(msg) = signal_rx.recv().await {
                 if let Err(e) = handle_signaling_message(msg, &pc_reader_clone).await {
                     tracing::error!("Error handling signaling message: {}", e);
                 }
@@ -111,6 +122,73 @@ impl WebRTC {
             Box::pin(async {})
         }));
 
+        #[cfg(debug_assertions)]
+        peer_connection.on_ice_connection_state_change(Box::new(|s: RTCIceConnectionState| {
+            tracing::debug!("ICE Connection State has changed: {}", s);
+            Box::pin(async {})
+        }));
+
+        let pc = Arc::downgrade(&peer_connection);
+        let video_track_arc = video_track.clone();
+        peer_connection.on_track(Box::new(move |track, _rtp_receiver, _rtp_transceiver| {
+            tracing::debug!("Received track: {}", track.id());
+
+            //NOTE: this currently follows the implementation in the reflect.rs example
+
+            // Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
+            // This is a temporary fix until we implement incoming RTCP events, then we would push a PLI only when a viewer requests it
+            let media_ssrc = track.ssrc();
+
+
+            match track.kind() {
+                RTPCodecType::Video => {
+                    let pc = pc.clone();
+
+                    tokio::spawn(async move {
+                        let mut result = Result::Ok(0);
+                        while result.is_ok() {
+                            let timeout = tokio::time::sleep(Duration::from_secs(3));
+                            tokio::pin!(timeout);
+
+                            tokio::select! {
+                                _ = timeout.as_mut() => {
+                                    if let Some(pc) = pc.upgrade() {
+                                        result = pc.write_rtcp(&[Box::new(PictureLossIndication {sender_ssrc: 0, media_ssrc})]).await;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            };
+                        }
+                    });
+
+
+                    let video_track_arc = video_track_arc.clone();
+                    tokio::spawn(async move {
+                        tracing::debug!("Track with type '{}' starting...", track.codec().capability.mime_type);
+
+                        while let Ok((rtp, _attributes)) = track.read_rtp().await {
+                            //TODO: this is most likely implemented wrong
+                            if let Err(error) = video_track_arc.write_sample(&Sample {
+                                data: rtp.payload,
+                                ..Default::default()
+                            }).await {
+                                tracing::error!("Failed to write sample from remote track to local track: {}", error);
+                            }
+                        }
+
+                        tracing::debug!("Track with type '{}' finished.", track.codec().capability.mime_type);
+                    });
+
+                }
+                _ => {
+                    tracing::warn!("Received non-video track");
+                }
+            }
+
+            Box::pin(async {})
+        }));
+
         tracing::info!("Peer connection created.");
 
         Ok(Self { peer_connection, signaling_tx, video_track })
@@ -119,17 +197,10 @@ impl WebRTC {
     pub async fn write_frame(
         &self,
         frame_data: Bytes,
-        frame_timestamp: SystemTime,
         frame_duration: Duration,
     ) -> WebRTCResult<()> {
-        let sample = Sample {
-            data: frame_data,
-            duration: frame_duration,
-            timestamp: frame_timestamp,
-            ..Default::default()
-        };
-        //TODO
-        //self.video_track.write_rtp(pkt);
+        let sample = Sample { data: frame_data, duration: frame_duration, ..Default::default() };
+        self.video_track.write_sample(&sample).await.map_err(WebRTCError::WriteRTPError)?;
         Ok(())
     }
 

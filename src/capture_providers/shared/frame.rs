@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::Duration;
 
 use crate::{
     capture_providers::shared::{PixelFormat, Rect, Vector2},
@@ -11,7 +11,7 @@ pub struct Frame {
     pub data: PooledBuffer,
     pub format: PixelFormat,
     pub size: Vector2<i32>,
-    pub timestamp: SystemTime,
+    pub duration: Duration,
     pub dirty_rects: Vec<Rect<i32>>,
 }
 
@@ -20,20 +20,20 @@ impl Frame {
         mut data: PooledBuffer,
         mut format: PixelFormat,
         size: Vector2<i32>,
-        timestamp: SystemTime,
+        duration: Duration,
         dirty_rects: Vec<Rect<i32>>,
     ) -> Self {
         ensure_rgba(&mut data, &mut format);
-        Self::new(data, format, size, timestamp, dirty_rects)
+        Self::new(data, format, size, duration, dirty_rects)
     }
 
     fn new(
         data: PooledBuffer,
         format: PixelFormat,
         size: Vector2<i32>,
-        timestamp: SystemTime,
+        duration: Duration,
         dirty_rects: Vec<Rect<i32>>,
     ) -> Self {
-        Frame { data, format, size, timestamp, dirty_rects }
+        Frame { data, format, size, duration, dirty_rects }
     }
 }

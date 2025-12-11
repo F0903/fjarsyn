@@ -2,7 +2,6 @@ use std::{
     iter::IntoIterator,
     mem::MaybeUninit,
     sync::{Arc, RwLock},
-    time::Duration,
 };
 
 use windows::{
@@ -164,11 +163,7 @@ impl WgcCaptureProvider {
             })
             .unwrap_or_default();
 
-        // Convert TimeSpan to a Duration
-        let duration = Duration::from_nanos((rel_time.Duration / 100) as u64);
-
-        // Create a SystemTime from the Duration
-        let sys_time = std::time::UNIX_EPOCH + duration;
+        let frame_duration = std::time::Duration::from_nanos((rel_time.Duration / 100) as u64);
 
         let dirty_regions = match frame.DirtyRegions() {
             Ok(regions) => regions.into_iter().map(Into::into).collect(),
@@ -182,7 +177,7 @@ impl WgcCaptureProvider {
             frame_buffer,
             Self::PIXEL_FORMAT,
             Vector2 { x: size.Width, y: size.Height },
-            sys_time,
+            frame_duration,
             dirty_regions,
         );
 

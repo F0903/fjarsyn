@@ -244,14 +244,12 @@ impl Screen for CaptureScreen {
 
                 match encoder.encode(&frame.data, frame.size.x, frame.size.y) {
                     Ok(nal_units) => {
-                        let frame_timestamp = frame.timestamp.clone();
-                        let frame_duration = self.capture_frame_rate.to_frametime();
+                        let frame_duration = frame.duration.clone();
                         for nal in nal_units {
                             let webrtc_clone = webrtc.clone();
                             tasks.push(Task::future(async move {
-                                if let Err(e) = webrtc_clone
-                                    .write_frame(Bytes::from(nal), frame_timestamp, frame_duration)
-                                    .await
+                                if let Err(e) =
+                                    webrtc_clone.write_frame(Bytes::from(nal), frame_duration).await
                                 {
                                     tracing::error!("Failed to write frame to WebRTC track: {}", e);
                                 }
