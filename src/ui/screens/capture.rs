@@ -93,14 +93,11 @@ impl Screen for CaptureScreen {
             );
         }
 
-        subscriptions.push(iced::window::open_events().map(Message::WindowOpened));
         Subscription::batch(subscriptions)
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Navigate(_) => unreachable!(), // Navigate is handled by App
-
             Message::WebRTCInitialized(result) => {
                 match result {
                     Ok(webrtc) => {
@@ -117,7 +114,6 @@ impl Screen for CaptureScreen {
             Message::WindowOpened(id) => {
                 iced::window::raw_id::<Message>(id).map(Message::WindowIdFetched)
             }
-
             Message::WindowIdFetched(id) => {
                 self.active_window_handle = Some(id);
                 Task::none()
@@ -279,7 +275,7 @@ impl Screen for CaptureScreen {
                 Task::none()
             }
 
-            Message::NoOp => Task::none(),
+            _ => Task::none(),
         }
     }
 

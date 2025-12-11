@@ -89,7 +89,7 @@ impl Program for App {
     }
 
     fn window(&self) -> Option<window::Settings> {
-        Some(window::Settings::default())
+        Some(window::Settings { visible: true, transparent: true, ..Default::default() })
     }
 
     fn boot(&self) -> (Self::State, Task<Self::Message>) {
@@ -101,13 +101,22 @@ impl Program for App {
     }
 
     fn subscription(&self, state: &Self::State) -> Subscription<Message> {
-        match &state.active_screen {
+        let screen_subscriptions = match &state.active_screen {
             ActiveScreen::Home(screen) => screen.subscription(),
             ActiveScreen::Capture(screen) => screen.subscription(),
-        }
+        };
+
+        Subscription::batch(vec![screen_subscriptions])
     }
 
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
+        fn delegate_to_screen(state: &mut State, msg: Message) -> Task<Message> {
+            match &mut state.active_screen {
+                ActiveScreen::Home(screen) => screen.update(msg),
+                ActiveScreen::Capture(screen) => screen.update(msg),
+            }
+        }
+
         match message {
             Message::Navigate(route) => {
                 match route {
@@ -125,10 +134,8 @@ impl Program for App {
                 }
                 Task::none()
             }
-            msg => match &mut state.active_screen {
-                ActiveScreen::Home(screen) => screen.update(msg),
-                ActiveScreen::Capture(screen) => screen.update(msg),
-            },
+
+            msg => delegate_to_screen(state, msg),
         }
     }
 

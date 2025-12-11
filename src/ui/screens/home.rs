@@ -17,7 +17,6 @@ impl HomeScreen {
 impl Screen for HomeScreen {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Navigate(_) => unreachable!(), // Navigate is handled by App
             _ => Task::none(),
         }
     }
