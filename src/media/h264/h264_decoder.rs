@@ -24,7 +24,7 @@ impl H264Decoder {
         Ok(Self { decoder })
     }
 
-    pub fn decode(&mut self, packet: &[u8]) -> Result<Option<Vec<u8>>> {
+    pub fn decode(&mut self, packet: &[u8]) -> Result<Option<(Vec<u8>, (u32, u32))>> {
         let Some(image) = self
             .decoder
             .decode_with_options(packet, DecodeOptions::default())
@@ -39,6 +39,6 @@ impl H264Decoder {
         let mut framebuf = Vec::with_capacity(est_image_width * est_image_height);
         image.write_rgba8(&mut framebuf);
 
-        Ok(Some(framebuf))
+        Ok(Some((framebuf, (est_image_width as u32, est_image_height as u32))))
     }
 }

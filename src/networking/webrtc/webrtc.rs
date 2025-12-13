@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use bytes::Bytes;
 use loki_shared::{SignalingMessage, SignalingType};
@@ -14,7 +17,7 @@ use webrtc::{
         ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
         ice_server::RTCIceServer,
     },
-    media::Sample,
+    media::{Sample, io::sample_builder::SampleBuilder},
     peer_connection::{
         RTCPeerConnection, configuration::RTCConfiguration,
         peer_connection_state::RTCPeerConnectionState,
@@ -36,12 +39,14 @@ pub struct WebRTC {
     pub peer_connection: Arc<RTCPeerConnection>,
     pub signaling_tx: mpsc::Sender<SignalingMessage>,
     pub video_track: Arc<TrackLocalStaticSample>,
+    pub remote_peer_id: Arc<RwLock<Option<String>>>,
+    pub local_peer_id: Arc<RwLock<Option<String>>>,
 }
 
 impl WebRTC {
     const STREAM_ID: &str = "loki";
 
-    pub async fn new() -> WebRTCResult<Self> {
+    pub async fn new(frame_sink: mpsc::Sender<Bytes>) -> WebRTCResult<Self> {
         let (signal_tx, mut signal_rx) = mpsc::channel(100);
         let signaling_tx = signaling::connect(signal_tx).await?;
 
@@ -80,11 +85,26 @@ impl WebRTC {
             }
         });
 
+        let remote_peer_id = Arc::new(RwLock::<Option<String>>::new(None));
+        let local_peer_id = Arc::new(RwLock::<Option<String>>::new(None));
+
         // Task to handle incoming signaling messages
         let pc_reader_clone = Arc::clone(&peer_connection);
+        let remote_peer_id_clone = remote_peer_id.clone();
+        let local_peer_id_clone = local_peer_id.clone();
+        let signaling_tx_reader = signaling_tx.clone();
+
         tokio::spawn(async move {
             while let Some(msg) = signal_rx.recv().await {
-                if let Err(e) = handle_signaling_message(msg, &pc_reader_clone).await {
+                if let Err(e) = handle_signaling_message(
+                    msg,
+                    pc_reader_clone.clone(),
+                    remote_peer_id_clone.clone(),
+                    local_peer_id_clone.clone(),
+                    signaling_tx_reader.clone(),
+                )
+                .await
+                {
                     tracing::error!("Error handling signaling message: {}", e);
                 }
             }
@@ -93,23 +113,32 @@ impl WebRTC {
 
         // ICE candidate handling
         let signaling_tx_clone = signaling_tx.clone();
+        let remote_peer_id_ice = remote_peer_id.clone();
         peer_connection.on_ice_candidate(Box::new(move |c: Option<RTCIceCandidate>| {
             let signaling_tx = signaling_tx_clone.clone();
+            let remote_peer_id = remote_peer_id_ice.clone();
             Box::pin(async move {
-                if let Some(candidate) = c {
-                    match serde_json::to_string(&candidate.to_json().unwrap()) {
-                        Ok(candidate_str) => {
-                            let msg = SignalingMessage {
-                                signalling_type: SignalingType::Candidate,
-                                data: candidate_str,
-                            };
-                            if let Err(e) = signaling_tx.send(msg).await {
-                                tracing::error!("Failed to send ICE candidate: {}", e);
-                            }
+                let Some(candidate) = c else {
+                    return;
+                };
+
+                match serde_json::to_string(&candidate.to_json().unwrap()) {
+                    Ok(candidate_str) => {
+                        let Some(remote_id) = remote_peer_id.read().unwrap().clone() else {
+                            return;
+                        };
+                        let msg = SignalingMessage {
+                            to: remote_id,
+                            from: String::new(),
+                            sig_type: SignalingType::Candidate,
+                            data: candidate_str,
+                        };
+                        if let Err(e) = signaling_tx.send(msg).await {
+                            tracing::error!("Failed to send ICE candidate: {}", e);
                         }
-                        Err(e) => {
-                            tracing::error!("Failed to serialize ICE candidate: {}", e);
-                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to serialize ICE candidate: {}", e);
                     }
                 }
             })
@@ -129,20 +158,15 @@ impl WebRTC {
         }));
 
         let pc = Arc::downgrade(&peer_connection);
-        let video_track_arc = video_track.clone();
         peer_connection.on_track(Box::new(move |track, _rtp_receiver, _rtp_transceiver| {
             tracing::debug!("Received track: {}", track.id());
 
-            //NOTE: this currently follows the implementation in the reflect.rs example
-
-            // Send a PLI on an interval so that the publisher is pushing a keyframe every rtcpPLIInterval
-            // This is a temporary fix until we implement incoming RTCP events, then we would push a PLI only when a viewer requests it
             let media_ssrc = track.ssrc();
-
 
             match track.kind() {
                 RTPCodecType::Video => {
                     let pc = pc.clone();
+                    let frame_sink = frame_sink.clone();
 
                     tokio::spawn(async move {
                         let mut result = Result::Ok(0);
@@ -162,18 +186,20 @@ impl WebRTC {
                         }
                     });
 
-
-                    let video_track_arc = video_track_arc.clone();
                     tokio::spawn(async move {
                         tracing::debug!("Track with type '{}' starting...", track.codec().capability.mime_type);
 
+                        const SAMPLE_MAX_LATENCY: u16 = 2000;
+                        let depacketizer = webrtc::rtp::codecs::h264::H264Packet::default();
+                        let mut sample_builder = SampleBuilder::new(SAMPLE_MAX_LATENCY, depacketizer, track.codec().capability.clock_rate);
+
                         while let Ok((rtp, _attributes)) = track.read_rtp().await {
-                            //TODO: this is most likely implemented wrong
-                            if let Err(error) = video_track_arc.write_sample(&Sample {
-                                data: rtp.payload,
-                                ..Default::default()
-                            }).await {
-                                tracing::error!("Failed to write sample from remote track to local track: {}", error);
+                            sample_builder.push(rtp);
+                            while let Some(sample) = sample_builder.pop() {
+                                if let Err(e) = frame_sink.send(sample.data).await {
+                                    tracing::error!("Failed to send received frame to sink: {}", e);
+                                    return;
+                                }
                             }
                         }
 
@@ -191,7 +217,7 @@ impl WebRTC {
 
         tracing::info!("Peer connection created.");
 
-        Ok(Self { peer_connection, signaling_tx, video_track })
+        Ok(Self { peer_connection, signaling_tx, video_track, remote_peer_id, local_peer_id })
     }
 
     pub async fn write_frame(
@@ -204,7 +230,7 @@ impl WebRTC {
         Ok(())
     }
 
-    pub async fn create_offer(&self) -> WebRTCResult<()> {
+    pub async fn create_offer(&self, target_id: String) -> WebRTCResult<()> {
         let offer = self
             .peer_connection
             .create_offer(None)
@@ -217,27 +243,15 @@ impl WebRTC {
             .await
             .map_err(WebRTCError::PeerConnectionError)?;
 
-        let msg = SignalingMessage { signalling_type: SignalingType::Offer, data: sdp };
+        // Update remote ID since we are initiating call to them
+        *self.remote_peer_id.write().unwrap() = Some(target_id.clone());
 
-        self.signaling_tx.send(msg).await.map_err(WebRTCError::SendError)?;
-
-        Ok(())
-    }
-
-    pub async fn create_answer(&self) -> WebRTCResult<()> {
-        let answer = self
-            .peer_connection
-            .create_answer(None)
-            .await
-            .map_err(WebRTCError::PeerConnectionError)?;
-
-        let sdp = answer.sdp.clone();
-        self.peer_connection
-            .set_local_description(answer)
-            .await
-            .map_err(WebRTCError::PeerConnectionError)?;
-
-        let msg = SignalingMessage { signalling_type: SignalingType::Answer, data: sdp };
+        let msg = SignalingMessage {
+            to: target_id,
+            from: String::new(),
+            sig_type: SignalingType::Offer,
+            data: sdp,
+        };
 
         self.signaling_tx.send(msg).await.map_err(WebRTCError::SendError)?;
 
@@ -247,17 +261,53 @@ impl WebRTC {
 
 async fn handle_signaling_message(
     msg: SignalingMessage,
-    peer_connection: &Arc<RTCPeerConnection>,
+    peer_connection: Arc<RTCPeerConnection>,
+    remote_peer_id: Arc<RwLock<Option<String>>>,
+    local_peer_id: Arc<RwLock<Option<String>>>,
+    signaling_tx: mpsc::Sender<SignalingMessage>,
 ) -> WebRTCResult<()> {
-    match msg.signalling_type {
+    match msg.sig_type {
+        SignalingType::Identity => {
+            tracing::info!("Server assigned identity: {}", msg.data);
+            *local_peer_id.write().unwrap() = Some(msg.data);
+        }
         SignalingType::Offer => {
+            // Lock onto the sender
+            *remote_peer_id.write().unwrap() = Some(msg.from.clone());
+            tracing::info!("Received Offer from {}", msg.from);
+
             let sdp = RTCSessionDescription::offer(msg.data).map_err(WebRTCError::SdpError)?;
             peer_connection
                 .set_remote_description(sdp)
                 .await
                 .map_err(WebRTCError::PeerConnectionError)?;
+
+            // Auto-Answer logic
+            let answer = peer_connection
+                .create_answer(None)
+                .await
+                .map_err(WebRTCError::PeerConnectionError)?;
+
+            let answer_sdp = answer.sdp.clone();
+            peer_connection
+                .set_local_description(answer)
+                .await
+                .map_err(WebRTCError::PeerConnectionError)?;
+
+            let response_msg = SignalingMessage {
+                to: msg.from,
+                from: String::new(),
+                sig_type: SignalingType::Answer,
+                data: answer_sdp,
+            };
+
+            signaling_tx.send(response_msg).await.map_err(WebRTCError::SendError)?;
         }
         SignalingType::Answer => {
+            // Lock onto the sender (if not already?)
+            *remote_peer_id.write().unwrap() = Some(msg.from.clone());
+            tracing::info!("Received Answer from {}", msg.from);
+
             let sdp = RTCSessionDescription::answer(msg.data).map_err(WebRTCError::SdpError)?;
             peer_connection
                 .set_remote_description(sdp)

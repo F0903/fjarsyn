@@ -17,7 +17,7 @@ use crate::{
         shared::{CaptureFramerate, Frame, PixelFormat, Vector2},
         user_pick_platform_capture_item,
     },
-    media::h264::H264Encoder,
+    media::h264::{H264Decoder, H264Encoder},
     networking::webrtc::WebRTC,
     ui::{app::Message, frame_viewer},
 };
@@ -48,6 +48,7 @@ pub struct CaptureScreen {
 
     pub webrtc: Option<WebRTC>,
     pub encoder: Option<H264Encoder>,
+    pub decoder: Option<H264Decoder>,
 }
 
 impl CaptureScreen {
@@ -62,6 +63,7 @@ impl CaptureScreen {
             frame_format: TARGET_PIXEL_FORMAT,
             webrtc: None,
             encoder: None,
+            decoder: None,
         }
     }
 
@@ -106,6 +108,32 @@ impl Screen for CaptureScreen {
                     }
                     Err(err) => {
                         tracing::error!("Failed to initialize WebRTC: {}", err);
+                    }
+                }
+                Task::none()
+            }
+
+            Message::RemoteFrameReceived(bytes) => {
+                if self.decoder.is_none() {
+                    match H264Decoder::new() {
+                        Ok(decoder) => self.decoder = Some(decoder),
+                        Err(e) => {
+                            tracing::error!("Failed to create H264 Decoder: {}", e);
+                            return Task::none();
+                        }
+                    }
+                }
+
+                if let Some(decoder) = &mut self.decoder {
+                    match decoder.decode(&bytes) {
+                        Ok(Some((frame_data, (w, h)))) => {
+                            self.frame_data = Some(Bytes::from(frame_data));
+                            self.frame_dimensions = Vector2::new(w as i32, h as i32);
+                        }
+                        Ok(None) => {} // Frame buffered or incomplete
+                        Err(e) => {
+                            tracing::error!("Failed to decode frame: {}", e);
+                        }
                     }
                 }
                 Task::none()
