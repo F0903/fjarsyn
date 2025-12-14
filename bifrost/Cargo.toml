@@ -1,5 +1,5 @@
 [package]
-name = "loki-signaling-server"
+name = "bifrost"
 description = "The signaling server for the Loki screen sharing application."
 version = "0.1.0"
 edition = "2024"
