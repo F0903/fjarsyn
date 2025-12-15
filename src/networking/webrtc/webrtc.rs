@@ -48,7 +48,7 @@ impl WebRTC {
 
     pub async fn new(frame_sink: mpsc::Sender<Bytes>) -> WebRTCResult<Self> {
         let (signal_tx, mut signal_rx) = mpsc::channel(100);
-        let signaling_tx = signaling::connect(signal_tx).await?;
+        let (signaling_tx, id) = signaling::connect(signal_tx).await?;
 
         let mut m = MediaEngine::default();
         m.register_default_codecs().map_err(WebRTCError::CodecError)?;
@@ -86,7 +86,7 @@ impl WebRTC {
         });
 
         let remote_peer_id = Arc::new(RwLock::<Option<String>>::new(None));
-        let local_peer_id = Arc::new(RwLock::<Option<String>>::new(None));
+        let local_peer_id = Arc::new(RwLock::<Option<String>>::new(Some(id)));
 
         // Task to handle incoming signaling messages
         let pc_reader_clone = Arc::clone(&peer_connection);
@@ -218,6 +218,14 @@ impl WebRTC {
         tracing::info!("Peer connection created.");
 
         Ok(Self { peer_connection, signaling_tx, video_track, remote_peer_id, local_peer_id })
+    }
+
+    pub fn get_local_id(&self) -> Option<String> {
+        self.local_peer_id.read().unwrap().clone()
+    }
+
+    pub fn get_remote_id(&self) -> Option<String> {
+        self.remote_peer_id.read().unwrap().clone()
     }
 
     pub async fn write_frame(

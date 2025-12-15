@@ -1,7 +1,4 @@
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use futures::stream::unfold;
@@ -11,10 +8,11 @@ use tokio::sync::{Mutex, mpsc};
 use super::screens::{self, Screen};
 use crate::{
     capture_providers::{
-        PlatformCaptureItem, PlatformCaptureProvider,
-        shared::{CaptureFramerate, Frame},
+        PlatformCaptureItem, PlatformCaptureProvider, TARGET_PIXEL_FORMAT,
+        shared::{CaptureFramerate, Frame, Vector2},
     },
     networking::webrtc::{WebRTC, WebRTCError},
+    ui::{frame_receiver_ref::FrameReceiverRef, state::State},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -27,10 +25,6 @@ pub enum Route {
 #[derive(Debug, Clone)]
 pub enum Message {
     Navigate(Route),
-
-    StartCall(String),
-    RemoteIdChanged(String),
-    LocalIdFetched(String),
 
     StartCapture,
     CaptureStarted,
@@ -46,6 +40,9 @@ pub enum Message {
     FrameRateSelected(CaptureFramerate),
 
     WebRTCInitialized(Result<WebRTC, Arc<WebRTCError>>),
+    StartCall(String),
+
+    TargetIdChanged(String),
 
     WindowOpened(window::Id),
     WindowIdFetched(u64),
@@ -54,32 +51,10 @@ pub enum Message {
     NoOp,
 }
 
+#[derive(Debug, Clone)]
 pub enum ActiveScreen {
     Home(screens::home::HomeScreen),
     Capture(screens::capture::CaptureScreen),
-}
-
-#[derive(Clone)]
-struct FrameReceiverRef(Arc<Mutex<mpsc::Receiver<Bytes>>>);
-
-impl Hash for FrameReceiverRef {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Arc::as_ptr(&self.0).hash(state);
-    }
-}
-
-impl PartialEq for FrameReceiverRef {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl Eq for FrameReceiverRef {}
-
-pub struct State {
-    active_screen: ActiveScreen,
-    webrtc: Option<WebRTC>,
-    frame_receiver: FrameReceiverRef,
 }
 
 pub struct App {
@@ -112,7 +87,6 @@ fn frame_subscription_stream(
             drop(lock);
             Some((Message::RemoteFrameReceived(frame), receiver))
         } else {
-            // Channel closed
             drop(lock);
             None
         }
@@ -144,8 +118,22 @@ impl Program for App {
         (
             State {
                 active_screen: ActiveScreen::Home(screens::home::HomeScreen::new()),
-                webrtc: None,
+                active_window_handle: None,
+
+                capturing: false,
+                capture_frame_rate: CaptureFramerate::FPS60,
+
                 frame_receiver: FrameReceiverRef(Arc::new(Mutex::new(frame_rx))),
+                frame_data: None,
+                frame_dimensions: Vector2::new(0, 0),
+                frame_format: TARGET_PIXEL_FORMAT,
+
+                webrtc: None,
+
+                target_id: None,
+
+                encoder: None,
+                decoder: None,
             },
             Task::future(async { WebRTC::new(frame_tx).await.map_err(Arc::new) })
                 .map(Message::WebRTCInitialized),
@@ -154,8 +142,8 @@ impl Program for App {
 
     fn subscription(&self, state: &Self::State) -> Subscription<Message> {
         let screen_subscriptions = match &state.active_screen {
-            ActiveScreen::Home(screen) => screen.subscription(),
-            ActiveScreen::Capture(screen) => screen.subscription(),
+            ActiveScreen::Home(screen) => screen.subscription(state),
+            ActiveScreen::Capture(screen) => screen.subscription(state),
         };
 
         let frame_subscription =
@@ -166,15 +154,15 @@ impl Program for App {
 
     fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
         fn delegate_to_screen(state: &mut State, msg: Message) -> Task<Message> {
-            match &mut state.active_screen {
-                ActiveScreen::Home(screen) => screen.update(msg),
-                ActiveScreen::Capture(screen) => screen.update(msg),
+            match state.active_screen.clone() {
+                ActiveScreen::Home(screen) => screen.update(state, msg),
+                ActiveScreen::Capture(screen) => screen.update(state, msg),
             }
         }
 
         match message {
             Message::StartCall(target_id) => {
-                if let Some(webrtc) = &state.webrtc {
+                if let Some(Ok(webrtc)) = &state.webrtc {
                     let webrtc_clone = webrtc.clone();
                     Task::future(async move {
                         match webrtc_clone.create_offer(target_id).await {
@@ -183,22 +171,18 @@ impl Program for App {
                         }
                     })
                 } else {
+                    tracing::warn!("Could not start call. WebRTC not initialized...");
                     Task::none()
                 }
             }
 
             Message::RemoteFrameReceived(frame) => {
-                // If we receive a frame and we are NOT on Capture screen, switch to it.
-                // This handles the "Receiver" side automatically.
                 let mut tasks = vec![];
 
+                // If we receive a frame and we are NOT on Capture screen, switch to it.
                 if let ActiveScreen::Home(_) = state.active_screen {
                     // We need to perform the navigation logic here, similar to Message::Navigate
-                    let mut capture_screen =
-                        screens::capture::CaptureScreen::new(self.capture.clone());
-                    if let Some(webrtc) = &state.webrtc {
-                        capture_screen.webrtc = Some(webrtc.clone());
-                    }
+                    let capture_screen = screens::capture::CaptureScreen::new(self.capture.clone());
                     state.active_screen = ActiveScreen::Capture(capture_screen);
                 }
 
@@ -213,11 +197,8 @@ impl Program for App {
                         state.active_screen = ActiveScreen::Home(screens::home::HomeScreen::new());
                     }
                     Route::Capture => {
-                        let mut capture_screen =
+                        let capture_screen =
                             screens::capture::CaptureScreen::new(self.capture.clone());
-                        if let Some(webrtc) = &state.webrtc {
-                            capture_screen.webrtc = Some(webrtc.clone());
-                        }
                         state.active_screen = ActiveScreen::Capture(capture_screen);
                     }
                     Route::Settings => {
@@ -231,15 +212,12 @@ impl Program for App {
                 match result {
                     Ok(webrtc) => {
                         tracing::info!("WebRTC state initialized.");
-                        state.webrtc = Some(webrtc.clone());
-
-                        // If we are already on Capture screen, inject it
-                        if let ActiveScreen::Capture(screen) = &mut state.active_screen {
-                            screen.webrtc = Some(webrtc);
-                        }
+                        state.webrtc = Some(Ok(webrtc));
                     }
                     Err(err) => {
-                        tracing::error!("Failed to initialize WebRTC: {}", err);
+                        let err_msg = format!("Failed to initialize WebRTC: {}", err);
+                        tracing::error!(err_msg);
+                        state.webrtc = Some(Err(err_msg));
                     }
                 }
                 Task::none()
@@ -255,8 +233,8 @@ impl Program for App {
         _window: window::Id,
     ) -> Element<'a, Self::Message, Self::Theme, Self::Renderer> {
         match &state.active_screen {
-            ActiveScreen::Home(screen) => screen.view(),
-            ActiveScreen::Capture(screen) => screen.view(),
+            ActiveScreen::Home(screen) => screen.view(state),
+            ActiveScreen::Capture(screen) => screen.view(state),
         }
     }
 }

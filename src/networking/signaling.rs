@@ -19,24 +19,34 @@ const SIGNALING_SERVER_URL: &str = "ws://127.0.0.1:30000/ws";
 /// to the `to_webrtc_tx` channel.
 pub async fn connect(
     to_webrtc_tx: mpsc::Sender<SignalingMessage>,
-) -> Result<mpsc::Sender<SignalingMessage>> {
+) -> Result<(mpsc::Sender<SignalingMessage>, String)> {
     let (ws_stream, _) =
         connect_async(SIGNALING_SERVER_URL).await.map_err(SignalingError::ConnectionFailed)?;
+    let (write, mut read) = ws_stream.split();
 
-    tracing::info!("Successfully connected to signaling server");
+    tracing::info!("Successfully connected to signaling server. Waiting for ID response...");
 
-    let (write, read) = ws_stream.split();
+    let id = match read
+        .next()
+        .await
+        .ok_or(SignalingError::IdResponseError("No response".to_string()))??
+    {
+        Message::Text(body) => {
+            let msg: SignalingMessage = serde_json::from_str(&body)
+                .map_err(|e| SignalingError::IdResponseError(e.to_string()))?;
+            msg.data
+        }
+        _ => return Err(SignalingError::IdResponseError("Invalid response content".to_string())),
+    };
+
+    tracing::info!("Got ID: {}", id);
 
     // Channel for sending messages to the server's writer task
     let (to_server_tx, to_server_rx) = mpsc::channel::<SignalingMessage>(100);
-
-    // Spawn a writer task
     spawn_writer_task(to_server_rx, write);
+    spawn_reader_task(to_webrtc_tx, read);
 
-    // Spawn a reader task
-    spawn_reader_task(read, to_webrtc_tx);
-
-    Ok(to_server_tx)
+    Ok((to_server_tx, id))
 }
 
 fn spawn_writer_task(
@@ -64,8 +74,8 @@ fn spawn_writer_task(
 }
 
 fn spawn_reader_task(
-    mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     to_webrtc_tx: mpsc::Sender<SignalingMessage>,
+    mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
 ) {
     tokio::spawn(async move {
         while let Some(message) = read.next().await {

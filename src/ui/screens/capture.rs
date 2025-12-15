@@ -13,13 +13,12 @@ use tokio::sync::Mutex;
 use super::Screen;
 use crate::{
     capture_providers::{
-        CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream, TARGET_PIXEL_FORMAT,
-        shared::{CaptureFramerate, Frame, PixelFormat, Vector2},
+        CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream,
+        shared::{CaptureFramerate, Frame, Vector2},
         user_pick_platform_capture_item,
     },
     media::h264::{H264Decoder, H264Encoder},
-    networking::webrtc::WebRTC,
-    ui::{app::Message, frame_viewer},
+    ui::{app::Message, frame_viewer, state::State},
 };
 
 #[derive(Debug, Clone)]
@@ -35,36 +34,14 @@ impl Hash for FrameReceiverSubData {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct CaptureScreen {
     capture: Arc<Mutex<PlatformCaptureProvider>>,
-
-    pub active_window_handle: Option<u64>,
-    pub capturing: bool,
-    pub capture_frame_rate: CaptureFramerate,
-
-    pub frame_data: Option<Bytes>,
-    pub frame_dimensions: Vector2<i32>,
-    pub frame_format: PixelFormat,
-
-    pub webrtc: Option<WebRTC>,
-    pub encoder: Option<H264Encoder>,
-    pub decoder: Option<H264Decoder>,
 }
 
 impl CaptureScreen {
     pub fn new(capture: Arc<Mutex<PlatformCaptureProvider>>) -> Self {
-        Self {
-            capture,
-            active_window_handle: None,
-            capturing: false,
-            capture_frame_rate: CaptureFramerate::FPS60,
-            frame_data: None,
-            frame_dimensions: Vector2::new(0, 0),
-            frame_format: TARGET_PIXEL_FORMAT,
-            webrtc: None,
-            encoder: None,
-            decoder: None,
-        }
+        Self { capture }
     }
 
     fn create_frame_receiver_subscription(data: &FrameReceiverSubData) -> PlatformCaptureStream {
@@ -78,15 +55,15 @@ impl CaptureScreen {
 }
 
 impl Screen for CaptureScreen {
-    fn subscription(&self) -> Subscription<Message> {
+    fn subscription(&self, state: &State) -> Subscription<Message> {
         let mut subscriptions = vec![];
 
-        if self.capturing {
+        if state.capturing {
             subscriptions.push(
                 Subscription::<Frame>::run_with(
                     FrameReceiverSubData {
                         capture: self.capture.clone(),
-                        framerate: self.capture_frame_rate,
+                        framerate: state.capture_frame_rate,
                         stream_name: "frame-receiver",
                     },
                     Self::create_frame_receiver_subscription,
@@ -98,25 +75,12 @@ impl Screen for CaptureScreen {
         Subscription::batch(subscriptions)
     }
 
-    fn update(&mut self, message: Message) -> Task<Message> {
+    fn update(&self, state: &mut State, message: Message) -> Task<Message> {
         match message {
-            Message::WebRTCInitialized(result) => {
-                match result {
-                    Ok(webrtc) => {
-                        self.webrtc = Some(webrtc);
-                        tracing::info!("WebRTC state initialized.");
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to initialize WebRTC: {}", err);
-                    }
-                }
-                Task::none()
-            }
-
             Message::RemoteFrameReceived(bytes) => {
-                if self.decoder.is_none() {
+                if state.decoder.is_none() {
                     match H264Decoder::new() {
-                        Ok(decoder) => self.decoder = Some(decoder),
+                        Ok(decoder) => state.decoder = Some(decoder),
                         Err(e) => {
                             tracing::error!("Failed to create H264 Decoder: {}", e);
                             return Task::none();
@@ -124,11 +88,11 @@ impl Screen for CaptureScreen {
                     }
                 }
 
-                if let Some(decoder) = &mut self.decoder {
+                if let Some(decoder) = &mut state.decoder {
                     match decoder.decode(&bytes) {
                         Ok(Some((frame_data, (w, h)))) => {
-                            self.frame_data = Some(Bytes::from(frame_data));
-                            self.frame_dimensions = Vector2::new(w as i32, h as i32);
+                            state.frame_data = Some(Bytes::from(frame_data));
+                            state.frame_dimensions = Vector2::new(w as i32, h as i32);
                         }
                         Ok(None) => {} // Frame buffered or incomplete
                         Err(e) => {
@@ -143,12 +107,12 @@ impl Screen for CaptureScreen {
                 iced::window::raw_id::<Message>(id).map(Message::WindowIdFetched)
             }
             Message::WindowIdFetched(id) => {
-                self.active_window_handle = Some(id);
+                state.active_window_handle = Some(id);
                 Task::none()
             }
 
             Message::StartCapture => {
-                let window_handle = match self.active_window_handle {
+                let window_handle = match state.active_window_handle {
                     Some(handle) => handle,
                     None => {
                         return Task::done(Message::Error("No active window handle".to_string()));
@@ -193,7 +157,7 @@ impl Screen for CaptureScreen {
 
                     match H264Encoder::new() {
                         Ok(encoder) => {
-                            self.encoder = Some(encoder);
+                            state.encoder = Some(encoder);
                         }
                         Err(e) => {
                             return Task::done(Message::Error(format!(
@@ -222,7 +186,7 @@ impl Screen for CaptureScreen {
             },
 
             Message::CaptureStarted => {
-                self.capturing = true;
+                state.capturing = true;
                 Task::none()
             }
 
@@ -247,26 +211,26 @@ impl Screen for CaptureScreen {
             },
 
             Message::CaptureStopped => {
-                self.capturing = false;
-                self.encoder = None;
+                state.capturing = false;
+                state.encoder = None;
                 Task::none()
             }
 
             Message::FrameRateSelected(rate) => {
-                self.capture_frame_rate = rate;
+                state.capture_frame_rate = rate;
                 Task::none()
             }
 
             Message::FrameCaptured(frame) => {
-                self.frame_format = frame.format.clone();
-                self.frame_dimensions = frame.size;
-                self.frame_data = Some(Bytes::copy_from_slice(&frame.data));
+                state.frame_format = frame.format.clone();
+                state.frame_dimensions = frame.size;
+                state.frame_data = Some(Bytes::copy_from_slice(&frame.data));
 
                 let mut tasks = vec![];
 
-                let (Some(encoder), Some(webrtc)) = (&mut self.encoder, &self.webrtc) else {
+                let (Some(encoder), Some(Ok(webrtc))) = (&mut state.encoder, &state.webrtc) else {
                     return Task::done(Message::Error(
-                        "Encoder or WebRTC not initialized".to_owned(),
+                        "Encoder or WebRTC not available".to_owned(),
                     ));
                 };
 
@@ -305,26 +269,30 @@ impl Screen for CaptureScreen {
         }
     }
 
-    fn view(&self) -> Element<'_, Message> {
+    fn view(&self, state: &State) -> Element<'_, Message> {
         let control_row: Element<Message> = container(
             row([
-                if self.capturing {
-                    button(text(self.capture_frame_rate.to_string()))
+                if state.capturing {
+                    button(text(state.capture_frame_rate.to_string()))
                         .style(iced::widget::button::secondary)
                         .into()
                 } else {
                     pick_list(
                         CaptureFramerate::ALL,
-                        Some(self.capture_frame_rate),
+                        Some(state.capture_frame_rate),
                         Message::FrameRateSelected,
                     )
                     .into()
                 },
                 button("Start Capture")
-                    .on_press_maybe(if self.capturing { None } else { Some(Message::StartCapture) })
+                    .on_press_maybe(if state.capturing {
+                        None
+                    } else {
+                        Some(Message::StartCapture)
+                    })
                     .into(),
                 button("Stop Capture")
-                    .on_press_maybe(if self.capturing { Some(Message::StopCapture) } else { None })
+                    .on_press_maybe(if state.capturing { Some(Message::StopCapture) } else { None })
                     .into(),
             ])
             .spacing(10),
@@ -333,11 +301,11 @@ impl Screen for CaptureScreen {
         .center_x(Length::Fill)
         .into();
 
-        let screen_share_preview = match &self.frame_data {
+        let screen_share_preview = match &state.frame_data {
             Some(frame_data) => container(frame_viewer::frame_viewer(
                 frame_data.clone(),
-                self.frame_dimensions.x as u32,
-                self.frame_dimensions.y as u32,
+                state.frame_dimensions.x as u32,
+                state.frame_dimensions.y as u32,
             ))
             .center(Length::Fill)
             .into(),

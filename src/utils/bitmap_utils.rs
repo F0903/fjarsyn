@@ -51,6 +51,7 @@ pub fn bgra8_to_rgba8(bgra8: &mut [u8]) {
 /// It processes chunks of 4 bytes. If the buffer length is not a multiple of 4,
 /// the trailing bytes are ignored (which is correct for pixel data).
 #[inline]
+#[allow(dead_code)]
 pub fn rgba8_to_bgra8(rgba8: &mut [u8]) {
     swap_first_channel(rgba8);
 }
