@@ -4,9 +4,9 @@ type Result<T> = std::result::Result<T, H264DecoderError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum H264DecoderError {
-    #[error("Failed to create decoder")]
+    #[error("Failed to create decoder: {0}")]
     CreateDecoderError(openh264::Error),
-    #[error("Failed to decode frame")]
+    #[error("Failed to decode frame: {0}")]
     DecodeError(openh264::Error),
 }
 
@@ -36,7 +36,8 @@ impl H264Decoder {
         let image_dims_uv = image.dimensions_uv();
         let est_image_width = image_dims_uv.0 * 2;
         let est_image_height = image_dims_uv.1 * 2;
-        let mut framebuf = Vec::with_capacity(est_image_width * est_image_height);
+        let size = est_image_width * est_image_height * 4;
+        let mut framebuf = vec![0u8; size];
         image.write_rgba8(&mut framebuf);
 
         Ok(Some((framebuf, (est_image_width as u32, est_image_height as u32))))

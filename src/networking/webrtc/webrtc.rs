@@ -4,7 +4,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use loki_shared::{SignalingMessage, SignalingType};
+use fjarsyn_shared::{SignalingMessage, SignalingType};
 use tokio::sync::mpsc;
 #[cfg(debug_assertions)]
 use webrtc::ice_transport::ice_connection_state::RTCIceConnectionState;
@@ -33,6 +33,13 @@ use crate::networking::{
     webrtc::{WebRTCError, webrtc_error::WebRTCResult},
 };
 
+#[derive(Debug, Clone)]
+pub enum WebRTCEvent {
+    Connected,
+    Disconnected,
+    IncomingCall(String),
+}
+
 /// Holds the state for the WebRTC connection
 #[derive(Clone, Debug)]
 pub struct WebRTC {
@@ -44,9 +51,12 @@ pub struct WebRTC {
 }
 
 impl WebRTC {
-    const STREAM_ID: &str = "loki";
+    const STREAM_ID: &str = "fjarsyn-webrtc";
 
-    pub async fn new(frame_sink: mpsc::Sender<Bytes>) -> WebRTCResult<Self> {
+    pub async fn new(
+        frame_sink: mpsc::Sender<Bytes>,
+        event_sink: mpsc::Sender<WebRTCEvent>,
+    ) -> WebRTCResult<Self> {
         let (signal_tx, mut signal_rx) = mpsc::channel(100);
         let (signaling_tx, id) = signaling::connect(signal_tx).await?;
 
@@ -93,6 +103,7 @@ impl WebRTC {
         let remote_peer_id_clone = remote_peer_id.clone();
         let local_peer_id_clone = local_peer_id.clone();
         let signaling_tx_reader = signaling_tx.clone();
+        let event_sink_reader = event_sink.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = signal_rx.recv().await {
@@ -102,6 +113,7 @@ impl WebRTC {
                     remote_peer_id_clone.clone(),
                     local_peer_id_clone.clone(),
                     signaling_tx_reader.clone(),
+                    event_sink_reader.clone(),
                 )
                 .await
                 {
@@ -144,12 +156,24 @@ impl WebRTC {
             })
         }));
 
-        // Log the connection state changes only in debug mode
-        #[cfg(debug_assertions)]
-        peer_connection.on_peer_connection_state_change(Box::new(|s: RTCPeerConnectionState| {
-            tracing::debug!("Peer Connection State has changed: {}", s);
-            Box::pin(async {})
-        }));
+        let event_sink_state = event_sink.clone();
+        peer_connection.on_peer_connection_state_change(Box::new(
+            move |s: RTCPeerConnectionState| {
+                tracing::debug!("Peer Connection State has changed: {}", s);
+                let event_sink = event_sink_state.clone();
+                Box::pin(async move {
+                    if s == RTCPeerConnectionState::Connected {
+                        if let Err(e) = event_sink.send(WebRTCEvent::Connected).await {
+                            tracing::error!("Failed to send Connected event: {}", e);
+                        }
+                    } else if s == RTCPeerConnectionState::Disconnected
+                        || s == RTCPeerConnectionState::Closed
+                    {
+                        let _ = event_sink.send(WebRTCEvent::Disconnected).await;
+                    }
+                })
+            },
+        ));
 
         #[cfg(debug_assertions)]
         peer_connection.on_ice_connection_state_change(Box::new(|s: RTCIceConnectionState| {
@@ -273,6 +297,7 @@ async fn handle_signaling_message(
     remote_peer_id: Arc<RwLock<Option<String>>>,
     local_peer_id: Arc<RwLock<Option<String>>>,
     signaling_tx: mpsc::Sender<SignalingMessage>,
+    event_sink: mpsc::Sender<WebRTCEvent>,
 ) -> WebRTCResult<()> {
     match msg.sig_type {
         SignalingType::Identity => {
@@ -283,6 +308,11 @@ async fn handle_signaling_message(
             // Lock onto the sender
             *remote_peer_id.write().unwrap() = Some(msg.from.clone());
             tracing::info!("Received Offer from {}", msg.from);
+
+            // Notify UI of incoming call
+            if let Err(e) = event_sink.send(WebRTCEvent::IncomingCall(msg.from.clone())).await {
+                tracing::error!("Failed to send IncomingCall event: {}", e);
+            }
 
             let sdp = RTCSessionDescription::offer(msg.data).map_err(WebRTCError::SdpError)?;
             peer_connection

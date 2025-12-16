@@ -1,20 +1,17 @@
 use iced::{
     Element, Length, Subscription, Task,
-    widget::{button, column, container, text, text_input},
+    widget::{button, column, container, row, text, text_input},
 };
 
 use super::Screen;
 use crate::ui::{app::Message, state::State};
 
 #[derive(Debug, Clone)]
-pub struct HomeScreen {
-    pub local_id: Option<String>,
-    pub remote_id_input: String,
-}
+pub struct HomeScreen {}
 
 impl HomeScreen {
     pub fn new() -> Self {
-        Self { local_id: None, remote_id_input: String::new() }
+        Self {}
     }
 }
 
@@ -34,28 +31,37 @@ impl Screen for HomeScreen {
     }
 
     fn view(&self, state: &State) -> Element<'_, Message> {
-        let title = text("Welcome to Loki").size(30);
+        let title = text("Welcome to Fjarsyn").size(30);
 
         let id_display = match &state.webrtc {
             Some(Ok(webrtc)) => match webrtc.get_local_id() {
-                Some(id) => text(format!("My ID: {}", id)).size(20),
-                None => text("Connecting to signaling server...").size(20),
+                Some(id) => row![
+                    text(format!("My ID: {}", id)).size(20),
+                    button("Copy").on_press(Message::CopyId(id))
+                ]
+                .spacing(10),
+                None => row![text("Connecting to signaling server...").size(20)],
             },
-            Some(Err(err)) => text(format!("Error: {}", err)).size(20),
-            None => text("Connecting to signaling server...").size(20),
+            Some(Err(err)) => row![text(format!("Error: {}", err)).size(20)],
+            None => row![text("Connecting to signaling server...").size(20)],
         };
 
-        let remote_input = text_input("Enter Peer ID to call", &self.remote_id_input)
-            .on_input(Message::TargetIdChanged)
-            .padding(10)
-            .width(Length::Fixed(400.0));
+        let remote_input =
+            text_input("Enter Peer ID to call", state.target_id.as_deref().unwrap_or(""))
+                .on_input(Message::TargetIdChanged)
+                .padding(10)
+                .width(Length::Fixed(400.0));
 
         let call_button = button("Call Peer")
-            .on_press_maybe(if !self.remote_id_input.is_empty() {
-                Some(Message::StartCall(self.remote_id_input.clone()))
-            } else {
-                None
-            })
+            .on_press_maybe(
+                if let Some(id) = state.target_id.as_deref()
+                    && !id.is_empty()
+                {
+                    Some(Message::StartCall(id.to_owned()))
+                } else {
+                    None
+                },
+            )
             .padding(10);
 
         let content = column![title, id_display, remote_input, call_button]

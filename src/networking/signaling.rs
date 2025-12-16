@@ -1,8 +1,8 @@
+use fjarsyn_shared::SignalingMessage;
 use futures_util::{
     SinkExt, StreamExt,
     stream::{SplitSink, SplitStream},
 };
-use loki_shared::SignalingMessage;
 use tokio::{net::TcpStream, sync::mpsc};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message,

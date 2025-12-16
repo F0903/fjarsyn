@@ -513,8 +513,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "fjarsyn-shared",
  "futures",
- "loki-shared",
  "serde",
  "serde_json",
  "tokio",
@@ -1557,6 +1557,42 @@ name = "find-msvc-tools"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
+
+[[package]]
+name = "fjarsyn"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "crossbeam",
+ "fjarsyn-shared",
+ "futures",
+ "futures-util",
+ "iced",
+ "iced_core",
+ "iced_debug",
+ "iced_devtools",
+ "iced_winit",
+ "once_cell",
+ "openh264",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+ "webrtc",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
+ "windows-future",
+ "winres",
+]
+
+[[package]]
+name = "fjarsyn-shared"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "flate2"
@@ -2697,42 +2733,6 @@ name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
-
-[[package]]
-name = "loki"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "crossbeam",
- "futures",
- "futures-util",
- "iced",
- "iced_core",
- "iced_debug",
- "iced_devtools",
- "iced_winit",
- "loki-shared",
- "once_cell",
- "openh264",
- "serde_json",
- "thiserror 2.0.17",
- "tokio",
- "tokio-tungstenite",
- "tracing",
- "tracing-subscriber",
- "webrtc",
- "windows 0.62.2",
- "windows-core 0.62.2",
- "windows-future",
- "winres",
-]
-
-[[package]]
-name = "loki-shared"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "loop9"

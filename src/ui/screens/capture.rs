@@ -8,7 +8,7 @@ use iced::{
     Element, Length, Subscription, Task,
     widget::{button, container, pick_list, row, text},
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 
 use super::Screen;
 use crate::{
@@ -80,7 +80,7 @@ impl Screen for CaptureScreen {
             Message::RemoteFrameReceived(bytes) => {
                 if state.decoder.is_none() {
                     match H264Decoder::new() {
-                        Ok(decoder) => state.decoder = Some(decoder),
+                        Ok(decoder) => state.decoder = Some(Arc::new(Mutex::new(decoder))),
                         Err(e) => {
                             tracing::error!("Failed to create H264 Decoder: {}", e);
                             return Task::none();
@@ -88,31 +88,35 @@ impl Screen for CaptureScreen {
                     }
                 }
 
-                if let Some(decoder) = &mut state.decoder {
-                    match decoder.decode(&bytes) {
-                        Ok(Some((frame_data, (w, h)))) => {
-                            state.frame_data = Some(Bytes::from(frame_data));
-                            state.frame_dimensions = Vector2::new(w as i32, h as i32);
+                if let Some(decoder) = &state.decoder {
+                    let decoder = decoder.clone();
+                    Task::future(async move {
+                        let mut lock = decoder.lock().await;
+                        match lock.decode(&bytes) {
+                            Ok(Some((frame_data, (w, h)))) => Message::DecodedFrameReady(
+                                Bytes::from(frame_data),
+                                Vector2::new(w as i32, h as i32),
+                            ),
+                            Ok(None) => Message::NoOp,
+                            Err(e) => {
+                                tracing::error!("Failed to decode frame: {}", e);
+                                Message::NoOp
+                            }
                         }
-                        Ok(None) => {} // Frame buffered or incomplete
-                        Err(e) => {
-                            tracing::error!("Failed to decode frame: {}", e);
-                        }
-                    }
+                    })
+                } else {
+                    Task::none()
                 }
-                Task::none()
             }
 
-            Message::WindowOpened(id) => {
-                iced::window::raw_id::<Message>(id).map(Message::WindowIdFetched)
-            }
-            Message::WindowIdFetched(id) => {
-                state.active_window_handle = Some(id);
+            Message::DecodedFrameReady(frame_data, size) => {
+                state.frame_data = Some(frame_data);
+                state.frame_dimensions = size;
                 Task::none()
             }
 
             Message::StartCapture => {
-                let window_handle = match state.active_window_handle {
+                let window_handle = match state.main_window_handle {
                     Some(handle) => handle,
                     None => {
                         return Task::done(Message::Error("No active window handle".to_string()));
@@ -153,18 +157,6 @@ impl Screen for CaptureScreen {
                             "Failed to set capture item: {}",
                             err
                         )));
-                    }
-
-                    match H264Encoder::new() {
-                        Ok(encoder) => {
-                            state.encoder = Some(encoder);
-                        }
-                        Err(e) => {
-                            return Task::done(Message::Error(format!(
-                                "Failed to create H.264 encoder: {}",
-                                e
-                            )));
-                        }
                     }
 
                     if let Err(err) = capture.start_capture() {
@@ -212,7 +204,7 @@ impl Screen for CaptureScreen {
 
             Message::CaptureStopped => {
                 state.capturing = false;
-                state.encoder = None;
+                state.frame_sender = None;
                 Task::none()
             }
 
@@ -226,36 +218,68 @@ impl Screen for CaptureScreen {
                 state.frame_dimensions = frame.size;
                 state.frame_data = Some(Bytes::copy_from_slice(&frame.data));
 
-                let mut tasks = vec![];
+                // Since we shouldn't block the main thread for too long, we spawn a task to handle the frame
+                if state.frame_sender.is_none() {
+                    let Some(Ok(webrtc)) = &state.webrtc else {
+                        tracing::error!("WebRTC is not initialized yet");
+                        return Task::none();
+                    };
 
-                let (Some(encoder), Some(Ok(webrtc))) = (&mut state.encoder, &state.webrtc) else {
-                    return Task::done(Message::Error(
-                        "Encoder or WebRTC not available".to_owned(),
-                    ));
-                };
+                    let (tx, mut rx) = mpsc::channel::<Arc<Frame>>(2);
+                    state.frame_sender = Some(tx.clone());
 
-                match encoder.encode(&frame.data, frame.size.x, frame.size.y) {
-                    Ok(nal_units) => {
-                        let frame_duration = frame.duration.clone();
-                        for nal in nal_units {
-                            let webrtc_clone = webrtc.clone();
-                            tasks.push(Task::future(async move {
-                                if let Err(e) =
-                                    webrtc_clone.write_frame(Bytes::from(nal), frame_duration).await
-                                {
-                                    tracing::error!("Failed to write frame to WebRTC track: {}", e);
+                    let webrtc = webrtc.clone();
+                    let _width = frame.size.x as u32;
+                    let _height = frame.size.y as u32;
+                    let target_fps = state.capture_frame_rate.to_hz();
+
+                    tokio::spawn(async move {
+                        let mut encoder = match H264Encoder::new(2_000_000, target_fps) {
+                            Ok(enc) => enc,
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to create encoder in background task: {}",
+                                    e
+                                );
+                                return;
+                            }
+                        };
+
+                        while let Some(frame) = rx.recv().await {
+                            match encoder.encode(&frame.data, frame.size.x, frame.size.y) {
+                                Ok(nal_units) => {
+                                    let frame_duration = frame.duration;
+                                    for nal in nal_units {
+                                        if let Err(e) = webrtc
+                                            .write_frame(Bytes::from(nal), frame_duration)
+                                            .await
+                                        {
+                                            tracing::error!("WebRTC write failed: {}", e);
+                                        }
+                                    }
                                 }
-
-                                Message::NoOp
-                            }));
+                                Err(e) => {
+                                    tracing::error!("Encoding failed: {}", e);
+                                }
+                            }
                         }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to encode frame: {}", e);
+                        tracing::info!("Encoder thread finished.");
+                    });
+                }
+
+                if let Some(tx) = &state.frame_sender {
+                    match tx.try_send(frame) {
+                        Ok(_) => {}
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            tracing::debug!("Encoder queue full, dropping frame");
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to send frame to encoder: {}", e);
+                        }
                     }
                 }
 
-                Task::batch(tasks)
+                Task::none()
             }
 
             Message::Error(err) => {

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use loki::{Result, capture_providers, ui};
+use fjarsyn::{Result, capture_providers, ui};
 use tokio::sync::Mutex;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;

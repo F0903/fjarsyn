@@ -28,10 +28,6 @@ fn components_to_string(parts: [u16; 4]) -> String {
 
 fn set_windows_metadata() -> Result<()> {
     let pkg_name = env::var("CARGO_PKG_NAME")?;
-    let pkg_description = env::var("CARGO_PKG_DESCRIPTION")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| pkg_name.clone());
     let pkg_version = env::var("CARGO_PKG_VERSION")?;
     let version_components = normalized_version_components(&pkg_version);
     let version_u64 = components_to_u64(version_components);
@@ -42,7 +38,7 @@ fn set_windows_metadata() -> Result<()> {
     res.set("InternalName", &internal_name)
         .set("OriginalFilename", &internal_name)
         .set("ProductName", &pkg_name)
-        .set("FileDescription", &pkg_description)
+        .set("FileDescription", &pkg_name) // For some reason this is shown as the app name in Task Manager. So we just use the package name as the "file description".
         .set("ProductVersion", &version_string)
         .set("FileVersion", &version_string)
         .set_version_info(VersionInfo::PRODUCTVERSION, version_u64)

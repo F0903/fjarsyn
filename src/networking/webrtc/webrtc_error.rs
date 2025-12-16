@@ -11,7 +11,7 @@ pub enum WebRTCError {
     #[error("SDP error: {0}")]
     SdpError(webrtc::Error),
     #[error("Send error: {0}")]
-    SendError(tokio::sync::mpsc::error::SendError<loki_shared::SignalingMessage>),
+    SendError(tokio::sync::mpsc::error::SendError<fjarsyn_shared::SignalingMessage>),
     #[error("Deserialize error: {0}")]
     DeserializeError(serde_json::Error),
     #[error("Signaling error: {0}")]

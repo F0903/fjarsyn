@@ -1,6 +1,6 @@
 [package]
 name = "bifrost"
-description = "The signaling server for the Loki screen sharing application."
+description = "The signaling server for the Fjarsyn screen sharing application."
 version = "0.1.0"
 edition = "2024"
 
@@ -15,4 +15,4 @@ axum = { version = "0.8.7", features = ["ws"] }
 uuid = { version = "1.19.0", features = ["v4"] }
 uuid-simd = "0.8.0"
 anyhow = "1.0.100"
-loki-shared = { path = "../shared" }
+fjarsyn-shared = { path = "../shared" }

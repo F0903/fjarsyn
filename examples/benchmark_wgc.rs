@@ -1,11 +1,11 @@
 use std::time::{Duration, Instant};
 
-use futures::StreamExt;
-use loki::capture_providers::{
+use fjarsyn::capture_providers::{
     CaptureProvider,
     shared::CaptureFramerate,
     windows::{WgcCaptureProviderBuilder, create_capture_item_for_primary_monitor},
 };
+use futures::StreamExt;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 

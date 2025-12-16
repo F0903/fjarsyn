@@ -9,8 +9,8 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use fjarsyn_shared::{SignalingMessage, SignalingType};
 use futures::{sink::SinkExt, stream::StreamExt};
-use loki_shared::{SignalingMessage, SignalingType};
 use tokio::{
     net::{TcpListener, ToSocketAddrs},
     sync::{RwLock, mpsc},
