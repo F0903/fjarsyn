@@ -1,4 +1,5 @@
 pub mod capture_providers;
+pub mod config;
 pub mod media;
 pub mod networking;
 pub mod ui;

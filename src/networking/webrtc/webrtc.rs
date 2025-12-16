@@ -54,11 +54,12 @@ impl WebRTC {
     const STREAM_ID: &str = "fjarsyn-webrtc";
 
     pub async fn new(
+        signaling_url: String,
         frame_sink: mpsc::Sender<Bytes>,
         event_sink: mpsc::Sender<WebRTCEvent>,
     ) -> WebRTCResult<Self> {
         let (signal_tx, mut signal_rx) = mpsc::channel(100);
-        let (signaling_tx, id) = signaling::connect(signal_tx).await?;
+        let (signaling_tx, id) = signaling::connect(signaling_url, signal_tx).await?;
 
         let mut m = MediaEngine::default();
         m.register_default_codecs().map_err(WebRTCError::CodecError)?;

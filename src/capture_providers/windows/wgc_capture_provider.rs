@@ -25,7 +25,7 @@ use windows_core::Interface;
 
 use crate::{
     capture_providers::{
-        self, CaptureProvider,
+        CaptureProvider,
         shared::{BytesPerPixel, Frame, PixelFormat, ToDirectXPixelFormat, Vector2},
         windows::{
             WindowsCaptureError, WindowsCaptureStream,
@@ -48,6 +48,7 @@ struct Staging {
 pub struct WgcCaptureProvider {
     device: IDirect3DDevice,
     capture_item: Option<GraphicsCaptureItem>,
+    pixel_format: PixelFormat,
     staging_state: Arc<RwLock<Staging>>,
     buffer_pool: BufferPool,
 
@@ -59,15 +60,15 @@ pub struct WgcCaptureProvider {
 
 impl WgcCaptureProvider {
     const WGC_FRAME_BUFFERS: i32 = 2;
-    const PIXEL_FORMAT: PixelFormat = capture_providers::TARGET_PIXEL_FORMAT; // It might be an idea to not have this as a const, but a constructor parameter and field instead.
     const PIPELINE_DEPTH: usize = 2;
     const TX_QUEUE_SIZE: usize = 2;
     const BUFFER_POOL_SIZE: usize = 4;
 
-    pub fn new(device: IDirect3DDevice) -> Self {
+    pub fn new(device: IDirect3DDevice, pixel_format: PixelFormat) -> Self {
         Self {
             device,
             capture_item: None,
+            pixel_format,
             staging_state: Arc::new(RwLock::new(Staging::default())),
             buffer_pool: BufferPool::init(Self::BUFFER_POOL_SIZE),
             frame_pool: None,
@@ -81,6 +82,7 @@ impl WgcCaptureProvider {
         mut frame_buffer: PooledBuffer,
         frame: Direct3D11CaptureFrame,
         staging_state_arc: Arc<RwLock<Staging>>,
+        pixel_format: PixelFormat,
         tx: tokio::sync::mpsc::Sender<Frame>,
     ) -> super::Result<()> {
         let surface = frame.Surface().map_err(|e| {
@@ -150,7 +152,7 @@ impl WgcCaptureProvider {
             &context,
             read_tex,
             &desc,
-            Self::PIXEL_FORMAT.bytes_per_pixel(),
+            pixel_format.bytes_per_pixel(),
         )?;
 
         staging.frame_count += 1;
@@ -175,7 +177,7 @@ impl WgcCaptureProvider {
 
         let frame = Frame::new_ensure_rgba(
             frame_buffer,
-            Self::PIXEL_FORMAT,
+            pixel_format,
             Vector2 { x: size.Width, y: size.Height },
             frame_duration,
             dirty_regions,
@@ -265,7 +267,7 @@ impl CaptureProvider for WgcCaptureProvider {
 
         let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
             &device,
-            Self::PIXEL_FORMAT.to_directx_pixel_format(),
+            self.pixel_format.to_directx_pixel_format(),
             Self::WGC_FRAME_BUFFERS,
             size,
         )
@@ -293,6 +295,7 @@ impl CaptureProvider for WgcCaptureProvider {
 
         let buffer_pool = self.buffer_pool.clone();
         let staging_state_arc = staging_state_arc.clone();
+        let pixel_format = self.pixel_format.clone();
 
         let token = frame_pool
             .FrameArrived(&TypedEventHandler::new(move |sender, _| {
@@ -305,7 +308,7 @@ impl CaptureProvider for WgcCaptureProvider {
                     Ok(frame) => {
                         let buffer_size = size.Width as usize
                             * size.Height as usize
-                            * Self::PIXEL_FORMAT.bytes_per_pixel() as usize;
+                            * pixel_format.bytes_per_pixel() as usize;
                         let mut buffer = buffer_pool.get_or_create(buffer_size);
                         unsafe {
                             buffer.set_len(buffer_size);
@@ -315,6 +318,7 @@ impl CaptureProvider for WgcCaptureProvider {
                             buffer,
                             frame,
                             staging_state_arc.clone(),
+                            pixel_format,
                             tx.clone(),
                         ) {
                             tracing::error!("Failed to process frame: {}", e);

@@ -18,7 +18,7 @@ use crate::{
         user_pick_platform_capture_item,
     },
     media::h264::{H264Decoder, H264Encoder},
-    ui::{app::Message, frame_viewer, state::State},
+    ui::{frame_viewer, message::Message, state::State},
 };
 
 #[derive(Debug, Clone)]
@@ -232,9 +232,10 @@ impl Screen for CaptureScreen {
                     let _width = frame.size.x as u32;
                     let _height = frame.size.y as u32;
                     let target_fps = state.capture_frame_rate.to_hz();
+                    let bitrate = state.config.bitrate;
 
                     tokio::spawn(async move {
-                        let mut encoder = match H264Encoder::new(2_000_000, target_fps) {
+                        let mut encoder = match H264Encoder::new(bitrate, target_fps) {
                             Ok(enc) => enc,
                             Err(e) => {
                                 tracing::error!(

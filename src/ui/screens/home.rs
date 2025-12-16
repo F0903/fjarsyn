@@ -4,7 +4,10 @@ use iced::{
 };
 
 use super::Screen;
-use crate::ui::{app::Message, state::State};
+use crate::ui::{
+    message::{Message, Route},
+    state::State,
+};
 
 #[derive(Debug, Clone)]
 pub struct HomeScreen {}
@@ -64,9 +67,17 @@ impl Screen for HomeScreen {
             )
             .padding(10);
 
-        let content = column![title, id_display, remote_input, call_button]
-            .spacing(20)
-            .align_x(iced::Alignment::Center);
+        let settings_button =
+            button("Settings").on_press(Message::Navigate(Route::Settings)).padding(10);
+
+        let content = column![
+            title,
+            id_display,
+            remote_input,
+            row![call_button, settings_button].spacing(20)
+        ]
+        .spacing(20)
+        .align_x(iced::Alignment::Center);
 
         container(content).center(Length::Fill).into()
     }

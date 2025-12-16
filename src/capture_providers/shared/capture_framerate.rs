@@ -1,6 +1,8 @@
 use std::{fmt::Display, time::Duration};
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
 pub enum CaptureFramerate {
     FPS5,
     FPS24,

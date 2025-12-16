@@ -5,12 +5,15 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     capture_providers::shared::{CaptureFramerate, Frame, PixelFormat, Vector2},
+    config::Config,
     media::h264::H264Decoder,
     networking::webrtc::{WebRTC, WebRTCEvent},
     ui::app::{ActiveScreen, FrameReceiverRef},
 };
 
 pub struct State {
+    pub config: Config,
+    pub pending_config: Option<Config>,
     pub active_screen: ActiveScreen,
     pub frame_receiver: FrameReceiverRef,
     pub webrtc_event_receiver: Option<Arc<Mutex<mpsc::Receiver<WebRTCEvent>>>>,

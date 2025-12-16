@@ -16,10 +16,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!("Initializing benchmark...");
 
-    let mut provider = WgcCaptureProviderBuilder::new()
-        .with_default_device()?
-        .with_default_capture_item()?
-        .build()?;
+    let mut provider =
+        WgcCaptureProviderBuilder::new(fjarsyn::capture_providers::shared::PixelFormat::BGRA8)
+            .with_default_device()?
+            .with_default_capture_item()?
+            .build()?;
 
     tracing::info!("Creating capture item for primary monitor...");
     let item = create_capture_item_for_primary_monitor()?;

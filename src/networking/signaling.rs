@@ -12,16 +12,14 @@ use crate::networking::signaling_error::SignalingError;
 
 type Result<T> = std::result::Result<T, SignalingError>;
 
-const SIGNALING_SERVER_URL: &str = "ws://127.0.0.1:30000/ws";
-
 /// Connects to the signaling server, returning a channel sender to send
 /// messages to the server. Incoming messages from the server will be sent
 /// to the `to_webrtc_tx` channel.
 pub async fn connect(
+    url: String,
     to_webrtc_tx: mpsc::Sender<SignalingMessage>,
 ) -> Result<(mpsc::Sender<SignalingMessage>, String)> {
-    let (ws_stream, _) =
-        connect_async(SIGNALING_SERVER_URL).await.map_err(SignalingError::ConnectionFailed)?;
+    let (ws_stream, _) = connect_async(url).await.map_err(SignalingError::ConnectionFailed)?;
     let (write, mut read) = ws_stream.split();
 
     tracing::info!("Successfully connected to signaling server. Waiting for ID response...");

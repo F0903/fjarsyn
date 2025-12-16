@@ -8,57 +8,22 @@ use tokio::sync::{Mutex, mpsc};
 use super::screens::{self, Screen};
 use crate::{
     capture_providers::{
-        PlatformCaptureItem, PlatformCaptureProvider, TARGET_PIXEL_FORMAT,
-        shared::{CaptureFramerate, Frame, Vector2},
+        PlatformCaptureProvider,
+        shared::{CaptureFramerate, Vector2},
     },
-    networking::webrtc::{WebRTC, WebRTCError, WebRTCEvent},
-    ui::state::State,
+    config::Config,
+    networking::webrtc::{WebRTC, WebRTCEvent},
+    ui::{
+        message::{Message, Route},
+        state::State,
+    },
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Route {
-    Home, //TODO
-    Capture,
-    Settings, //TODO
-}
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    Navigate(Route),
-
-    StartCapture,
-    CaptureStarted,
-    StopCapture,
-    CaptureStopped,
-    TryStartCapture(PlatformCaptureItem),
-    TryStopCapture,
-
-    PlatformUserPickedCaptureItem(Result<PlatformCaptureItem, String>),
-
-    FrameCaptured(Arc<Frame>),
-    RemoteFrameReceived(Bytes),
-    FrameRateSelected(CaptureFramerate),
-
-    WebRTCInitialized(Result<WebRTC, Arc<WebRTCError>>),
-    WebRTCEvent(WebRTCEvent),
-    StartCall(String),
-    DecodedFrameReady(Bytes, Vector2<i32>),
-
-    CopyId(String),
-
-    TargetIdChanged(String),
-
-    WindowOpened(window::Id),
-    WindowIdFetched(u64),
-
-    Error(String),
-    NoOp,
-}
 
 #[derive(Debug, Clone)]
 pub enum ActiveScreen {
     Home(screens::home::HomeScreen),
     Capture(screens::capture::CaptureScreen),
+    Settings(screens::settings::SettingsScreen),
 }
 
 pub struct App {
@@ -76,7 +41,6 @@ impl App {
 
     pub fn run(self) -> crate::Result<()> {
         iced_winit::run(self)?;
-
         Ok(())
     }
 }
@@ -175,6 +139,10 @@ impl Program for App {
         const WEBRTC_EVENT_BUFFER: usize = 100;
         let (frame_tx, frame_rx) = mpsc::channel(REMOTE_FRAMES_BUFFER);
         let (event_tx, event_rx) = mpsc::channel(WEBRTC_EVENT_BUFFER);
+
+        let config = Config::load();
+        let server_url = config.server_url.clone();
+
         (
             State {
                 active_screen: ActiveScreen::Home(screens::home::HomeScreen::new()),
@@ -187,7 +155,7 @@ impl Program for App {
                 webrtc_event_receiver: Some(Arc::new(Mutex::new(event_rx))),
                 frame_data: None,
                 frame_dimensions: Vector2::new(0, 0),
-                frame_format: TARGET_PIXEL_FORMAT,
+                frame_format: config.pixel_format.clone(),
 
                 webrtc: None,
 
@@ -195,9 +163,13 @@ impl Program for App {
 
                 frame_sender: None,
                 decoder: None,
+                config,
+                pending_config: None,
             },
-            Task::future(async { WebRTC::new(frame_tx, event_tx).await.map_err(Arc::new) })
-                .map(Message::WebRTCInitialized),
+            Task::future(async move {
+                WebRTC::new(server_url, frame_tx, event_tx).await.map_err(Arc::new)
+            })
+            .map(Message::WebRTCInitialized),
         )
     }
 
@@ -205,6 +177,7 @@ impl Program for App {
         let screen_subscriptions = match &state.active_screen {
             ActiveScreen::Home(screen) => screen.subscription(state),
             ActiveScreen::Capture(screen) => screen.subscription(state),
+            ActiveScreen::Settings(screen) => screen.subscription(state),
         };
 
         let frame_subscription =
@@ -234,6 +207,7 @@ impl Program for App {
             match state.active_screen.clone() {
                 ActiveScreen::Home(screen) => screen.update(state, msg),
                 ActiveScreen::Capture(screen) => screen.update(state, msg),
+                ActiveScreen::Settings(screen) => screen.update(state, msg),
             }
         }
 
@@ -251,17 +225,33 @@ impl Program for App {
             Message::Navigate(route) => {
                 match route {
                     Route::Home => {
+                        state.pending_config = None;
                         state.active_screen = ActiveScreen::Home(screens::home::HomeScreen::new());
                     }
                     Route::Capture => {
+                        state.pending_config = None;
                         let capture_screen =
                             screens::capture::CaptureScreen::new(self.capture.clone());
                         state.active_screen = ActiveScreen::Capture(capture_screen);
                     }
                     Route::Settings => {
-                        //TODO
+                        state.pending_config = Some(state.config.clone());
+                        state.active_screen =
+                            ActiveScreen::Settings(screens::settings::SettingsScreen::new());
                     }
                 }
+                Task::none()
+            }
+
+            Message::SaveConfig => {
+                if let Some(pending) = state.pending_config.take() {
+                    state.config = pending;
+                    if let Err(e) = state.config.save() {
+                        tracing::error!("Failed to save config: {}", e);
+                    }
+                }
+                // Navigate back to Home after save
+                state.active_screen = ActiveScreen::Home(screens::home::HomeScreen::new());
                 Task::none()
             }
 
@@ -345,6 +335,7 @@ impl Program for App {
         match &state.active_screen {
             ActiveScreen::Home(screen) => screen.view(state),
             ActiveScreen::Capture(screen) => screen.view(state),
+            ActiveScreen::Settings(screen) => screen.view(state),
         }
     }
 }

@@ -2,6 +2,7 @@ use windows::Graphics::{Capture::GraphicsCaptureItem, DirectX::Direct3D11::IDire
 
 use crate::capture_providers::{
     CaptureProvider,
+    shared::PixelFormat,
     windows::{
         WgcCaptureProvider, WindowsCaptureError,
         d3d11_utils::{create_d3d_device, native_to_winrt_d3d11device},
@@ -23,11 +24,12 @@ pub enum WgcCaptureProviderBuilderError {
 pub struct WgcCaptureProviderBuilder {
     device: Option<IDirect3DDevice>,
     capture_item: Option<GraphicsCaptureItem>,
+    pixel_format: PixelFormat,
 }
 
 impl WgcCaptureProviderBuilder {
-    pub fn new() -> Self {
-        WgcCaptureProviderBuilder { device: None, capture_item: None }
+    pub fn new(pixel_format: PixelFormat) -> Self {
+        WgcCaptureProviderBuilder { device: None, capture_item: None, pixel_format }
     }
 
     #[allow(dead_code)]
@@ -59,7 +61,7 @@ impl WgcCaptureProviderBuilder {
             WgcCaptureProviderBuilderError::MissingDevice
         })?;
 
-        let mut capture = WgcCaptureProvider::new(device);
+        let mut capture = WgcCaptureProvider::new(device, self.pixel_format);
         if let Some(capture_item) = self.capture_item {
             capture.set_capture_item(capture_item)?;
         }

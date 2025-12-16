@@ -1,9 +1,10 @@
 use iced::{Element, Subscription, Task};
 
-use crate::ui::app::{App, Message};
+use crate::ui::{app::App, message::Message};
 
 pub mod capture;
 pub mod home;
+pub mod settings;
 
 pub trait Screen {
     fn update(

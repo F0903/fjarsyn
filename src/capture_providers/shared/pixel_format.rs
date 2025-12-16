@@ -1,6 +1,7 @@
+use serde::{Deserialize, Serialize};
 use windows::Graphics::DirectX::DirectXPixelFormat;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum PixelFormat {
     RGBA16,
     RGBA8,
