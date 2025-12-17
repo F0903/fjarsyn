@@ -50,6 +50,8 @@ pub enum Message {
     ConfigUpdate(ConfigField, ConfigValue),
     SaveConfig,
 
+    Onboarding(super::screens::onboarding::OnboardingMessage),
+
     Error(String),
     NoOp,
 }

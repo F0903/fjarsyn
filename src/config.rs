@@ -7,6 +7,7 @@ use crate::capture_providers::shared::{CaptureFramerate, PixelFormat};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    pub onboarding_done: bool,
     pub server_url: String,
     pub bitrate: u32,
     pub framerate: CaptureFramerate,
@@ -16,6 +17,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            onboarding_done: false,
             bitrate: 4_000_000,
             framerate: CaptureFramerate::FPS30,
             server_url: "ws://127.0.0.1:30000/ws".to_string(),

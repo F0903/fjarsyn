@@ -55,8 +55,8 @@ impl WebRTC {
 
     pub async fn new(
         signaling_url: String,
-        frame_sink: mpsc::Sender<Bytes>,
-        event_sink: mpsc::Sender<WebRTCEvent>,
+        frame_tx: mpsc::Sender<Bytes>,
+        event_tx: mpsc::Sender<WebRTCEvent>,
     ) -> WebRTCResult<Self> {
         let (signal_tx, mut signal_rx) = mpsc::channel(100);
         let (signaling_tx, id) = signaling::connect(signaling_url, signal_tx).await?;
@@ -104,7 +104,7 @@ impl WebRTC {
         let remote_peer_id_clone = remote_peer_id.clone();
         let local_peer_id_clone = local_peer_id.clone();
         let signaling_tx_reader = signaling_tx.clone();
-        let event_sink_reader = event_sink.clone();
+        let event_sink_reader = event_tx.clone();
 
         tokio::spawn(async move {
             while let Some(msg) = signal_rx.recv().await {
@@ -157,7 +157,7 @@ impl WebRTC {
             })
         }));
 
-        let event_sink_state = event_sink.clone();
+        let event_sink_state = event_tx.clone();
         peer_connection.on_peer_connection_state_change(Box::new(
             move |s: RTCPeerConnectionState| {
                 tracing::debug!("Peer Connection State has changed: {}", s);
@@ -191,7 +191,7 @@ impl WebRTC {
             match track.kind() {
                 RTPCodecType::Video => {
                     let pc = pc.clone();
-                    let frame_sink = frame_sink.clone();
+                    let frame_sink = frame_tx.clone();
 
                     tokio::spawn(async move {
                         let mut result = Result::Ok(0);

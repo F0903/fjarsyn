@@ -6,7 +6,8 @@ use iced::{
 use super::Screen;
 use crate::{
     capture_providers::shared::CaptureFramerate,
-    ui::{message::Message, state::State},
+    config::Config,
+    ui::{message::Message, state::AppContext},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,18 +25,20 @@ pub enum ConfigValue {
 }
 
 #[derive(Debug, Clone)]
-pub struct SettingsScreen {}
+pub struct SettingsScreen {
+    pub pending_config: Option<Config>,
+}
 
 impl SettingsScreen {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(current_config: Config) -> Self {
+        Self { pending_config: Some(current_config) }
     }
 }
 
 impl Screen for SettingsScreen {
-    fn update(&self, state: &mut State, message: Message) -> Task<Message> {
+    fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
         // We operate on pending_config
-        let Some(config) = &mut state.pending_config else {
+        let Some(config) = &mut self.pending_config else {
             return Task::none();
         };
 
@@ -59,12 +62,16 @@ impl Screen for SettingsScreen {
                     (ConfigField::ServerUrl, ConfigValue::String(s)) => {
                         config.server_url = s;
                     }
+                    _ => {}
+                }
+                Task::none()
+            }
 
-                    _ => {
-                        tracing::warn!(
-                            "Type mismatch or unimplemented handler for config update: {:?} ",
-                            field
-                        );
+            Message::SaveConfig => {
+                if let Some(pending) = self.pending_config.take() {
+                    ctx.config = pending;
+                    if let Err(e) = ctx.config.save() {
+                        tracing::error!("Failed to save config: {}", e);
                     }
                 }
                 Task::none()
@@ -74,8 +81,8 @@ impl Screen for SettingsScreen {
         }
     }
 
-    fn view(&self, state: &State) -> Element<'_, Message> {
-        let config = state.pending_config.as_ref().unwrap_or(&state.config);
+    fn view(&self, ctx: &AppContext) -> Element<'_, Message> {
+        let config = self.pending_config.as_ref().unwrap_or(&ctx.config);
 
         let title = text("Settings").size(30);
 
@@ -120,7 +127,7 @@ impl Screen for SettingsScreen {
             .into()
     }
 
-    fn subscription(&self, _state: &State) -> Subscription<Message> {
+    fn subscription(&self, _ctx: &AppContext) -> Subscription<Message> {
         Subscription::none()
     }
 }

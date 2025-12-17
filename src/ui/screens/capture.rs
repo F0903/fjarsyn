@@ -18,7 +18,7 @@ use crate::{
         user_pick_platform_capture_item,
     },
     media::h264::{H264Decoder, H264Encoder},
-    ui::{frame_viewer, message::Message, state::State},
+    ui::{frame_viewer, message::Message, state::AppContext},
 };
 
 #[derive(Debug, Clone)]
@@ -34,14 +34,45 @@ impl Hash for FrameReceiverSubData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+
 pub struct CaptureScreen {
     capture: Arc<Mutex<PlatformCaptureProvider>>,
+
+    pub capturing: bool,
+    pub capture_frame_rate: CaptureFramerate,
+
+    pub frame_data: Option<Bytes>,
+    pub frame_dimensions: Vector2<i32>,
+    pub frame_format: crate::capture_providers::shared::PixelFormat,
+    pub frame_sender: Option<mpsc::Sender<Arc<Frame>>>,
+
+    pub decoder: Option<Arc<Mutex<H264Decoder>>>,
+}
+
+impl std::fmt::Debug for CaptureScreen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CaptureScreen")
+            .field("capturing", &self.capturing)
+            .field("capture_frame_rate", &self.capture_frame_rate)
+            .finish()
+    }
 }
 
 impl CaptureScreen {
     pub fn new(capture: Arc<Mutex<PlatformCaptureProvider>>) -> Self {
-        Self { capture }
+        Self {
+            capture,
+            capturing: false,
+            capture_frame_rate: CaptureFramerate::FPS60,
+
+            frame_data: None,
+            frame_dimensions: Vector2::new(0, 0),
+            frame_format: crate::capture_providers::shared::PixelFormat::BGRA8,
+            frame_sender: None,
+
+            decoder: None,
+        }
     }
 
     fn create_frame_receiver_subscription(data: &FrameReceiverSubData) -> PlatformCaptureStream {
@@ -55,15 +86,16 @@ impl CaptureScreen {
 }
 
 impl Screen for CaptureScreen {
-    fn subscription(&self, state: &State) -> Subscription<Message> {
+    fn subscription(&self, _ctx: &AppContext) -> Subscription<Message> {
         let mut subscriptions = vec![];
 
-        if state.capturing {
+        if self.capturing {
             subscriptions.push(
                 Subscription::<Frame>::run_with(
                     FrameReceiverSubData {
                         capture: self.capture.clone(),
-                        framerate: state.capture_frame_rate,
+
+                        framerate: self.capture_frame_rate,
                         stream_name: "frame-receiver",
                     },
                     Self::create_frame_receiver_subscription,
@@ -75,31 +107,38 @@ impl Screen for CaptureScreen {
         Subscription::batch(subscriptions)
     }
 
-    fn update(&self, state: &mut State, message: Message) -> Task<Message> {
+    fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
         match message {
             Message::RemoteFrameReceived(bytes) => {
-                if state.decoder.is_none() {
+                if self.decoder.is_none() {
                     match H264Decoder::new() {
-                        Ok(decoder) => state.decoder = Some(Arc::new(Mutex::new(decoder))),
+                        Ok(decoder) => self.decoder = Some(Arc::new(Mutex::new(decoder))),
+
                         Err(e) => {
                             tracing::error!("Failed to create H264 Decoder: {}", e);
+
                             return Task::none();
                         }
                     }
                 }
 
-                if let Some(decoder) = &state.decoder {
+                if let Some(decoder) = &self.decoder {
                     let decoder = decoder.clone();
+
                     Task::future(async move {
                         let mut lock = decoder.lock().await;
+
                         match lock.decode(&bytes) {
                             Ok(Some((frame_data, (w, h)))) => Message::DecodedFrameReady(
                                 Bytes::from(frame_data),
                                 Vector2::new(w as i32, h as i32),
                             ),
+
                             Ok(None) => Message::NoOp,
+
                             Err(e) => {
                                 tracing::error!("Failed to decode frame: {}", e);
+
                                 Message::NoOp
                             }
                         }
@@ -110,14 +149,17 @@ impl Screen for CaptureScreen {
             }
 
             Message::DecodedFrameReady(frame_data, size) => {
-                state.frame_data = Some(frame_data);
-                state.frame_dimensions = size;
+                self.frame_data = Some(frame_data);
+
+                self.frame_dimensions = size;
+
                 Task::none()
             }
 
             Message::StartCapture => {
-                let window_handle = match state.main_window_handle {
+                let window_handle = match ctx.main_window_handle {
                     Some(handle) => handle,
+
                     None => {
                         return Task::done(Message::Error("No active window handle".to_string()));
                     }
@@ -127,9 +169,11 @@ impl Screen for CaptureScreen {
                     Ok(future) => Task::future(async move {
                         match future.await {
                             Ok(item) => Message::PlatformUserPickedCaptureItem(Ok(item)),
+
                             Err(e) => Message::PlatformUserPickedCaptureItem(Err(e.to_string())),
                         }
                     }),
+
                     Err(err) => {
                         Task::done(Message::Error(format!("Failed to pick capture item: {}", err)))
                     }
@@ -139,6 +183,7 @@ impl Screen for CaptureScreen {
             Message::PlatformUserPickedCaptureItem(capture_item_result) => {
                 let capture_item = match capture_item_result {
                     Ok(item) => item,
+
                     Err(err) => {
                         return Task::done(Message::Error(format!(
                             "Failed to pick capture item: {}",
@@ -168,8 +213,10 @@ impl Screen for CaptureScreen {
 
                     Task::done(Message::CaptureStarted)
                 }
+
                 Err(_) => {
                     let capture_arc = self.capture.clone();
+
                     Task::future(async move {
                         let _lock = capture_arc.lock().await;
                     })
@@ -178,7 +225,8 @@ impl Screen for CaptureScreen {
             },
 
             Message::CaptureStarted => {
-                state.capturing = true;
+                self.capturing = true;
+
                 Task::none()
             }
 
@@ -195,6 +243,7 @@ impl Screen for CaptureScreen {
 
                 Err(_) => {
                     let capture_arc = self.capture.clone();
+
                     Task::future(async move {
                         let _lock = capture_arc.lock().await;
                     })
@@ -203,45 +252,59 @@ impl Screen for CaptureScreen {
             },
 
             Message::CaptureStopped => {
-                state.capturing = false;
-                state.frame_sender = None;
+                self.capturing = false;
+
+                self.frame_sender = None;
+
                 Task::none()
             }
 
             Message::FrameRateSelected(rate) => {
-                state.capture_frame_rate = rate;
+                self.capture_frame_rate = rate;
+
                 Task::none()
             }
 
             Message::FrameCaptured(frame) => {
-                state.frame_format = frame.format.clone();
-                state.frame_dimensions = frame.size;
-                state.frame_data = Some(Bytes::copy_from_slice(&frame.data));
+                self.frame_format = frame.format.clone();
+
+                self.frame_dimensions = frame.size;
+
+                self.frame_data = Some(Bytes::copy_from_slice(&frame.data));
 
                 // Since we shouldn't block the main thread for too long, we spawn a task to handle the frame
-                if state.frame_sender.is_none() {
-                    let Some(Ok(webrtc)) = &state.webrtc else {
+
+                if self.frame_sender.is_none() {
+                    let Some(Ok(webrtc)) = &ctx.webrtc else {
                         tracing::error!("WebRTC is not initialized yet");
+
                         return Task::none();
                     };
 
                     let (tx, mut rx) = mpsc::channel::<Arc<Frame>>(2);
-                    state.frame_sender = Some(tx.clone());
+
+                    self.frame_sender = Some(tx.clone());
 
                     let webrtc = webrtc.clone();
+
                     let _width = frame.size.x as u32;
+
                     let _height = frame.size.y as u32;
-                    let target_fps = state.capture_frame_rate.to_hz();
-                    let bitrate = state.config.bitrate;
+
+                    let target_fps = self.capture_frame_rate.to_hz();
+
+                    let bitrate = ctx.config.bitrate;
 
                     tokio::spawn(async move {
                         let mut encoder = match H264Encoder::new(bitrate, target_fps) {
                             Ok(enc) => enc,
+
                             Err(e) => {
                                 tracing::error!(
                                     "Failed to create encoder in background task: {}",
                                     e
                                 );
+
                                 return;
                             }
                         };
@@ -250,6 +313,7 @@ impl Screen for CaptureScreen {
                             match encoder.encode(&frame.data, frame.size.x, frame.size.y) {
                                 Ok(nal_units) => {
                                     let frame_duration = frame.duration;
+
                                     for nal in nal_units {
                                         if let Err(e) = webrtc
                                             .write_frame(Bytes::from(nal), frame_duration)
@@ -259,21 +323,25 @@ impl Screen for CaptureScreen {
                                         }
                                     }
                                 }
+
                                 Err(e) => {
                                     tracing::error!("Encoding failed: {}", e);
                                 }
                             }
                         }
+
                         tracing::info!("Encoder thread finished.");
                     });
                 }
 
-                if let Some(tx) = &state.frame_sender {
+                if let Some(tx) = &self.frame_sender {
                     match tx.try_send(frame) {
                         Ok(_) => {}
+
                         Err(mpsc::error::TrySendError::Full(_)) => {
                             tracing::debug!("Encoder queue full, dropping frame");
                         }
+
                         Err(e) => {
                             tracing::warn!("Failed to send frame to encoder: {}", e);
                         }
@@ -287,6 +355,7 @@ impl Screen for CaptureScreen {
                 if !err.is_empty() {
                     tracing::error!("Error: {}", err);
                 }
+
                 Task::none()
             }
 
@@ -294,30 +363,26 @@ impl Screen for CaptureScreen {
         }
     }
 
-    fn view(&self, state: &State) -> Element<'_, Message> {
+    fn view(&self, _ctx: &AppContext) -> Element<'_, Message> {
         let control_row: Element<Message> = container(
             row([
-                if state.capturing {
-                    button(text(state.capture_frame_rate.to_string()))
+                if self.capturing {
+                    button(text(self.capture_frame_rate.to_string()))
                         .style(iced::widget::button::secondary)
                         .into()
                 } else {
                     pick_list(
                         CaptureFramerate::ALL,
-                        Some(state.capture_frame_rate),
+                        Some(self.capture_frame_rate),
                         Message::FrameRateSelected,
                     )
                     .into()
                 },
                 button("Start Capture")
-                    .on_press_maybe(if state.capturing {
-                        None
-                    } else {
-                        Some(Message::StartCapture)
-                    })
+                    .on_press_maybe(if self.capturing { None } else { Some(Message::StartCapture) })
                     .into(),
                 button("Stop Capture")
-                    .on_press_maybe(if state.capturing { Some(Message::StopCapture) } else { None })
+                    .on_press_maybe(if self.capturing { Some(Message::StopCapture) } else { None })
                     .into(),
             ])
             .spacing(10),
@@ -326,14 +391,15 @@ impl Screen for CaptureScreen {
         .center_x(Length::Fill)
         .into();
 
-        let screen_share_preview = match &state.frame_data {
+        let screen_share_preview = match &self.frame_data {
             Some(frame_data) => container(frame_viewer::frame_viewer(
                 frame_data.clone(),
-                state.frame_dimensions.x as u32,
-                state.frame_dimensions.y as u32,
+                self.frame_dimensions.x as u32,
+                self.frame_dimensions.y as u32,
             ))
             .center(Length::Fill)
             .into(),
+
             None => container(text("No preview available.")).center(Length::Fill).into(),
         };
 
