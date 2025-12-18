@@ -6,7 +6,10 @@ use tokio::sync::{Mutex, mpsc};
 use crate::{
     config::Config,
     networking::webrtc::{WebRTC, WebRTCEvent},
-    ui::app::{ActiveScreen, FrameReceiverRef},
+    ui::{
+        app::{ActiveScreen, FrameReceiverRef},
+        notification::{Notification, NotificationKind},
+    },
 };
 
 pub struct AppContext {
@@ -22,6 +25,16 @@ pub struct AppContext {
 
     pub webrtc: Option<Result<WebRTC, String>>,
     pub target_id: Option<String>,
+
+    pub notifications: Vec<Notification>,
+    pub notification_counter: u64,
+}
+
+impl AppContext {
+    pub fn push_notification(&mut self, message: String, kind: NotificationKind) {
+        self.notification_counter += 1;
+        self.notifications.push(Notification::new(self.notification_counter, message, kind));
+    }
 }
 
 pub struct State {

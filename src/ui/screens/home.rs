@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use iced::{
     Element, Length, Subscription, Task,
     widget::{button, column, container, row, text, text_input},
@@ -16,28 +14,40 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
+pub enum HomeMessage {
+    TargetIdChanged(String),
+    StartCall(String),
+    CopyId(String),
+}
+
+#[derive(Debug, Clone)]
 pub struct HomeScreen {}
 
 impl HomeScreen {
     pub fn new(ctx: &mut AppContext) -> Result<(Self, Task<Message>), ScreenError> {
-        let Some(frame_tx) = ctx.frame_tx.take() else {
-            return Err(ScreenError::ScreenInitializationError(
-                "Frame transmitter not found".to_owned(),
-            ));
-        };
-        let Some(webrtc_event_tx) = ctx.webrtc_event_tx.take() else {
-            return Err(ScreenError::ScreenInitializationError(
-                "WebRTC event transmitter not found".to_owned(),
-            ));
-        };
-        let server_url = ctx.config.server_url.clone();
-        Ok((
-            Self {},
-            Task::future(async move {
-                WebRTC::new(server_url, frame_tx, webrtc_event_tx).await.map_err(Arc::new)
-            })
-            .map(Message::WebRTCInitialized),
-        ))
+        let mut task = Task::none();
+
+        // We init WebRTC here if it's not already initialized
+        if ctx.webrtc.is_none() {
+            let Some(frame_tx) = ctx.frame_tx.clone() else {
+                return Err(ScreenError::ScreenInitializationError(
+                    "Frame channel not initialized.".to_owned(),
+                ));
+            };
+            let Some(webrtc_event_tx) = ctx.webrtc_event_tx.clone() else {
+                return Err(ScreenError::ScreenInitializationError(
+                    "WebRTC event channel not initialized.".to_owned(),
+                ));
+            };
+            let server_url = ctx.config.server_url.clone();
+            task = Task::future(
+                async move { WebRTC::new(server_url, frame_tx, webrtc_event_tx).await },
+            )
+            .map_err(std::sync::Arc::new)
+            .map(Message::WebRTCInitialized);
+        }
+
+        Ok((Self {}, task))
     }
 }
 
@@ -48,10 +58,27 @@ impl Screen for HomeScreen {
 
     fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
         match message {
-            Message::TargetIdChanged(id) => {
-                ctx.target_id = Some(id);
-                Task::none()
-            }
+            Message::Home(msg) => match msg {
+                HomeMessage::TargetIdChanged(id) => {
+                    ctx.target_id = Some(id);
+                    Task::none()
+                }
+                HomeMessage::StartCall(target_id) => {
+                    if let Some(Ok(webrtc)) = &ctx.webrtc {
+                        let webrtc_clone = webrtc.clone();
+                        Task::future(async move {
+                            match webrtc_clone.create_offer(target_id).await {
+                                Ok(_) => Message::Navigate(Route::Capture),
+                                Err(e) => Message::Error(format!("Failed to create offer: {}", e)),
+                            }
+                        })
+                    } else {
+                        tracing::warn!("Could not start call. WebRTC not initialized...");
+                        Task::none()
+                    }
+                }
+                HomeMessage::CopyId(id) => iced::clipboard::write(id),
+            },
             _ => Task::none(),
         }
     }
@@ -63,7 +90,7 @@ impl Screen for HomeScreen {
             Some(Ok(webrtc)) => match webrtc.get_local_id() {
                 Some(id) => row![
                     text(format!("My ID: {}", id)).size(20),
-                    button("Copy").on_press(Message::CopyId(id))
+                    button("Copy").on_press(Message::Home(HomeMessage::CopyId(id)))
                 ]
                 .spacing(10),
                 None => row![text("Connecting to signaling server...").size(20)],
@@ -74,7 +101,7 @@ impl Screen for HomeScreen {
 
         let remote_input =
             text_input("Enter Peer ID to call", ctx.target_id.as_deref().unwrap_or(""))
-                .on_input(Message::TargetIdChanged)
+                .on_input(|id| Message::Home(HomeMessage::TargetIdChanged(id)))
                 .padding(10)
                 .width(Length::Fixed(400.0));
 
@@ -83,7 +110,7 @@ impl Screen for HomeScreen {
                 if let Some(id) = ctx.target_id.as_deref()
                     && !id.is_empty()
                 {
-                    Some(Message::StartCall(id.to_owned()))
+                    Some(Message::Home(HomeMessage::StartCall(id.to_owned())))
                 } else {
                     None
                 },

@@ -85,6 +85,20 @@ impl CaptureScreen {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum CaptureMessage {
+    StartCapture,
+    CaptureStarted,
+    StopCapture,
+    CaptureStopped,
+    TryStartCapture(crate::capture_providers::PlatformCaptureItem),
+    TryStopCapture,
+    PlatformUserPickedCaptureItem(Result<crate::capture_providers::PlatformCaptureItem, String>),
+    FrameCaptured(Arc<Frame>),
+    FrameRateSelected(CaptureFramerate),
+    DecodedFrameReady(Bytes, Vector2<i32>),
+}
+
 impl Screen for CaptureScreen {
     fn subscription(&self, _ctx: &AppContext) -> Subscription<Message> {
         let mut subscriptions = vec![];
@@ -100,7 +114,7 @@ impl Screen for CaptureScreen {
                     },
                     Self::create_frame_receiver_subscription,
                 )
-                .map(|f| Message::FrameCaptured(Arc::new(f))),
+                .map(|f| Message::Capture(CaptureMessage::FrameCaptured(Arc::new(f)))),
             );
         }
 
@@ -129,10 +143,12 @@ impl Screen for CaptureScreen {
                         let mut lock = decoder.lock().await;
 
                         match lock.decode(&bytes) {
-                            Ok(Some((frame_data, (w, h)))) => Message::DecodedFrameReady(
-                                Bytes::from(frame_data),
-                                Vector2::new(w as i32, h as i32),
-                            ),
+                            Ok(Some((frame_data, (w, h)))) => {
+                                Message::Capture(CaptureMessage::DecodedFrameReady(
+                                    Bytes::from(frame_data),
+                                    Vector2::new(w as i32, h as i32),
+                                ))
+                            }
 
                             Ok(None) => Message::NoOp,
 
@@ -148,208 +164,188 @@ impl Screen for CaptureScreen {
                 }
             }
 
-            Message::DecodedFrameReady(frame_data, size) => {
-                self.frame_data = Some(frame_data);
+            Message::Capture(msg) => match msg {
+                CaptureMessage::DecodedFrameReady(frame_data, size) => {
+                    self.frame_data = Some(frame_data);
+                    self.frame_dimensions = size;
+                    Task::none()
+                }
 
-                self.frame_dimensions = size;
-
-                Task::none()
-            }
-
-            Message::StartCapture => {
-                let window_handle = match ctx.main_window_handle {
-                    Some(handle) => handle,
-
-                    None => {
-                        return Task::done(Message::Error("No active window handle".to_string()));
-                    }
-                };
-
-                match user_pick_platform_capture_item(window_handle) {
-                    Ok(future) => Task::future(async move {
-                        match future.await {
-                            Ok(item) => Message::PlatformUserPickedCaptureItem(Ok(item)),
-
-                            Err(e) => Message::PlatformUserPickedCaptureItem(Err(e.to_string())),
+                CaptureMessage::StartCapture => {
+                    let window_handle = match ctx.main_window_handle {
+                        Some(handle) => handle,
+                        None => {
+                            return Task::done(Message::Error(
+                                "No active window handle".to_string(),
+                            ));
                         }
-                    }),
-
-                    Err(err) => {
-                        Task::done(Message::Error(format!("Failed to pick capture item: {}", err)))
-                    }
-                }
-            }
-
-            Message::PlatformUserPickedCaptureItem(capture_item_result) => {
-                let capture_item = match capture_item_result {
-                    Ok(item) => item,
-
-                    Err(err) => {
-                        return Task::done(Message::Error(format!(
-                            "Failed to pick capture item: {}",
-                            err
-                        )));
-                    }
-                };
-
-                Task::done(Message::TryStartCapture(capture_item))
-            }
-
-            Message::TryStartCapture(capture_item) => match self.capture.try_lock() {
-                Ok(mut capture) => {
-                    if let Err(err) = capture.set_capture_item(capture_item.clone()) {
-                        return Task::done(Message::Error(format!(
-                            "Failed to set capture item: {}",
-                            err
-                        )));
-                    }
-
-                    if let Err(err) = capture.start_capture() {
-                        return Task::done(Message::Error(format!(
-                            "Failed to start capture: {}",
-                            err
-                        )));
-                    }
-
-                    Task::done(Message::CaptureStarted)
-                }
-
-                Err(_) => {
-                    let capture_arc = self.capture.clone();
-
-                    Task::future(async move {
-                        let _lock = capture_arc.lock().await;
-                    })
-                    .map(move |_| Message::TryStartCapture(capture_item.clone()))
-                }
-            },
-
-            Message::CaptureStarted => {
-                self.capturing = true;
-
-                Task::none()
-            }
-
-            Message::StopCapture => Task::done(Message::TryStopCapture),
-
-            Message::TryStopCapture => match self.capture.try_lock() {
-                Ok(mut capture) => {
-                    if let Err(err) = capture.stop_capture() {
-                        tracing::error!("Failed to stop capture: {}", err);
-                    }
-
-                    Task::done(Message::CaptureStopped)
-                }
-
-                Err(_) => {
-                    let capture_arc = self.capture.clone();
-
-                    Task::future(async move {
-                        let _lock = capture_arc.lock().await;
-                    })
-                    .map(move |_| Message::TryStopCapture)
-                }
-            },
-
-            Message::CaptureStopped => {
-                self.capturing = false;
-
-                self.frame_sender = None;
-
-                Task::none()
-            }
-
-            Message::FrameRateSelected(rate) => {
-                self.capture_frame_rate = rate;
-
-                Task::none()
-            }
-
-            Message::FrameCaptured(frame) => {
-                self.frame_format = frame.format.clone();
-
-                self.frame_dimensions = frame.size;
-
-                self.frame_data = Some(Bytes::copy_from_slice(&frame.data));
-
-                // Since we shouldn't block the main thread for too long, we spawn a task to handle the frame
-
-                if self.frame_sender.is_none() {
-                    let Some(Ok(webrtc)) = &ctx.webrtc else {
-                        tracing::error!("WebRTC is not initialized yet");
-
-                        return Task::none();
                     };
 
-                    let (tx, mut rx) = mpsc::channel::<Arc<Frame>>(2);
-
-                    self.frame_sender = Some(tx.clone());
-
-                    let webrtc = webrtc.clone();
-
-                    let _width = frame.size.x as u32;
-
-                    let _height = frame.size.y as u32;
-
-                    let target_fps = self.capture_frame_rate.to_hz();
-
-                    let bitrate = ctx.config.bitrate;
-
-                    tokio::spawn(async move {
-                        let mut encoder = match H264Encoder::new(bitrate, target_fps) {
-                            Ok(enc) => enc,
-
-                            Err(e) => {
-                                tracing::error!(
-                                    "Failed to create encoder in background task: {}",
-                                    e
-                                );
-
-                                return;
-                            }
-                        };
-
-                        while let Some(frame) = rx.recv().await {
-                            match encoder.encode(&frame.data, frame.size.x, frame.size.y) {
-                                Ok(nal_units) => {
-                                    let frame_duration = frame.duration;
-
-                                    for nal in nal_units {
-                                        if let Err(e) = webrtc
-                                            .write_frame(Bytes::from(nal), frame_duration)
-                                            .await
-                                        {
-                                            tracing::error!("WebRTC write failed: {}", e);
-                                        }
-                                    }
-                                }
-
+                    match user_pick_platform_capture_item(window_handle) {
+                        Ok(future) => Task::future(async move {
+                            match future.await {
+                                Ok(item) => Message::Capture(
+                                    CaptureMessage::PlatformUserPickedCaptureItem(Ok(item)),
+                                ),
                                 Err(e) => {
-                                    tracing::error!("Encoding failed: {}", e);
+                                    Message::Capture(CaptureMessage::PlatformUserPickedCaptureItem(
+                                        Err(e.to_string()),
+                                    ))
                                 }
                             }
-                        }
-
-                        tracing::info!("Encoder thread finished.");
-                    });
-                }
-
-                if let Some(tx) = &self.frame_sender {
-                    match tx.try_send(frame) {
-                        Ok(_) => {}
-
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            tracing::debug!("Encoder queue full, dropping frame");
-                        }
-
-                        Err(e) => {
-                            tracing::warn!("Failed to send frame to encoder: {}", e);
-                        }
+                        }),
+                        Err(err) => Task::done(Message::Error(format!(
+                            "Failed to pick capture item: {}",
+                            err
+                        ))),
                     }
                 }
 
-                Task::none()
-            }
+                CaptureMessage::PlatformUserPickedCaptureItem(capture_item_result) => {
+                    let capture_item = match capture_item_result {
+                        Ok(item) => item,
+                        Err(err) => {
+                            return Task::done(Message::Error(format!(
+                                "Failed to pick capture item: {}",
+                                err
+                            )));
+                        }
+                    };
+                    Task::done(Message::Capture(CaptureMessage::TryStartCapture(capture_item)))
+                }
+
+                CaptureMessage::TryStartCapture(capture_item) => match self.capture.try_lock() {
+                    Ok(mut capture) => {
+                        if let Err(err) = capture.set_capture_item(capture_item.clone()) {
+                            return Task::done(Message::Error(format!(
+                                "Failed to set capture item: {}",
+                                err
+                            )));
+                        }
+
+                        if let Err(err) = capture.start_capture() {
+                            return Task::done(Message::Error(format!(
+                                "Failed to start capture: {}",
+                                err
+                            )));
+                        }
+
+                        Task::done(Message::Capture(CaptureMessage::CaptureStarted))
+                    }
+                    Err(_) => {
+                        let capture_arc = self.capture.clone();
+                        Task::future(async move {
+                            let _lock = capture_arc.lock().await;
+                        })
+                        .map(move |_| {
+                            Message::Capture(CaptureMessage::TryStartCapture(capture_item.clone()))
+                        })
+                    }
+                },
+
+                CaptureMessage::CaptureStarted => {
+                    self.capturing = true;
+                    Task::none()
+                }
+
+                CaptureMessage::StopCapture => {
+                    Task::done(Message::Capture(CaptureMessage::TryStopCapture))
+                }
+
+                CaptureMessage::TryStopCapture => match self.capture.try_lock() {
+                    Ok(mut capture) => {
+                        if let Err(err) = capture.stop_capture() {
+                            tracing::error!("Failed to stop capture: {}", err);
+                        }
+                        Task::done(Message::Capture(CaptureMessage::CaptureStopped))
+                    }
+                    Err(_) => {
+                        let capture_arc = self.capture.clone();
+                        Task::future(async move {
+                            let _lock = capture_arc.lock().await;
+                        })
+                        .map(move |_| Message::Capture(CaptureMessage::TryStopCapture))
+                    }
+                },
+
+                CaptureMessage::CaptureStopped => {
+                    self.capturing = false;
+                    self.frame_sender = None;
+                    Task::none()
+                }
+
+                CaptureMessage::FrameRateSelected(rate) => {
+                    self.capture_frame_rate = rate;
+                    Task::none()
+                }
+
+                CaptureMessage::FrameCaptured(frame) => {
+                    self.frame_format = frame.format.clone();
+                    self.frame_dimensions = frame.size;
+                    self.frame_data = Some(Bytes::copy_from_slice(&frame.data));
+
+                    if self.frame_sender.is_none() {
+                        let Some(Ok(webrtc)) = &ctx.webrtc else {
+                            tracing::error!("WebRTC is not initialized yet");
+                            return Task::none();
+                        };
+
+                        let (tx, mut rx) = mpsc::channel::<Arc<Frame>>(2);
+                        self.frame_sender = Some(tx.clone());
+
+                        let webrtc = webrtc.clone();
+                        let target_fps = self.capture_frame_rate.to_hz();
+                        let bitrate = ctx.config.bitrate;
+
+                        tokio::spawn(async move {
+                            let mut encoder = match H264Encoder::new(bitrate, target_fps) {
+                                Ok(enc) => enc,
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to create encoder in background task: {}",
+                                        e
+                                    );
+                                    return;
+                                }
+                            };
+
+                            while let Some(frame) = rx.recv().await {
+                                match encoder.encode(&frame.data, frame.size.x, frame.size.y) {
+                                    Ok(nal_units) => {
+                                        let frame_duration = frame.duration;
+                                        for nal in nal_units {
+                                            if let Err(e) = webrtc
+                                                .write_frame(Bytes::from(nal), frame_duration)
+                                                .await
+                                            {
+                                                tracing::error!("WebRTC write failed: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Encoding failed: {}", e);
+                                    }
+                                }
+                            }
+                            tracing::info!("Encoder thread finished.");
+                        });
+                    }
+
+                    if let Some(tx) = &self.frame_sender {
+                        match tx.try_send(frame) {
+                            Ok(_) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                tracing::debug!("Encoder queue full, dropping frame");
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to send frame to encoder: {}", e);
+                            }
+                        }
+                    }
+
+                    Task::none()
+                }
+            },
 
             Message::Error(err) => {
                 if !err.is_empty() {
@@ -371,18 +367,24 @@ impl Screen for CaptureScreen {
                         .style(iced::widget::button::secondary)
                         .into()
                 } else {
-                    pick_list(
-                        CaptureFramerate::ALL,
-                        Some(self.capture_frame_rate),
-                        Message::FrameRateSelected,
-                    )
+                    pick_list(CaptureFramerate::ALL, Some(self.capture_frame_rate), |rate| {
+                        Message::Capture(CaptureMessage::FrameRateSelected(rate))
+                    })
                     .into()
                 },
                 button("Start Capture")
-                    .on_press_maybe(if self.capturing { None } else { Some(Message::StartCapture) })
+                    .on_press_maybe(if self.capturing {
+                        None
+                    } else {
+                        Some(Message::Capture(CaptureMessage::StartCapture))
+                    })
                     .into(),
                 button("Stop Capture")
-                    .on_press_maybe(if self.capturing { Some(Message::StopCapture) } else { None })
+                    .on_press_maybe(if self.capturing {
+                        Some(Message::Capture(CaptureMessage::StopCapture))
+                    } else {
+                        None
+                    })
                     .into(),
             ])
             .spacing(10),

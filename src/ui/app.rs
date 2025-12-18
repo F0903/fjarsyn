@@ -154,6 +154,9 @@ impl Program for App {
 
                     webrtc: None,
                     target_id: None,
+
+                    notifications: Vec::new(),
+                    notification_counter: 0,
                 },
                 active_screen: ActiveScreen::Onboarding(
                     screens::onboarding::OnboardingScreen::new(server_url.clone()),
@@ -219,15 +222,15 @@ impl Program for App {
 
             Message::Navigate(route) => match route {
                 Route::Home => {
-                    let (home, home_task) = match screens::home::HomeScreen::new(&mut state.ctx) {
+                    let (screen, task) = match screens::home::HomeScreen::new(&mut state.ctx) {
                         Ok(val) => val,
                         Err(err) => {
-                            tracing::error!("Failed to create home screen! {}", err);
+                            tracing::error!("Failed to create HomeScreen: {}", err);
                             return Task::none();
                         }
                     };
-                    state.active_screen = ActiveScreen::Home(home);
-                    home_task
+                    state.active_screen = ActiveScreen::Home(screen);
+                    task
                 }
 
                 Route::Capture => {
@@ -244,22 +247,7 @@ impl Program for App {
                 }
             },
 
-            Message::StartCall(target_id) => {
-                if let Some(Ok(webrtc)) = &state.ctx.webrtc {
-                    let webrtc_clone = webrtc.clone();
-
-                    Task::future(async move {
-                        match webrtc_clone.create_offer(target_id).await {
-                            Ok(_) => Message::Navigate(Route::Capture),
-                            Err(e) => Message::Error(format!("Failed to create offer: {}", e)),
-                        }
-                    })
-                } else {
-                    tracing::warn!("Could not start call. WebRTC not initialized...");
-                    Task::none()
-                }
-            }
-
+            // Sub-messages are delegated at the end, but specific global ones like WebRTCEvent remain here.
             Message::RemoteFrameReceived(frame) => {
                 let mut tasks = vec![];
 
@@ -323,8 +311,6 @@ impl Program for App {
                 }
             },
 
-            Message::CopyId(id) => iced::clipboard::write(id),
-
             msg => delegate_to_screen(state, msg),
         }
     }
@@ -334,11 +320,17 @@ impl Program for App {
         state: &'a Self::State,
         _window: window::Id,
     ) -> Element<'a, Self::Message, Self::Theme, Self::Renderer> {
-        match &state.active_screen {
+        let screen_content = match &state.active_screen {
             ActiveScreen::Onboarding(screen) => screen.view(&state.ctx),
             ActiveScreen::Home(screen) => screen.view(&state.ctx),
             ActiveScreen::Capture(screen) => screen.view(&state.ctx),
             ActiveScreen::Settings(screen) => screen.view(&state.ctx),
-        }
+        };
+
+        iced::widget::stack![
+            screen_content,
+            crate::ui::notification::view(&state.ctx.notifications)
+        ]
+        .into()
     }
 }

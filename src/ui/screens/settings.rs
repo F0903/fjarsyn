@@ -25,6 +25,12 @@ pub enum ConfigValue {
 }
 
 #[derive(Debug, Clone)]
+pub enum SettingsMessage {
+    ConfigUpdate(ConfigField, ConfigValue),
+    SaveConfig,
+}
+
+#[derive(Debug, Clone)]
 pub struct SettingsScreen {
     pub pending_config: Option<Config>,
 }
@@ -43,39 +49,41 @@ impl Screen for SettingsScreen {
         };
 
         match message {
-            Message::ConfigUpdate(field, value) => {
-                tracing::info!("Config update: {:?} {:?}", field, value);
-                match (field, value) {
-                    (ConfigField::Bitrate, ConfigValue::String(s)) => {
-                        if let Ok(num) = s.parse::<u32>() {
-                            config.bitrate = num;
+            Message::Settings(msg) => match msg {
+                SettingsMessage::ConfigUpdate(field, value) => {
+                    tracing::info!("Config update: {:?} {:?}", field, value);
+                    match (field, value) {
+                        (ConfigField::Bitrate, ConfigValue::String(s)) => {
+                            if let Ok(num) = s.parse::<u32>() {
+                                config.bitrate = num;
+                            }
+                        }
+                        (ConfigField::Bitrate, ConfigValue::Number(n)) => {
+                            config.bitrate = n;
+                        }
+
+                        (ConfigField::Framerate, ConfigValue::Framerate(rate)) => {
+                            config.framerate = rate;
+                        }
+
+                        (ConfigField::ServerUrl, ConfigValue::String(s)) => {
+                            config.server_url = s;
+                        }
+                        _ => {}
+                    }
+                    Task::none()
+                }
+
+                SettingsMessage::SaveConfig => {
+                    if let Some(pending) = self.pending_config.take() {
+                        ctx.config = pending;
+                        if let Err(e) = ctx.config.save() {
+                            tracing::error!("Failed to save config: {}", e);
                         }
                     }
-                    (ConfigField::Bitrate, ConfigValue::Number(n)) => {
-                        config.bitrate = n;
-                    }
-
-                    (ConfigField::Framerate, ConfigValue::Framerate(rate)) => {
-                        config.framerate = rate;
-                    }
-
-                    (ConfigField::ServerUrl, ConfigValue::String(s)) => {
-                        config.server_url = s;
-                    }
-                    _ => {}
+                    Task::none()
                 }
-                Task::none()
-            }
-
-            Message::SaveConfig => {
-                if let Some(pending) = self.pending_config.take() {
-                    ctx.config = pending;
-                    if let Err(e) = ctx.config.save() {
-                        tracing::error!("Failed to save config: {}", e);
-                    }
-                }
-                Task::none()
-            }
+            },
 
             _ => Task::none(),
         }
@@ -87,20 +95,34 @@ impl Screen for SettingsScreen {
         let title = text("Settings").size(30);
 
         let bitrate_input = text_input("Bitrate (bps)", &config.bitrate.to_string())
-            .on_input(|val| Message::ConfigUpdate(ConfigField::Bitrate, ConfigValue::String(val)))
+            .on_input(|val| {
+                Message::Settings(SettingsMessage::ConfigUpdate(
+                    ConfigField::Bitrate,
+                    ConfigValue::String(val),
+                ))
+            })
             .padding(10);
 
         let framerate_pick =
             pick_list(&CaptureFramerate::ALL[..], Some(config.framerate), |rate| {
-                Message::ConfigUpdate(ConfigField::Framerate, ConfigValue::Framerate(rate))
+                Message::Settings(SettingsMessage::ConfigUpdate(
+                    ConfigField::Framerate,
+                    ConfigValue::Framerate(rate),
+                ))
             })
             .padding(10);
 
         let url_input = text_input("Signaling Server URL", &config.server_url)
-            .on_input(|val| Message::ConfigUpdate(ConfigField::ServerUrl, ConfigValue::String(val)))
+            .on_input(|val| {
+                Message::Settings(SettingsMessage::ConfigUpdate(
+                    ConfigField::ServerUrl,
+                    ConfigValue::String(val),
+                ))
+            })
             .padding(10);
 
-        let save_button = button("Save").on_press(Message::SaveConfig).padding(10);
+        let save_button =
+            button("Save").on_press(Message::Settings(SettingsMessage::SaveConfig)).padding(10);
 
         let back_button =
             button("Back").on_press(Message::Navigate(crate::ui::message::Route::Home)).padding(10);
