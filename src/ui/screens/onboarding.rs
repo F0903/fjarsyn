@@ -1,12 +1,15 @@
 use iced::{
     Element, Length, Subscription, Task,
-    widget::{column, container, text, text_input},
+    widget::{button, column, container, text, text_input},
 };
 
 use super::Screen;
-use crate::ui::{
-    message::{Message, Route},
-    state::AppContext,
+use crate::{
+    networking::webrtc::WebRTC,
+    ui::{
+        message::{Message, Route},
+        state::AppContext,
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -38,13 +41,32 @@ impl Screen for OnboardingScreen {
                 Task::none()
             }
             Message::Onboarding(OnboardingMessage::SaveClicked) => {
-                //TODO: validate and test server url before commiting to config.
+                let Some(frame_tx) = ctx.frame_tx.clone() else {
+                    tracing::error!("Frame channel not available.");
+                    return Task::none();
+                };
+                let Some(webrtc_event_tx) = ctx.webrtc_event_tx.clone() else {
+                    tracing::error!("WebRTC event channel not available.");
+                    return Task::none();
+                };
+                let server_url = ctx.config.server_url.clone();
+
+                Task::future(
+                    async move { WebRTC::new(server_url, frame_tx, webrtc_event_tx).await },
+                )
+                .map_err(std::sync::Arc::new)
+                .map(Message::WebRTCInitialized)
+            }
+
+            Message::WebRTCInitialized(Ok(_webrtc)) => {
+                ctx.config.onboarding_done = true;
                 ctx.config.server_url = self.server_url.clone();
-                if let Err(e) = ctx.config.save() {
-                    tracing::error!("Failed to save config: {}", e);
+                if let Err(err) = ctx.config.save() {
+                    tracing::error!("Failed to save config: {}", err);
                 }
                 Task::done(Message::Navigate(Route::Home))
             }
+
             _ => Task::none(),
         }
     }
@@ -53,11 +75,14 @@ impl Screen for OnboardingScreen {
         let content = column![
             text("Welcome to Fjarsyn").size(30),
             text("Before we get started, enter the URL of your signaling server").size(14),
-            text_input(&self.server_url, &self.server_url)
+            text_input("Signaling Server URL", &self.server_url)
                 .on_input(|val| Message::Onboarding(OnboardingMessage::ServerUrlChanged(val)))
+                .padding(10),
+            button("Save").on_press(Message::Onboarding(OnboardingMessage::SaveClicked))
         ]
         .spacing(20)
-        .align_x(iced::Alignment::Center);
+        .align_x(iced::Alignment::Center)
+        .max_width(500);
 
         container(content).center(Length::Fill).into()
     }

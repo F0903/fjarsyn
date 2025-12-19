@@ -4,13 +4,9 @@ use iced::{
 };
 
 use super::Screen;
-use crate::{
-    networking::webrtc::WebRTC,
-    ui::{
-        message::{Message, Route},
-        screens::ScreenError,
-        state::AppContext,
-    },
+use crate::ui::{
+    message::{Message, Route},
+    state::AppContext,
 };
 
 #[derive(Debug, Clone)]
@@ -24,30 +20,8 @@ pub enum HomeMessage {
 pub struct HomeScreen {}
 
 impl HomeScreen {
-    pub fn new(ctx: &mut AppContext) -> Result<(Self, Task<Message>), ScreenError> {
-        let mut task = Task::none();
-
-        // We init WebRTC here if it's not already initialized
-        if ctx.webrtc.is_none() {
-            let Some(frame_tx) = ctx.frame_tx.clone() else {
-                return Err(ScreenError::ScreenInitializationError(
-                    "Frame channel not initialized.".to_owned(),
-                ));
-            };
-            let Some(webrtc_event_tx) = ctx.webrtc_event_tx.clone() else {
-                return Err(ScreenError::ScreenInitializationError(
-                    "WebRTC event channel not initialized.".to_owned(),
-                ));
-            };
-            let server_url = ctx.config.server_url.clone();
-            task = Task::future(
-                async move { WebRTC::new(server_url, frame_tx, webrtc_event_tx).await },
-            )
-            .map_err(std::sync::Arc::new)
-            .map(Message::WebRTCInitialized);
-        }
-
-        Ok((Self {}, task))
+    pub fn new(_ctx: &mut AppContext) -> Self {
+        Self {}
     }
 }
 
@@ -64,7 +38,7 @@ impl Screen for HomeScreen {
                     Task::none()
                 }
                 HomeMessage::StartCall(target_id) => {
-                    if let Some(Ok(webrtc)) = &ctx.webrtc {
+                    if let Some(webrtc) = &ctx.webrtc {
                         let webrtc_clone = webrtc.clone();
                         Task::future(async move {
                             match webrtc_clone.create_offer(target_id).await {
@@ -87,7 +61,7 @@ impl Screen for HomeScreen {
         let title = text("Welcome to Fjarsyn").size(30);
 
         let id_display = match &ctx.webrtc {
-            Some(Ok(webrtc)) => match webrtc.get_local_id() {
+            Some(webrtc) => match webrtc.get_local_id() {
                 Some(id) => row![
                     text(format!("My ID: {}", id)).size(20),
                     button("Copy").on_press(Message::Home(HomeMessage::CopyId(id)))
@@ -95,7 +69,6 @@ impl Screen for HomeScreen {
                 .spacing(10),
                 None => row![text("Connecting to signaling server...").size(20)],
             },
-            Some(Err(err)) => row![text(format!("Error: {}", err)).size(20)],
             None => row![text("Connecting to signaling server...").size(20)],
         };
 

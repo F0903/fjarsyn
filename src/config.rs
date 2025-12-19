@@ -45,8 +45,13 @@ impl Config {
                 }
             }
         }
+
         tracing::info!("No config file could be loaded, using default config.");
-        Self::default()
+        let default = Self::default();
+        if let Err(e) = default.save() {
+            tracing::error!("Failed to save default config: {}", e);
+        }
+        default
     }
 
     pub fn save(&self) -> std::io::Result<()> {

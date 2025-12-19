@@ -8,7 +8,7 @@ use crate::{
     networking::webrtc::{WebRTC, WebRTCEvent},
     ui::{
         app::{ActiveScreen, FrameReceiverRef},
-        notification::{Notification, NotificationKind},
+        notification_provider::NotificationProvider,
     },
 };
 
@@ -23,18 +23,10 @@ pub struct AppContext {
 
     pub main_window_handle: Option<u64>,
 
-    pub webrtc: Option<Result<WebRTC, String>>,
+    pub webrtc: Option<WebRTC>,
     pub target_id: Option<String>,
 
-    pub notifications: Vec<Notification>,
-    pub notification_counter: u64,
-}
-
-impl AppContext {
-    pub fn push_notification(&mut self, message: String, kind: NotificationKind) {
-        self.notification_counter += 1;
-        self.notifications.push(Notification::new(self.notification_counter, message, kind));
-    }
+    pub notifications: NotificationProvider,
 }
 
 pub struct State {

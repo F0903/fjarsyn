@@ -9,9 +9,10 @@ use super::screens::{self, Screen};
 use crate::{
     capture_providers::PlatformCaptureProvider,
     config::Config,
-    networking::webrtc::WebRTCEvent,
+    networking::webrtc::{WebRTC, WebRTCEvent},
     ui::{
         message::{Message, Route},
+        notification_provider::NotificationProvider,
         state::{AppContext, State},
     },
 };
@@ -141,29 +142,42 @@ impl Program for App {
         let config = Config::load();
         let server_url = config.server_url.clone();
 
-        (
-            State {
-                ctx: AppContext {
-                    config,
-                    main_window_handle: None,
+        let onboarding_done = config.onboarding_done;
 
-                    frame_tx: Some(frame_tx),
-                    frame_rx: FrameReceiverRef(Arc::new(Mutex::new(frame_rx))),
-                    webrtc_event_tx: Some(event_tx),
-                    webrtc_event_rx: Some(Arc::new(Mutex::new(event_rx))),
+        // Clone for potential init task
+        let init_frame_tx = frame_tx.clone();
+        let init_event_tx = event_tx.clone();
 
-                    webrtc: None,
-                    target_id: None,
+        let mut ctx = AppContext {
+            config,
+            main_window_handle: None,
 
-                    notifications: Vec::new(),
-                    notification_counter: 0,
-                },
-                active_screen: ActiveScreen::Onboarding(
-                    screens::onboarding::OnboardingScreen::new(server_url.clone()),
-                ),
-            },
-            Task::none(),
-        )
+            frame_tx: Some(frame_tx),
+            frame_rx: FrameReceiverRef(Arc::new(Mutex::new(frame_rx))),
+            webrtc_event_tx: Some(event_tx),
+            webrtc_event_rx: Some(Arc::new(Mutex::new(event_rx))),
+
+            webrtc: None,
+            target_id: None,
+
+            notifications: NotificationProvider::new(),
+        };
+
+        let active_screen = if onboarding_done {
+            ActiveScreen::Home(screens::home::HomeScreen::new(&mut ctx))
+        } else {
+            ActiveScreen::Onboarding(screens::onboarding::OnboardingScreen::new(server_url.clone()))
+        };
+
+        let init_task = if onboarding_done {
+            Task::future(async move { WebRTC::new(server_url, init_frame_tx, init_event_tx).await })
+                .map_err(Arc::new)
+                .map(Message::WebRTCInitialized)
+        } else {
+            Task::none()
+        };
+
+        (State { ctx, active_screen }, init_task)
     }
 
     fn subscription(&self, state: &Self::State) -> Subscription<Message> {
@@ -187,12 +201,15 @@ impl Program for App {
         };
 
         let window_open_subscription = iced::window::open_events().map(Message::WindowOpened);
+        let tick_subscription =
+            iced::time::every(std::time::Duration::from_millis(500)).map(Message::Tick);
 
         Subscription::batch(vec![
             screen_subscriptions,
             frame_subscription,
             event_subscription,
             window_open_subscription,
+            tick_subscription,
         ])
     }
 
@@ -208,6 +225,14 @@ impl Program for App {
         }
 
         match message {
+            Message::Tick(now) => {
+                state.ctx.notifications.dismiss_expired(now);
+                Task::none()
+            }
+            Message::DismissNotification(id) => {
+                state.ctx.notifications.dismiss(id);
+                Task::none()
+            }
             Message::WindowOpened(id) => {
                 iced::window::raw_id::<Message>(id).map(Message::WindowIdFetched)
             }
@@ -222,15 +247,9 @@ impl Program for App {
 
             Message::Navigate(route) => match route {
                 Route::Home => {
-                    let (screen, task) = match screens::home::HomeScreen::new(&mut state.ctx) {
-                        Ok(val) => val,
-                        Err(err) => {
-                            tracing::error!("Failed to create HomeScreen: {}", err);
-                            return Task::none();
-                        }
-                    };
-                    state.active_screen = ActiveScreen::Home(screen);
-                    task
+                    state.active_screen =
+                        ActiveScreen::Home(screens::home::HomeScreen::new(&mut state.ctx));
+                    Task::none()
                 }
 
                 Route::Capture => {
@@ -265,22 +284,24 @@ impl Program for App {
                 Task::batch(tasks)
             }
 
-            Message::WebRTCInitialized(result) => {
-                match result {
-                    Ok(webrtc) => {
-                        tracing::info!("WebRTC state initialized.");
-                        state.ctx.webrtc = Some(Ok(webrtc));
-                    }
-
-                    Err(err) => {
-                        let err_msg = format!("Failed to initialize WebRTC: {}", err);
-                        tracing::error!(err_msg);
-                        state.ctx.webrtc = Some(Err(err_msg));
-                    }
+            Message::WebRTCInitialized(ref result) => match result.clone() {
+                Ok(webrtc) => {
+                    tracing::info!("WebRTC state initialized.");
+                    state
+                        .ctx
+                        .notifications
+                        .success("Successfully connected to signalling server.".to_owned());
+                    state.ctx.webrtc = Some(webrtc);
+                    delegate_to_screen(state, message.clone())
                 }
 
-                Task::none()
-            }
+                Err(err) => {
+                    let err_msg = format!("Failed to initialize WebRTC: {}", err);
+                    tracing::error!(err_msg);
+                    state.ctx.notifications.error(err_msg);
+                    delegate_to_screen(state, message.clone())
+                }
+            },
 
             Message::WebRTCEvent(event) => match event {
                 WebRTCEvent::IncomingCall(sender) => {
@@ -327,10 +348,7 @@ impl Program for App {
             ActiveScreen::Settings(screen) => screen.view(&state.ctx),
         };
 
-        iced::widget::stack![
-            screen_content,
-            crate::ui::notification::view(&state.ctx.notifications)
-        ]
-        .into()
+        // Render notifications on a layer above the screen content
+        iced::widget::stack![screen_content, state.ctx.notifications.view()].into()
     }
 }

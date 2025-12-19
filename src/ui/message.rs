@@ -36,6 +36,7 @@ pub enum Message {
     WindowIdFetched(u64),
 
     Tick(std::time::Instant),
+    DismissNotification(u64),
 
     Error(String),
     NoOp,

@@ -285,7 +285,7 @@ impl Screen for CaptureScreen {
                     self.frame_data = Some(Bytes::copy_from_slice(&frame.data));
 
                     if self.frame_sender.is_none() {
-                        let Some(Ok(webrtc)) = &ctx.webrtc else {
+                        let Some(webrtc) = &ctx.webrtc else {
                             tracing::error!("WebRTC is not initialized yet");
                             return Task::none();
                         };
