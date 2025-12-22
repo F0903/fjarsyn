@@ -287,10 +287,7 @@ impl Program for App {
             Message::WebRTCInitialized(ref result) => match result.clone() {
                 Ok(webrtc) => {
                     tracing::info!("WebRTC state initialized.");
-                    state
-                        .ctx
-                        .notifications
-                        .success("Successfully connected to signalling server.".to_owned());
+                    state.ctx.notifications.success("Successfully connected to signalling server.");
                     state.ctx.webrtc = Some(webrtc);
                     delegate_to_screen(state, message.clone())
                 }

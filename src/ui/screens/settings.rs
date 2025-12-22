@@ -56,6 +56,8 @@ impl Screen for SettingsScreen {
                         (ConfigField::Bitrate, ConfigValue::String(s)) => {
                             if let Ok(num) = s.parse::<u32>() {
                                 config.bitrate = num;
+                            } else {
+                                ctx.notifications.error("Unable to parse input!");
                             }
                         }
                         (ConfigField::Bitrate, ConfigValue::Number(n)) => {
@@ -71,6 +73,7 @@ impl Screen for SettingsScreen {
                         }
                         _ => {}
                     }
+                    ctx.notifications.success("Config saved!");
                     Task::none()
                 }
 

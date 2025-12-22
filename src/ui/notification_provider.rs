@@ -25,19 +25,22 @@ impl NotificationProvider {
         Self { notifications: HashMap::new() }
     }
 
-    pub fn error(&mut self, message: String) {
+    pub fn error(&mut self, message: impl Into<String>) {
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.notifications.insert(id, Notification::new(id, message, NotificationKind::Error));
+        self.notifications
+            .insert(id, Notification::new(id, message.into(), NotificationKind::Error));
     }
 
-    pub fn info(&mut self, message: String) {
+    pub fn info(&mut self, message: impl Into<String>) {
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.notifications.insert(id, Notification::new(id, message, NotificationKind::Info));
+        self.notifications
+            .insert(id, Notification::new(id, message.into(), NotificationKind::Info));
     }
 
-    pub fn success(&mut self, message: String) {
+    pub fn success(&mut self, message: impl Into<String>) {
         let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.notifications.insert(id, Notification::new(id, message, NotificationKind::Success));
+        self.notifications
+            .insert(id, Notification::new(id, message.into(), NotificationKind::Success));
     }
 
     pub fn dismiss(&mut self, id: u64) {
