@@ -1,4 +1,5 @@
-use bytes::Bytes;
+use std::sync::Arc;
+
 use iced::{
     Element, Length, Rectangle, Size, advanced,
     advanced::{
@@ -9,20 +10,16 @@ use iced::{
     },
 };
 
+use crate::capture_providers::shared::Frame;
+
 pub struct FrameViewer {
-    frame_data: Bytes,
-    width: u32,
-    height: u32,
+    frame: Arc<Frame>,
 }
 
 impl FrameViewer {
-    pub fn new(frame_data: Bytes, width: u32, height: u32) -> Self {
-        Self { frame_data, width, height }
+    pub fn new(frame: Arc<Frame>) -> Self {
+        Self { frame }
     }
-}
-
-pub fn frame_viewer(frame_data: Bytes, width: u32, height: u32) -> FrameViewer {
-    FrameViewer::new(frame_data, width, height)
 }
 
 impl<Theme, Message, Renderer> Widget<Message, Theme, Renderer> for FrameViewer
@@ -40,8 +37,8 @@ where
         limits: &layout::Limits,
     ) -> layout::Node {
         let max_size = limits.max();
-        let src_width = self.width as f32;
-        let src_height = self.height as f32;
+        let src_width = self.frame.size.x as f32;
+        let src_height = self.frame.size.y as f32;
 
         if src_width == 0.0 || src_height == 0.0 {
             return layout::Node::new(Size::ZERO);
@@ -70,8 +67,11 @@ where
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
-        let img_handle =
-            advanced::image::Handle::from_rgba(self.width, self.height, self.frame_data.clone());
+        let img_handle = advanced::image::Handle::from_rgba(
+            self.frame.size.x as u32,
+            self.frame.size.y as u32,
+            self.frame.data.clone(),
+        );
 
         let alloc = match renderer.load_image(&img_handle) {
             Ok(alloc) => alloc,

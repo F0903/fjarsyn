@@ -53,10 +53,11 @@ pub struct WebRTC {
 impl WebRTC {
     const STREAM_ID: &str = "fjarsyn-webrtc";
 
-    pub async fn new(
+    pub async fn init(
         signaling_url: String,
-        frame_tx: mpsc::Sender<Bytes>,
+        packet_sink: mpsc::Sender<Bytes>,
         event_tx: mpsc::Sender<WebRTCEvent>,
+        max_depacket_latency: u16,
     ) -> WebRTCResult<Self> {
         let (signal_tx, mut signal_rx) = mpsc::channel(100);
         let (signaling_tx, id) = signaling::connect(signaling_url, signal_tx).await?;
@@ -183,7 +184,7 @@ impl WebRTC {
         }));
 
         let pc = Arc::downgrade(&peer_connection);
-        peer_connection.on_track(Box::new(move |track, _rtp_receiver, _rtp_transceiver| {
+        peer_connection.on_track(Box::new(move |track, _rtp_receiver, rtp_transceiver| {
             tracing::debug!("Received track: {}", track.id());
 
             let media_ssrc = track.ssrc();
@@ -191,18 +192,26 @@ impl WebRTC {
             match track.kind() {
                 RTPCodecType::Video => {
                     let pc = pc.clone();
-                    let frame_sink = frame_tx.clone();
+                    let packet_sink = packet_sink.clone();
+                    let rtp_transceiver = rtp_transceiver.clone();
 
+                    // We just send a PLI every 3 seconds for now.
                     tokio::spawn(async move {
+                        // Get the local SSRC from the transceiver
+                        let sender = rtp_transceiver.sender().await;
+                        let params = sender.get_parameters().await;
+                        let local_ssrc = params.encodings.first().map(|e| e.ssrc).unwrap_or(0);
+
+                        const PLI_INTERVAL: u64 = 3;
                         let mut result = Result::Ok(0);
                         while result.is_ok() {
-                            let timeout = tokio::time::sleep(Duration::from_secs(3));
+                            let timeout = tokio::time::sleep(Duration::from_secs(PLI_INTERVAL));
                             tokio::pin!(timeout);
 
                             tokio::select! {
                                 _ = timeout.as_mut() => {
                                     if let Some(pc) = pc.upgrade() {
-                                        result = pc.write_rtcp(&[Box::new(PictureLossIndication {sender_ssrc: 0, media_ssrc})]).await;
+                                        result = pc.write_rtcp(&[Box::new(PictureLossIndication {sender_ssrc: local_ssrc, media_ssrc})]).await;
                                     } else {
                                         break;
                                     }
@@ -214,14 +223,13 @@ impl WebRTC {
                     tokio::spawn(async move {
                         tracing::debug!("Track with type '{}' starting...", track.codec().capability.mime_type);
 
-                        const SAMPLE_MAX_LATENCY: u16 = 2000;
                         let depacketizer = webrtc::rtp::codecs::h264::H264Packet::default();
-                        let mut sample_builder = SampleBuilder::new(SAMPLE_MAX_LATENCY, depacketizer, track.codec().capability.clock_rate);
+                        let mut sample_builder = SampleBuilder::new(max_depacket_latency, depacketizer, track.codec().capability.clock_rate);
 
                         while let Ok((rtp, _attributes)) = track.read_rtp().await {
                             sample_builder.push(rtp);
                             while let Some(sample) = sample_builder.pop() {
-                                if let Err(e) = frame_sink.send(sample.data).await {
+                                if let Err(e) = packet_sink.send(sample.data).await {
                                     tracing::error!("Failed to send received frame to sink: {}", e);
                                     return;
                                 }
@@ -253,12 +261,8 @@ impl WebRTC {
         self.remote_peer_id.read().unwrap().clone()
     }
 
-    pub async fn write_frame(
-        &self,
-        frame_data: Bytes,
-        frame_duration: Duration,
-    ) -> WebRTCResult<()> {
-        let sample = Sample { data: frame_data, duration: frame_duration, ..Default::default() };
+    pub async fn write_sample(&self, data: Vec<u8>, duration: Duration) -> WebRTCResult<()> {
+        let sample = Sample { data: data.into(), duration, ..Default::default() };
         self.video_track.write_sample(&sample).await.map_err(WebRTCError::WriteRTPError)?;
         Ok(())
     }
@@ -288,6 +292,12 @@ impl WebRTC {
 
         self.signaling_tx.send(msg).await.map_err(WebRTCError::SendError)?;
 
+        Ok(())
+    }
+
+    pub async fn disconnect(&self) -> WebRTCResult<()> {
+        self.peer_connection.close().await.map_err(WebRTCError::PeerConnectionError)?;
+        *self.remote_peer_id.write().unwrap() = None;
         Ok(())
     }
 }

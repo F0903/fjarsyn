@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     networking::webrtc::{WebRTC, WebRTCEvent},
     ui::{
-        app::{ActiveScreen, FrameReceiverRef},
+        app::{ActiveScreen, PacketReceiverRef},
         notification_provider::NotificationProvider,
     },
 };
@@ -15,8 +15,8 @@ use crate::{
 pub struct AppContext {
     pub config: Config,
 
-    pub frame_tx: Option<mpsc::Sender<Bytes>>,
-    pub frame_rx: FrameReceiverRef,
+    pub packet_tx: Option<mpsc::Sender<Bytes>>,
+    pub packet_rx: PacketReceiverRef,
 
     pub webrtc_event_tx: Option<mpsc::Sender<WebRTCEvent>>,
     pub webrtc_event_rx: Option<Arc<Mutex<mpsc::Receiver<WebRTCEvent>>>>,

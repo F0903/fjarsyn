@@ -5,7 +5,7 @@ use bytes::Bytes;
 use crate::{
     networking::webrtc::{WebRTC, WebRTCError, WebRTCEvent},
     ui::screens::{
-        capture::CaptureMessage, home::HomeMessage, onboarding::OnboardingMessage,
+        call::CallMessage, home::HomeMessage, onboarding::OnboardingMessage,
         settings::SettingsMessage,
     },
 };
@@ -13,7 +13,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Route {
     Home,
-    Capture,
+    Call,
     Settings,
 }
 
@@ -23,14 +23,14 @@ pub enum Message {
 
     // Sub-screen messages
     Home(HomeMessage),
-    Capture(CaptureMessage),
+    Call(CallMessage),
     Settings(SettingsMessage),
     Onboarding(OnboardingMessage),
 
     // Global / Shared
     WebRTCInitialized(Result<WebRTC, Arc<WebRTCError>>),
     WebRTCEvent(WebRTCEvent),
-    RemoteFrameReceived(Bytes),
+    PacketReceived(Bytes),
 
     WindowOpened(iced::window::Id),
     WindowIdFetched(u64),

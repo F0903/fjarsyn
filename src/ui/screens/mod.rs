@@ -1,4 +1,4 @@
-pub mod capture;
+pub mod call;
 pub mod home;
 pub mod onboarding;
 pub mod settings;

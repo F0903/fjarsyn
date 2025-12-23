@@ -41,7 +41,7 @@ impl Screen for OnboardingScreen {
                 Task::none()
             }
             Message::Onboarding(OnboardingMessage::SaveClicked) => {
-                let Some(frame_tx) = ctx.frame_tx.clone() else {
+                let Some(frame_tx) = ctx.packet_tx.clone() else {
                     tracing::error!("Frame channel not available.");
                     return Task::none();
                 };
@@ -50,10 +50,11 @@ impl Screen for OnboardingScreen {
                     return Task::none();
                 };
                 let server_url = ctx.config.server_url.clone();
+                let max_latency = ctx.config.max_depacket_latency;
 
-                Task::future(
-                    async move { WebRTC::new(server_url, frame_tx, webrtc_event_tx).await },
-                )
+                Task::future(async move {
+                    WebRTC::init(server_url, frame_tx, webrtc_event_tx, max_latency).await
+                })
                 .map_err(std::sync::Arc::new)
                 .map(Message::WebRTCInitialized)
             }

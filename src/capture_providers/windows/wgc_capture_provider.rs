@@ -32,7 +32,7 @@ use crate::{
             d3d11_utils::{copy_texture, map_read_texture},
         },
     },
-    utils::buffer_pool::{BufferPool, PooledBuffer},
+    utils::buffer_arena::{BufferArena, BufferRef},
 };
 
 #[derive(Debug, Default)]
@@ -50,7 +50,7 @@ pub struct WgcCaptureProvider {
     capture_item: Option<GraphicsCaptureItem>,
     pixel_format: PixelFormat,
     staging_state: Arc<RwLock<Staging>>,
-    buffer_pool: BufferPool,
+    buffer_pool: BufferArena,
 
     frame_pool: Option<Direct3D11CaptureFramePool>,
     session: Option<GraphicsCaptureSession>,
@@ -70,7 +70,7 @@ impl WgcCaptureProvider {
             capture_item: None,
             pixel_format,
             staging_state: Arc::new(RwLock::new(Staging::default())),
-            buffer_pool: BufferPool::init(Self::BUFFER_POOL_SIZE),
+            buffer_pool: BufferArena::init(Self::BUFFER_POOL_SIZE),
             frame_pool: None,
             session: None,
             stream_tokens: Vec::new(),
@@ -79,7 +79,7 @@ impl WgcCaptureProvider {
     }
 
     fn process_frame(
-        mut frame_buffer: PooledBuffer,
+        mut frame_buffer: BufferRef,
         frame: Direct3D11CaptureFrame,
         staging_state_arc: Arc<RwLock<Staging>>,
         pixel_format: PixelFormat,
@@ -179,8 +179,8 @@ impl WgcCaptureProvider {
             frame_buffer,
             pixel_format,
             Vector2 { x: size.Width, y: size.Height },
-            frame_duration,
-            dirty_regions,
+            Some(frame_duration),
+            Some(dirty_regions),
         );
 
         match tx.try_send(frame) {
@@ -309,7 +309,7 @@ impl CaptureProvider for WgcCaptureProvider {
                         let buffer_size = size.Width as usize
                             * size.Height as usize
                             * pixel_format.bytes_per_pixel() as usize;
-                        let mut buffer = buffer_pool.get_or_create(buffer_size);
+                        let mut buffer = buffer_pool.get(buffer_size);
                         unsafe {
                             buffer.set_len(buffer_size);
                         }

@@ -1,4 +1,11 @@
+use std::sync::Arc;
+
 use openh264::decoder::{DecodeOptions, Decoder, DecoderConfig};
+
+use crate::{
+    capture_providers::shared::{Frame, PixelFormat, Vector2},
+    utils::buffer_arena::BufferArena,
+};
 
 type Result<T> = std::result::Result<T, H264DecoderError>;
 
@@ -12,19 +19,22 @@ pub enum H264DecoderError {
 
 pub struct H264Decoder {
     decoder: Decoder,
+    decoding_pool: BufferArena,
 }
 
 impl H264Decoder {
+    const POOL_SIZE: usize = 4;
+
     pub fn new() -> Result<Self> {
         let decoder = Decoder::with_api_config(
             openh264::OpenH264API::from_source(),
             DecoderConfig::default(),
         )
         .map_err(H264DecoderError::CreateDecoderError)?;
-        Ok(Self { decoder })
+        Ok(Self { decoder, decoding_pool: BufferArena::init(Self::POOL_SIZE) })
     }
 
-    pub fn decode(&mut self, packet: &[u8]) -> Result<Option<(Vec<u8>, (u32, u32))>> {
+    pub fn decode(&mut self, packet: &[u8]) -> Result<Option<Arc<Frame>>> {
         let Some(image) = self
             .decoder
             .decode_with_options(packet, DecodeOptions::default())
@@ -37,9 +47,18 @@ impl H264Decoder {
         let est_image_width = image_dims_uv.0 * 2;
         let est_image_height = image_dims_uv.1 * 2;
         let size = est_image_width * est_image_height * 4;
-        let mut framebuf = vec![0u8; size];
+
+        let mut framebuf = self.decoding_pool.get(size);
         image.write_rgba8(&mut framebuf);
 
-        Ok(Some((framebuf, (est_image_width as u32, est_image_height as u32))))
+        let frame = Arc::new(Frame::new_raw(
+            framebuf,
+            PixelFormat::RGBA8, // We currently assume remote frames are always RGBA8
+            Vector2::<i32>::new(est_image_width as i32, est_image_height as i32),
+            None,
+            None,
+        ));
+
+        Ok(Some(frame))
     }
 }

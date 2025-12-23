@@ -21,7 +21,7 @@ use crate::{
 pub enum ActiveScreen {
     Onboarding(screens::onboarding::OnboardingScreen),
     Home(screens::home::HomeScreen),
-    Capture(screens::capture::CaptureScreen),
+    Call(screens::call::CallScreen),
     Settings(screens::settings::SettingsScreen),
 }
 
@@ -82,31 +82,31 @@ fn webrtc_event_subscription_stream(
 
 // Wrapper to implement Hash which is needed by iced subscriptions.
 #[derive(Clone)]
-pub struct FrameReceiverRef(pub Arc<Mutex<mpsc::Receiver<Bytes>>>);
+pub struct PacketReceiverRef(pub Arc<Mutex<mpsc::Receiver<Bytes>>>);
 
-impl std::hash::Hash for FrameReceiverRef {
+impl std::hash::Hash for PacketReceiverRef {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         Arc::as_ptr(&self.0).hash(state);
     }
 }
 
-impl PartialEq for FrameReceiverRef {
+impl PartialEq for PacketReceiverRef {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl Eq for FrameReceiverRef {}
+impl Eq for PacketReceiverRef {}
 
 fn frame_subscription_stream(
-    receiver_ref: &FrameReceiverRef,
+    receiver_ref: &PacketReceiverRef,
 ) -> Box<dyn futures::Stream<Item = Message> + Send + Unpin> {
     let receiver = receiver_ref.0.clone();
     Box::new(Box::pin(unfold(receiver, |receiver| async move {
         let mut lock = receiver.lock().await;
-        if let Some(frame) = lock.recv().await {
+        if let Some(packet) = lock.recv().await {
             drop(lock);
-            Some((Message::RemoteFrameReceived(frame), receiver))
+            Some((Message::PacketReceived(packet), receiver))
         } else {
             drop(lock);
             None
@@ -152,8 +152,9 @@ impl Program for App {
             config,
             main_window_handle: None,
 
-            frame_tx: Some(frame_tx),
-            frame_rx: FrameReceiverRef(Arc::new(Mutex::new(frame_rx))),
+            packet_tx: Some(frame_tx),
+            packet_rx: PacketReceiverRef(Arc::new(Mutex::new(frame_rx))),
+
             webrtc_event_tx: Some(event_tx),
             webrtc_event_rx: Some(Arc::new(Mutex::new(event_rx))),
 
@@ -170,9 +171,17 @@ impl Program for App {
         };
 
         let init_task = if onboarding_done {
-            Task::future(async move { WebRTC::new(server_url, init_frame_tx, init_event_tx).await })
-                .map_err(Arc::new)
-                .map(Message::WebRTCInitialized)
+            Task::future(async move {
+                WebRTC::init(
+                    server_url,
+                    init_frame_tx,
+                    init_event_tx,
+                    ctx.config.max_depacket_latency,
+                )
+                .await
+            })
+            .map_err(Arc::new)
+            .map(Message::WebRTCInitialized)
         } else {
             Task::none()
         };
@@ -184,12 +193,12 @@ impl Program for App {
         let screen_subscriptions = match &state.active_screen {
             ActiveScreen::Onboarding(screen) => screen.subscription(&state.ctx),
             ActiveScreen::Home(screen) => screen.subscription(&state.ctx),
-            ActiveScreen::Capture(screen) => screen.subscription(&state.ctx),
+            ActiveScreen::Call(screen) => screen.subscription(&state.ctx),
             ActiveScreen::Settings(screen) => screen.subscription(&state.ctx),
         };
 
         let frame_subscription =
-            Subscription::run_with(state.ctx.frame_rx.clone(), frame_subscription_stream);
+            Subscription::run_with(state.ctx.packet_rx.clone(), frame_subscription_stream);
 
         let event_subscription = if let Some(rx) = &state.ctx.webrtc_event_rx {
             Subscription::run_with(
@@ -218,7 +227,7 @@ impl Program for App {
             let task = match &mut state.active_screen {
                 ActiveScreen::Onboarding(screen) => screen.update(&mut state.ctx, msg),
                 ActiveScreen::Home(screen) => screen.update(&mut state.ctx, msg),
-                ActiveScreen::Capture(screen) => screen.update(&mut state.ctx, msg),
+                ActiveScreen::Call(screen) => screen.update(&mut state.ctx, msg),
                 ActiveScreen::Settings(screen) => screen.update(&mut state.ctx, msg),
             };
             task
@@ -252,9 +261,9 @@ impl Program for App {
                     Task::none()
                 }
 
-                Route::Capture => {
-                    let capture_screen = screens::capture::CaptureScreen::new(self.capture.clone());
-                    state.active_screen = ActiveScreen::Capture(capture_screen);
+                Route::Call => {
+                    let call_screen = screens::call::CallScreen::new(self.capture.clone());
+                    state.active_screen = ActiveScreen::Call(call_screen);
                     Task::none()
                 }
 
@@ -266,22 +275,8 @@ impl Program for App {
                 }
             },
 
-            // Sub-messages are delegated at the end, but specific global ones like WebRTCEvent remain here.
-            Message::RemoteFrameReceived(frame) => {
-                let mut tasks = vec![];
-
-                // If we receive a frame and we are NOT on Capture screen, switch to it.
-                let should_switch =
-                    if let ActiveScreen::Home(_) = state.active_screen { true } else { false };
-
-                if should_switch {
-                    let capture_screen = screens::capture::CaptureScreen::new(self.capture.clone());
-                    state.active_screen = ActiveScreen::Capture(capture_screen);
-                }
-
-                // Delegate the frame to the (now guaranteed) CaptureScreen
-                tasks.push(delegate_to_screen(state, Message::RemoteFrameReceived(frame)));
-                Task::batch(tasks)
+            Message::PacketReceived(packet) => {
+                delegate_to_screen(state, Message::PacketReceived(packet))
             }
 
             Message::WebRTCInitialized(ref result) => match result.clone() {
@@ -313,10 +308,9 @@ impl Program for App {
                     tracing::info!("WebRTC Connected!");
 
                     if let ActiveScreen::Home(_) = state.active_screen {
-                        let capture_screen =
-                            screens::capture::CaptureScreen::new(self.capture.clone());
+                        let call_screen = screens::call::CallScreen::new(self.capture.clone());
 
-                        state.active_screen = ActiveScreen::Capture(capture_screen);
+                        state.active_screen = ActiveScreen::Call(call_screen);
                     }
 
                     Task::none()
@@ -324,7 +318,7 @@ impl Program for App {
 
                 WebRTCEvent::Disconnected => {
                     tracing::info!("WebRTC Disconnected");
-
+                    //TODO: disconnect from call screen if peer is disconnected
                     Task::none()
                 }
             },
@@ -341,7 +335,7 @@ impl Program for App {
         let screen_content = match &state.active_screen {
             ActiveScreen::Onboarding(screen) => screen.view(&state.ctx),
             ActiveScreen::Home(screen) => screen.view(&state.ctx),
-            ActiveScreen::Capture(screen) => screen.view(&state.ctx),
+            ActiveScreen::Call(screen) => screen.view(&state.ctx),
             ActiveScreen::Settings(screen) => screen.view(&state.ctx),
         };
 

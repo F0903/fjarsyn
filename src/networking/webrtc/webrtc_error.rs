@@ -22,4 +22,6 @@ pub enum WebRTCError {
     WriteRTPError(webrtc::Error),
     #[error("System time error: {0}")]
     SystemTimeError(std::time::SystemTimeError),
+    #[error("Frame duration was not available")]
+    FrameDurationNotAvailable,
 }

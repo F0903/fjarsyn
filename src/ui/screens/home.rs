@@ -42,7 +42,7 @@ impl Screen for HomeScreen {
                         let webrtc_clone = webrtc.clone();
                         Task::future(async move {
                             match webrtc_clone.create_offer(target_id).await {
-                                Ok(_) => Message::Navigate(Route::Capture),
+                                Ok(_) => Message::Navigate(Route::Call),
                                 Err(e) => Message::Error(format!("Failed to create offer: {}", e)),
                             }
                         })

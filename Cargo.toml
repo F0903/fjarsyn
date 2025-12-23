@@ -58,7 +58,6 @@ windows = { version = "0.62.2", features = [
 windows-core = "0.62.2"
 bytes = "1.11.0"
 windows-future = "0.3.2"
-crossbeam = "0.8.4"
 webrtc = "0.14"
 tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
 futures-util = "0.3"
