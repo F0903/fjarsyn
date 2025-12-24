@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use bytes::Bytes;
 use tokio::sync::{Mutex, mpsc};
@@ -14,6 +14,8 @@ use crate::{
 
 pub struct AppContext {
     pub config: Config,
+
+    pub back_queue: VecDeque<ActiveScreen>,
 
     pub packet_tx: Option<mpsc::Sender<Bytes>>,
     pub packet_rx: PacketReceiverRef,

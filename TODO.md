@@ -4,7 +4,7 @@ Here you can find the current TODOs for the project. The TODOs are approximately
 
 Each TODO is somewhat abstract and may require a lot of work to implement.
  
-- Overhaul UI to display the networked frames and the perhaps also the local preview.
+- Fix strange encoding issues.
 - Contacts system for easily setting up screen sharing.
 - Switch to FFmpeg
 - Audio capture, streaming and playback.

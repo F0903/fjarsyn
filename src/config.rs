@@ -19,7 +19,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             onboarding_done: false,
-            bitrate: 4_000_000,
+            bitrate: 8_000_000,
             framerate: CaptureFramerate::FPS30,
             server_url: "ws://127.0.0.1:30000/ws".to_string(),
             pixel_format: PixelFormat::RGBA8,

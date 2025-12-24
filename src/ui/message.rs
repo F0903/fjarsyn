@@ -20,6 +20,8 @@ pub enum Route {
 #[derive(Debug, Clone)]
 pub enum Message {
     Navigate(Route),
+    NavigateWithBack(Route),
+    Back,
 
     // Sub-screen messages
     Home(HomeMessage),
@@ -38,6 +40,5 @@ pub enum Message {
     Tick(std::time::Instant),
     DismissNotification(u64),
 
-    Error(String),
     NoOp,
 }

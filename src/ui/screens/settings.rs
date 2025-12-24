@@ -73,7 +73,7 @@ impl Screen for SettingsScreen {
                         }
                         _ => {}
                     }
-                    ctx.notifications.success("Config saved!");
+
                     Task::none()
                 }
 
@@ -81,7 +81,11 @@ impl Screen for SettingsScreen {
                     if let Some(pending) = self.pending_config.take() {
                         ctx.config = pending;
                         if let Err(e) = ctx.config.save() {
-                            tracing::error!("Failed to save config: {}", e);
+                            let msg = format!("Failed to save config: {}", e);
+                            tracing::error!(msg);
+                            ctx.notifications.error(msg);
+                        } else {
+                            ctx.notifications.success("Config saved!");
                         }
                     }
                     Task::none()
@@ -127,8 +131,7 @@ impl Screen for SettingsScreen {
         let save_button =
             button("Save").on_press(Message::Settings(SettingsMessage::SaveConfig)).padding(10);
 
-        let back_button =
-            button("Back").on_press(Message::Navigate(crate::ui::message::Route::Home)).padding(10);
+        let back_button = button("Back").on_press(Message::Back).padding(10);
 
         let content = column![
             title,

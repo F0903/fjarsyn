@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use bytes::Bytes;
 use futures::stream::unfold;
@@ -152,6 +152,8 @@ impl Program for App {
             config,
             main_window_handle: None,
 
+            back_queue: VecDeque::new(),
+
             packet_tx: Some(frame_tx),
             packet_rx: PacketReceiverRef(Arc::new(Mutex::new(frame_rx))),
 
@@ -233,47 +235,61 @@ impl Program for App {
             task
         }
 
+        fn screen_from_route(
+            state: &mut State,
+            capture: Arc<Mutex<PlatformCaptureProvider>>,
+            route: Route,
+        ) -> ActiveScreen {
+            match route {
+                Route::Home => ActiveScreen::Home(screens::home::HomeScreen::new(&mut state.ctx)),
+                Route::Call => ActiveScreen::Call(screens::call::CallScreen::new(capture)),
+                Route::Settings => ActiveScreen::Settings(screens::settings::SettingsScreen::new(
+                    state.ctx.config.clone(),
+                )),
+            }
+        }
+
+        // Every message should be delegated to the active screen in the case that the active screen also wants to listen to it.
+        // The exception being messages like Navigate.
         match message {
+            Message::Navigate(route) => {
+                state.active_screen = screen_from_route(state, self.capture.clone(), route);
+                Task::none()
+            }
+            Message::NavigateWithBack(route) => {
+                let mut screen = screen_from_route(state, self.capture.clone(), route);
+                std::mem::swap(&mut state.active_screen, &mut screen);
+                // screen is not set to the old screen
+
+                state.ctx.back_queue.push_front(screen);
+                Task::none()
+            }
+            Message::Back => {
+                if let Some(screen) = state.ctx.back_queue.pop_front() {
+                    state.active_screen = screen;
+                }
+                Task::none()
+            }
+
             Message::Tick(now) => {
                 state.ctx.notifications.dismiss_expired(now);
-                Task::none()
+                delegate_to_screen(state, message)
             }
             Message::DismissNotification(id) => {
                 state.ctx.notifications.dismiss(id);
-                Task::none()
+                delegate_to_screen(state, message)
             }
-            Message::WindowOpened(id) => {
-                iced::window::raw_id::<Message>(id).map(Message::WindowIdFetched)
-            }
+            Message::WindowOpened(id) => Task::batch([
+                iced::window::raw_id::<Message>(id).map(Message::WindowIdFetched),
+                delegate_to_screen(state, message),
+            ]),
 
             Message::WindowIdFetched(id) => {
                 if state.ctx.main_window_handle.is_none() {
                     state.ctx.main_window_handle = Some(id);
                 }
-
-                Task::none()
+                delegate_to_screen(state, message)
             }
-
-            Message::Navigate(route) => match route {
-                Route::Home => {
-                    state.active_screen =
-                        ActiveScreen::Home(screens::home::HomeScreen::new(&mut state.ctx));
-                    Task::none()
-                }
-
-                Route::Call => {
-                    let call_screen = screens::call::CallScreen::new(self.capture.clone());
-                    state.active_screen = ActiveScreen::Call(call_screen);
-                    Task::none()
-                }
-
-                Route::Settings => {
-                    state.active_screen = ActiveScreen::Settings(
-                        screens::settings::SettingsScreen::new(state.ctx.config.clone()),
-                    );
-                    Task::none()
-                }
-            },
 
             Message::PacketReceived(packet) => {
                 delegate_to_screen(state, Message::PacketReceived(packet))
@@ -295,13 +311,15 @@ impl Program for App {
                 }
             },
 
-            Message::WebRTCEvent(event) => match event {
+            Message::WebRTCEvent(ref event) => match event {
                 WebRTCEvent::IncomingCall(sender) => {
                     tracing::info!("Incoming call from {}", sender);
 
-                    state.ctx.target_id = Some(sender);
+                    //TODO: be able to accept or reject call
 
-                    Task::none()
+                    state.ctx.target_id = Some(sender.clone());
+
+                    delegate_to_screen(state, message)
                 }
 
                 WebRTCEvent::Connected => {
@@ -313,13 +331,12 @@ impl Program for App {
                         state.active_screen = ActiveScreen::Call(call_screen);
                     }
 
-                    Task::none()
+                    delegate_to_screen(state, message)
                 }
 
                 WebRTCEvent::Disconnected => {
                     tracing::info!("WebRTC Disconnected");
-                    //TODO: disconnect from call screen if peer is disconnected
-                    Task::none()
+                    delegate_to_screen(state, message)
                 }
             },
 

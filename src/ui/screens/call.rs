@@ -5,7 +5,7 @@ use std::{
 
 use iced::{
     Element, Length, Subscription, Task,
-    widget::{button, container, pick_list, row, stack, text},
+    widget::{button, container, stack, text},
 };
 use tokio::sync::{Mutex, mpsc};
 
@@ -17,6 +17,7 @@ use crate::{
         user_pick_platform_capture_item,
     },
     media::h264_cpu::{H264Decoder, H264Encoder},
+    networking::webrtc::WebRTCEvent,
     ui::{
         frame_viewer::FrameViewer,
         message::{Message, Route},
@@ -37,12 +38,11 @@ impl Hash for FrameReceiverSubData {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct CallScreen {
     capture: Arc<Mutex<PlatformCaptureProvider>>,
 
     pub capturing: bool,
-    pub capture_frame_rate: CaptureFramerate,
 
     // Local Capture State
     pub local_frame: Option<Arc<Frame>>,
@@ -54,21 +54,11 @@ pub struct CallScreen {
     pub decoder: Option<Arc<Mutex<H264Decoder>>>,
 }
 
-impl std::fmt::Debug for CallScreen {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CallScreen")
-            .field("capturing", &self.capturing)
-            .field("capture_frame_rate", &self.capture_frame_rate)
-            .finish()
-    }
-}
-
 impl CallScreen {
     pub fn new(capture: Arc<Mutex<PlatformCaptureProvider>>) -> Self {
         Self {
             capture,
             capturing: false,
-            capture_frame_rate: CaptureFramerate::FPS60,
 
             local_frame: None,
             frame_sender: None,
@@ -99,14 +89,13 @@ pub enum CallMessage {
     TryStopCapture,
     PlatformUserPickedCaptureItem(Result<crate::capture_providers::PlatformCaptureItem, String>),
     FrameCaptured(Arc<Frame>),
-    FrameRateSelected(CaptureFramerate),
     DecodedFrameReady(Arc<Frame>),
     ToggleLocalPreview,
     EndCall,
 }
 
 impl Screen for CallScreen {
-    fn subscription(&self, _ctx: &AppContext) -> Subscription<Message> {
+    fn subscription(&self, ctx: &AppContext) -> Subscription<Message> {
         let mut subscriptions = vec![];
 
         if self.capturing {
@@ -114,7 +103,7 @@ impl Screen for CallScreen {
                 Subscription::<Frame>::run_with(
                     FrameReceiverSubData {
                         capture: self.capture.clone(),
-                        framerate: self.capture_frame_rate,
+                        framerate: ctx.config.framerate,
                         stream_name: "frame-receiver",
                     },
                     Self::create_frame_receiver_subscription,
@@ -197,9 +186,8 @@ impl Screen for CallScreen {
                     let window_handle = match ctx.main_window_handle {
                         Some(handle) => handle,
                         None => {
-                            return Task::done(Message::Error(
-                                "No active window handle".to_string(),
-                            ));
+                            tracing::error!("No active window handle");
+                            return Task::none();
                         }
                     };
 
@@ -214,10 +202,10 @@ impl Screen for CallScreen {
                                 ),
                             }
                         }),
-                        Err(err) => Task::done(Message::Error(format!(
-                            "Failed to pick capture item: {}",
-                            err
-                        ))),
+                        Err(err) => {
+                            tracing::error!("Failed to pick capture item: {}", err);
+                            Task::none()
+                        }
                     }
                 }
 
@@ -225,10 +213,8 @@ impl Screen for CallScreen {
                     let capture_item = match capture_item_result {
                         Ok(item) => item,
                         Err(err) => {
-                            return Task::done(Message::Error(format!(
-                                "Failed to pick capture item: {}",
-                                err
-                            )));
+                            tracing::error!("Failed to pick capture item: {}", err);
+                            return Task::none();
                         }
                     };
                     Task::done(Message::Call(CallMessage::TryStartCapture(capture_item)))
@@ -237,17 +223,13 @@ impl Screen for CallScreen {
                 CallMessage::TryStartCapture(capture_item) => match self.capture.try_lock() {
                     Ok(mut capture) => {
                         if let Err(err) = capture.set_capture_item(capture_item.clone()) {
-                            return Task::done(Message::Error(format!(
-                                "Failed to set capture item: {}",
-                                err
-                            )));
+                            tracing::error!("Failed to set capture item: {}", err);
+                            return Task::none();
                         }
 
                         if let Err(err) = capture.start_capture() {
-                            return Task::done(Message::Error(format!(
-                                "Failed to start capture: {}",
-                                err
-                            )));
+                            tracing::error!("Failed to start capture: {}", err);
+                            return Task::none();
                         }
 
                         Task::done(Message::Call(CallMessage::CaptureStarted))
@@ -293,11 +275,6 @@ impl Screen for CallScreen {
                     Task::none()
                 }
 
-                CallMessage::FrameRateSelected(rate) => {
-                    self.capture_frame_rate = rate;
-                    Task::none()
-                }
-
                 CallMessage::FrameCaptured(frame) => {
                     self.local_frame = Some(frame.clone());
 
@@ -307,21 +284,23 @@ impl Screen for CallScreen {
                             return Task::none();
                         };
 
-                        let (tx, mut rx) = mpsc::channel::<Arc<Frame>>(2);
+                        let (tx, mut rx) = mpsc::channel::<Arc<Frame>>(10);
                         self.frame_sender = Some(tx.clone());
 
                         let webrtc = webrtc.clone();
-                        let target_fps = self.capture_frame_rate.to_hz();
+                        let target_fps_hz = ctx.config.framerate.to_hz();
                         let bitrate = ctx.config.bitrate;
 
+                        tracing::debug!(
+                            "Starting encoder thread. target_fps_hz: {}, bitrate: {}",
+                            target_fps_hz,
+                            bitrate
+                        );
                         tokio::spawn(async move {
-                            let mut encoder = match H264Encoder::new(bitrate, target_fps) {
+                            let mut encoder = match H264Encoder::new(bitrate, target_fps_hz) {
                                 Ok(enc) => enc,
                                 Err(e) => {
-                                    tracing::error!(
-                                        "Failed to create encoder in background task: {}",
-                                        e
-                                    );
+                                    tracing::error!("Failed to create encoder: {}", e);
                                     return;
                                 }
                             };
@@ -341,6 +320,7 @@ impl Screen for CallScreen {
                                                 webrtc.write_sample(nal, frame_duration).await
                                             {
                                                 tracing::error!("WebRTC write failed: {}", e);
+                                                break;
                                             }
                                         }
                                     }
@@ -369,11 +349,9 @@ impl Screen for CallScreen {
                 }
             },
 
-            Message::Error(err) => {
-                if !err.is_empty() {
-                    tracing::error!("Error: {}", err);
-                }
-                Task::none()
+            // End the call if the peer disconnects
+            Message::WebRTCEvent(WebRTCEvent::Disconnected) => {
+                Task::done(Message::Call(CallMessage::EndCall))
             }
 
             _ => Task::none(),
@@ -381,43 +359,35 @@ impl Screen for CallScreen {
     }
 
     fn view(&self, _ctx: &AppContext) -> Element<'_, Message> {
-        // Controls Row
-        let control_row: Element<Message> = container(
-            row([
-                if self.capturing {
-                    row![
-                        button(text(self.capture_frame_rate.to_string()))
-                            .style(iced::widget::button::secondary),
-                        button("Change Screen").on_press(Message::Call(CallMessage::StartCapture)),
-                        button("Stop Sharing")
-                            .style(iced::widget::button::danger)
-                            .on_press(Message::Call(CallMessage::StopCapture))
-                    ]
-                    .spacing(10)
-                    .into()
-                } else {
-                    row![
-                        pick_list(CaptureFramerate::ALL, Some(self.capture_frame_rate), |rate| {
-                            Message::Call(CallMessage::FrameRateSelected(rate))
-                        }),
-                        button("Share Screen").on_press(Message::Call(CallMessage::StartCapture))
-                    ]
-                    .spacing(10)
-                    .into()
-                },
+        let mut controls_row: iced::widget::Row<'_, Message, iced::Theme, iced::Renderer> =
+            iced::widget::Row::new()
+                .push(button("Settings").on_press(Message::NavigateWithBack(Route::Settings)))
+                .spacing(10);
+
+        controls_row = if self.capturing {
+            controls_row.extend([
+                button("Change Screen").on_press(Message::Call(CallMessage::StartCapture)).into(),
                 button(if self.show_local_preview { "Hide Preview" } else { "Show Preview" })
                     .on_press(Message::Call(CallMessage::ToggleLocalPreview))
                     .into(),
-                button("End Call")
+                button("Stop Sharing")
                     .style(iced::widget::button::danger)
-                    .on_press(Message::Call(CallMessage::EndCall))
+                    .on_press(Message::Call(CallMessage::StopCapture))
                     .into(),
             ])
-            .spacing(10),
-        )
-        .padding(10)
-        .center_x(Length::Fill)
-        .into();
+        } else {
+            controls_row.extend([button("Share Screen")
+                .on_press(Message::Call(CallMessage::StartCapture))
+                .into()])
+        };
+
+        controls_row = controls_row.extend([button("End Call")
+            .style(iced::widget::button::danger)
+            .on_press(Message::Call(CallMessage::EndCall))
+            .into()]);
+
+        let controls_row: Element<'_, Message> =
+            container(controls_row).padding(10).center_x(Length::Fill).into();
 
         let remote_view: Element<Message> = match self.remote_frame.clone() {
             Some(frame) => container(FrameViewer::new(frame)).center(Length::Fill).into(),
@@ -428,12 +398,10 @@ impl Screen for CallScreen {
             && self.show_local_preview
         {
             let local_view = container(FrameViewer::new(local_frame))
-                .width(Length::Fixed(320.0)) // Small preview width
-                .height(Length::Fixed(180.0)) // Small preview height
+                .width(Length::Fixed(320.0))
+                .height(Length::Fixed(180.0))
                 .style(container::bordered_box);
 
-            // Position bottom-right or similar. Stack aligns are simple.
-            // We'll just put it in a stack.
             stack![
                 remote_view,
                 container(local_view)
@@ -442,12 +410,12 @@ impl Screen for CallScreen {
                     .align_x(iced::alignment::Horizontal::Right)
                     .align_y(iced::alignment::Vertical::Bottom)
                     .padding(20),
-                container(control_row).width(Length::Fill).align_y(iced::alignment::Vertical::Top)
+                container(controls_row).width(Length::Fill).align_y(iced::alignment::Vertical::Top)
             ]
         } else {
             stack![
                 remote_view,
-                container(control_row).width(Length::Fill).align_y(iced::alignment::Vertical::Top)
+                container(controls_row).width(Length::Fill).align_y(iced::alignment::Vertical::Top)
             ]
         };
 

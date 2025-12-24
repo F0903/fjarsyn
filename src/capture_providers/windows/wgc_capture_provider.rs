@@ -62,7 +62,7 @@ impl WgcCaptureProvider {
     const WGC_FRAME_BUFFERS: i32 = 2;
     const PIPELINE_DEPTH: usize = 2;
     const TX_QUEUE_SIZE: usize = 2;
-    const BUFFER_POOL_SIZE: usize = 4;
+    const BUFFER_ARENA_SIZE: usize = 128000;
 
     pub fn new(device: IDirect3DDevice, pixel_format: PixelFormat) -> Self {
         Self {
@@ -70,7 +70,7 @@ impl WgcCaptureProvider {
             capture_item: None,
             pixel_format,
             staging_state: Arc::new(RwLock::new(Staging::default())),
-            buffer_pool: BufferArena::init(Self::BUFFER_POOL_SIZE),
+            buffer_pool: BufferArena::init(Self::BUFFER_ARENA_SIZE),
             frame_pool: None,
             session: None,
             stream_tokens: Vec::new(),
@@ -306,9 +306,16 @@ impl CaptureProvider for WgcCaptureProvider {
 
                 match sender.TryGetNextFrame() {
                     Ok(frame) => {
-                        let buffer_size = size.Width as usize
-                            * size.Height as usize
+                        let content_size = frame.ContentSize().unwrap_or(size);
+                        let buffer_size = content_size.Width as usize
+                            * content_size.Height as usize
                             * pixel_format.bytes_per_pixel() as usize;
+
+                        if buffer_size == 0 {
+                            tracing::warn!("Frame content size is 0, skipping frame.");
+                            return Ok(());
+                        }
+
                         let mut buffer = buffer_pool.get(buffer_size);
                         unsafe {
                             buffer.set_len(buffer_size);

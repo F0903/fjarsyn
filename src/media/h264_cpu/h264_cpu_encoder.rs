@@ -27,7 +27,6 @@ impl std::fmt::Debug for H264Encoder {
 }
 
 impl H264Encoder {
-    /// Creates a new H.264 encoder with the given dimensions.
     pub fn new(bitrate: u32, target_framerate_hz: f32) -> Result<Self> {
         let config = EncoderConfig::new()
             .bitrate(BitRate::from_bps(bitrate))

@@ -43,7 +43,10 @@ impl Screen for HomeScreen {
                         Task::future(async move {
                             match webrtc_clone.create_offer(target_id).await {
                                 Ok(_) => Message::Navigate(Route::Call),
-                                Err(e) => Message::Error(format!("Failed to create offer: {}", e)),
+                                Err(e) => {
+                                    tracing::error!("Failed to create offer: {}", e);
+                                    Message::NoOp
+                                }
                             }
                         })
                     } else {
@@ -91,7 +94,7 @@ impl Screen for HomeScreen {
             .padding(10);
 
         let settings_button =
-            button("Settings").on_press(Message::Navigate(Route::Settings)).padding(10);
+            button("Settings").on_press(Message::NavigateWithBack(Route::Settings)).padding(10);
 
         let content = column![
             title,

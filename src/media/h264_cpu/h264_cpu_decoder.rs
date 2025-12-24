@@ -47,6 +47,7 @@ impl H264Decoder {
         let est_image_width = image_dims_uv.0 * 2;
         let est_image_height = image_dims_uv.1 * 2;
         let size = est_image_width * est_image_height * 4;
+        tracing::debug!("Decoding frame with size: {} x {}", est_image_width, est_image_height);
 
         let mut framebuf = self.decoding_pool.get(size);
         image.write_rgba8(&mut framebuf);
@@ -60,5 +61,14 @@ impl H264Decoder {
         ));
 
         Ok(Some(frame))
+    }
+}
+
+impl std::fmt::Debug for H264Decoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("H264Decoder")
+            .field("decoder", &"<Decoder>".to_owned())
+            .field("decoding_pool", &self.decoding_pool)
+            .finish()
     }
 }

@@ -5,14 +5,12 @@ use std::{
 
 use bytes::BytesMut;
 
-pub type BufferSize = usize;
-
 /// A buffer "arena" based on BytesMut and its ability to split off chunks and reclaim them later to avoid allocations.
 ///
 /// This acts as an arena allocator, as it holds a large contiguous memory block from which it hands out smaller buffers.
 /// When you request a buffer, it splits a chunk off the main block.
 ///
-/// Note that previous buffers that are able to be immediately unsplit will be as-is, meaning that buffers might contain garbage data.
+/// Note that buffers might contain garbage data.
 ///
 /// Internally, this wraps a BytesMut insinde an Arc<RwLock>>, so it can be trivially cloned and shared between threads.
 #[derive(Debug, Clone)]
@@ -25,7 +23,7 @@ impl BufferArena {
         BufferArena { arena: Arc::new(RwLock::new(BytesMut::with_capacity(capacity))) }
     }
 
-    pub fn get(&self, size: BufferSize) -> BufferRef {
+    pub fn get(&self, size: usize) -> BufferRef {
         let mut arena = self.arena.write().unwrap();
 
         let current_cap = arena.capacity();
@@ -36,6 +34,7 @@ impl BufferArena {
                 size
             );
             arena.reserve(size);
+            unsafe { arena.set_len(size) }; // We don't care that the buffer contains garbage data
         }
 
         let chunk = arena.split_to(size);
@@ -87,7 +86,7 @@ impl Drop for BufferRef {
         {
             let mut parent = parent.write().unwrap();
             let data = std::mem::take(&mut self.data);
-            parent.unsplit(data); // This shouldn't degenerate into realloc
+            parent.unsplit(data); // Note that this might call parent.extend_from_slice, so be aware of potential reallocations
         }
     }
 }
