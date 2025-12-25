@@ -26,18 +26,18 @@ impl CaptureFramerate {
 
     pub const fn to_hz(&self) -> f32 {
         match self {
-            Self::FPS5 => 1 as f32 / 5 as f32,
-            Self::FPS24 => 1 as f32 / 24 as f32,
-            Self::FPS30 => 1 as f32 / 30 as f32,
-            Self::FPS60 => 1 as f32 / 60 as f32,
-            Self::FPS120 => 1 as f32 / 120 as f32,
-            Self::FPS144 => 1 as f32 / 144 as f32,
-            Self::FPS200 => 1 as f32 / 200 as f32,
+            Self::FPS5 => 5.0,
+            Self::FPS24 => 24.0,
+            Self::FPS30 => 30.0,
+            Self::FPS60 => 60.0,
+            Self::FPS120 => 120.0,
+            Self::FPS144 => 144.0,
+            Self::FPS200 => 200.0,
         }
     }
 
     pub fn to_frametime(&self) -> Duration {
-        Duration::from_secs_f32(self.to_hz())
+        Duration::from_secs_f32(1.0 / self.to_hz())
     }
 }
 

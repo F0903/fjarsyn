@@ -23,7 +23,7 @@ impl Default for Config {
             framerate: CaptureFramerate::FPS30,
             server_url: "ws://127.0.0.1:30000/ws".to_string(),
             pixel_format: PixelFormat::RGBA8,
-            max_depacket_latency: 2000,
+            max_depacket_latency: 1000,
         }
     }
 }

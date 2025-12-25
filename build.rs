@@ -50,5 +50,14 @@ fn set_windows_metadata() -> Result<()> {
 fn main() {
     if cfg!(target_os = "windows") {
         set_windows_metadata().expect("failed to embed Windows resources");
+
+        // Link required Windows system libraries for static FFmpeg build
+        println!("cargo:rustc-link-lib=strmiids");
+        println!("cargo:rustc-link-lib=mfplat");
+        println!("cargo:rustc-link-lib=mfuuid");
+        println!("cargo:rustc-link-lib=secur32");
+        println!("cargo:rustc-link-lib=shlwapi");
+        println!("cargo:rustc-link-lib=vfw32");
+        println!("cargo:rustc-link-lib=bcrypt");
     }
 }

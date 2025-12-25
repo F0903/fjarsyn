@@ -15,12 +15,12 @@ pub enum ConfigField {
     Bitrate,
     Framerate,
     ServerUrl,
+    MaxDepacketLatency,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigValue {
     String(String),
-    Number(u32),
     Framerate(CaptureFramerate),
 }
 
@@ -53,24 +53,32 @@ impl Screen for SettingsScreen {
                 SettingsMessage::ConfigUpdate(field, value) => {
                     tracing::info!("Config update: {:?} {:?}", field, value);
                     match (field, value) {
-                        (ConfigField::Bitrate, ConfigValue::String(s)) => {
-                            if let Ok(num) = s.parse::<u32>() {
-                                config.bitrate = num;
-                            } else {
-                                ctx.notifications.error("Unable to parse input!");
-                            }
-                        }
-                        (ConfigField::Bitrate, ConfigValue::Number(n)) => {
-                            config.bitrate = n;
+                        (ConfigField::ServerUrl, ConfigValue::String(s)) => {
+                            config.server_url = s;
                         }
 
                         (ConfigField::Framerate, ConfigValue::Framerate(rate)) => {
                             config.framerate = rate;
                         }
 
-                        (ConfigField::ServerUrl, ConfigValue::String(s)) => {
-                            config.server_url = s;
+                        (ConfigField::Bitrate, ConfigValue::String(s)) => {
+                            if let Ok(num) = s.parse() {
+                                config.bitrate = num;
+                            } else {
+                                tracing::error!("Unable to parse bitrate: {}", s);
+                                //TODO: show field as invalid
+                            }
                         }
+
+                        (ConfigField::MaxDepacketLatency, ConfigValue::String(s)) => {
+                            if let Ok(num) = s.parse() {
+                                config.max_depacket_latency = num;
+                            } else {
+                                tracing::error!("Unable to parse max depacket latency: {}", s);
+                                //TODO: show field as invalid
+                            }
+                        }
+
                         _ => {}
                     }
 
@@ -101,10 +109,10 @@ impl Screen for SettingsScreen {
 
         let title = text("Settings").size(30);
 
-        let bitrate_input = text_input("Bitrate (bps)", &config.bitrate.to_string())
+        let url_input = text_input("Signaling Server URL", &config.server_url)
             .on_input(|val| {
                 Message::Settings(SettingsMessage::ConfigUpdate(
-                    ConfigField::Bitrate,
+                    ConfigField::ServerUrl,
                     ConfigValue::String(val),
                 ))
             })
@@ -119,14 +127,24 @@ impl Screen for SettingsScreen {
             })
             .padding(10);
 
-        let url_input = text_input("Signaling Server URL", &config.server_url)
+        let bitrate_input = text_input("Bitrate (bps)", &config.bitrate.to_string())
             .on_input(|val| {
                 Message::Settings(SettingsMessage::ConfigUpdate(
-                    ConfigField::ServerUrl,
+                    ConfigField::Bitrate,
                     ConfigValue::String(val),
                 ))
             })
             .padding(10);
+
+        let max_depacket_input =
+            text_input("Max Depacket Latency (ms)", &config.max_depacket_latency.to_string())
+                .on_input(|val| {
+                    Message::Settings(SettingsMessage::ConfigUpdate(
+                        ConfigField::MaxDepacketLatency,
+                        ConfigValue::String(val),
+                    ))
+                })
+                .padding(10);
 
         let save_button =
             button("Save").on_press(Message::Settings(SettingsMessage::SaveConfig)).padding(10);
@@ -135,12 +153,14 @@ impl Screen for SettingsScreen {
 
         let content = column![
             title,
-            text("Bitrate:"),
-            bitrate_input,
-            text("Framerate:"),
-            framerate_pick,
             text("Server URL:"),
             url_input,
+            text("Framerate:"),
+            framerate_pick,
+            text("Bitrate:"),
+            bitrate_input,
+            text("Max Depacket Latency:"),
+            max_depacket_input,
             row![save_button, back_button].spacing(20)
         ]
         .spacing(20)
