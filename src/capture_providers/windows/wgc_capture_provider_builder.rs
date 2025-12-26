@@ -1,12 +1,14 @@
 use windows::Graphics::{Capture::GraphicsCaptureItem, DirectX::Direct3D11::IDirect3DDevice};
 
-use crate::capture_providers::{
-    CaptureProvider,
-    shared::PixelFormat,
-    windows::{
-        WgcCaptureProvider, WindowsCaptureError,
-        d3d11_utils::{create_d3d_device, native_to_winrt_d3d11device},
+use crate::{
+    capture_providers::{
+        CaptureProvider,
+        windows::{
+            WgcCaptureProvider, WindowsCaptureError,
+            d3d11_utils::{create_d3d_device, native_to_winrt_d3d11device},
+        },
     },
+    utils::pixel_format::PixelFormat,
 };
 
 type Result<T> = std::result::Result<T, WgcCaptureProviderBuilderError>;

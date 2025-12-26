@@ -1,4 +1,4 @@
-use crate::capture_providers::shared::Vector2;
+use crate::utils::vector2::Vector2;
 
 #[derive(Debug, Clone)]
 pub struct Rect<N = f32> {

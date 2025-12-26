@@ -10,7 +10,7 @@ use iced::{
     },
 };
 
-use crate::capture_providers::shared::Frame;
+use crate::utils::frame::Frame;
 
 pub struct FrameViewer {
     frame: Arc<Frame>,

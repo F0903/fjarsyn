@@ -7,27 +7,27 @@ use iced::{
     Element, Length, Subscription, Task,
     widget::{button, container, stack, text},
 };
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 
 use super::Screen;
 use crate::{
     capture_providers::{
-        CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream,
-        shared::{CaptureFramerate, Frame},
+        CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream, shared::CaptureFramerate,
         user_pick_platform_capture_item,
     },
-    media::h264_cpu::{H264Decoder, H264Encoder},
+    media::ffmpeg::{FFmpegDecoder, FFmpegEncoder},
     networking::webrtc::WebRTCEvent,
     ui::{
         frame_viewer::FrameViewer,
         message::{Message, Route},
         state::AppContext,
     },
+    utils::frame::Frame,
 };
 
 #[derive(Debug, Clone)]
 struct FrameReceiverSubData {
-    capture: Arc<Mutex<PlatformCaptureProvider>>,
+    capture: Arc<RwLock<PlatformCaptureProvider>>,
     framerate: CaptureFramerate,
     stream_name: &'static str,
 }
@@ -35,47 +35,6 @@ struct FrameReceiverSubData {
 impl Hash for FrameReceiverSubData {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.stream_name.hash(state);
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct CallScreen {
-    capture: Arc<Mutex<PlatformCaptureProvider>>,
-
-    pub capturing: bool,
-
-    // Local Capture State
-    pub local_frame: Option<Arc<Frame>>,
-    pub frame_sender: Option<mpsc::Sender<Arc<Frame>>>,
-    pub show_local_preview: bool,
-
-    // Remote Capture State
-    pub remote_frame: Option<Arc<Frame>>,
-    pub decoder: Option<Arc<Mutex<H264Decoder>>>,
-}
-
-impl CallScreen {
-    pub fn new(capture: Arc<Mutex<PlatformCaptureProvider>>) -> Self {
-        Self {
-            capture,
-            capturing: false,
-
-            local_frame: None,
-            frame_sender: None,
-            show_local_preview: false,
-
-            remote_frame: None,
-            decoder: None,
-        }
-    }
-
-    fn create_frame_receiver_subscription(data: &FrameReceiverSubData) -> PlatformCaptureStream {
-        tracing::info!("Creating frame receiver sub with framerate: {}", data.framerate);
-
-        data.capture
-            .blocking_lock()
-            .create_stream(data.framerate)
-            .expect("Failed to create stream!")
     }
 }
 
@@ -94,11 +53,53 @@ pub enum CallMessage {
     EndCall,
 }
 
+#[derive(Clone, Debug)]
+pub struct CallScreen {
+    capture: Arc<RwLock<PlatformCaptureProvider>>,
+
+    // Local Capture State
+    pub local_frame: Option<Arc<Frame>>,
+    pub frame_sender: Option<mpsc::Sender<Arc<Frame>>>,
+    pub show_local_preview: bool,
+
+    // Remote Capture State
+    pub remote_frame: Option<Arc<Frame>>,
+    pub decoder: Option<Arc<Mutex<FFmpegDecoder>>>,
+}
+
+impl CallScreen {
+    pub fn new(capture: Arc<RwLock<PlatformCaptureProvider>>) -> Self {
+        Self {
+            capture,
+
+            local_frame: None,
+            frame_sender: None,
+            show_local_preview: false,
+
+            remote_frame: None,
+            decoder: None,
+        }
+    }
+
+    fn create_frame_receiver_subscription(data: &FrameReceiverSubData) -> PlatformCaptureStream {
+        tracing::info!("Creating frame receiver sub with framerate: {}", data.framerate);
+
+        data.capture
+            .blocking_write()
+            .create_stream(data.framerate)
+            .expect("Failed to create stream!")
+    }
+
+    fn is_capturing(&self) -> bool {
+        self.capture.try_read().map(|c| c.is_capturing()).unwrap_or(false)
+    }
+}
+
 impl Screen for CallScreen {
     fn subscription(&self, ctx: &AppContext) -> Subscription<Message> {
         let mut subscriptions = vec![];
 
-        if self.capturing {
+        if self.is_capturing() {
             subscriptions.push(
                 Subscription::<Frame>::run_with(
                     FrameReceiverSubData {
@@ -119,7 +120,7 @@ impl Screen for CallScreen {
         match message {
             Message::PacketReceived(packet) => {
                 if self.decoder.is_none() {
-                    match H264Decoder::new() {
+                    match FFmpegDecoder::new(ctx.config.transcoding_type) {
                         Ok(decoder) => self.decoder = Some(Arc::new(Mutex::new(decoder))),
                         Err(e) => {
                             tracing::error!("Failed to create H264 Decoder: {}", e);
@@ -158,7 +159,7 @@ impl Screen for CallScreen {
                 }
 
                 CallMessage::EndCall => {
-                    let stop_capture_task = if self.capturing {
+                    let stop_capture_task = if self.is_capturing() {
                         Task::done(Message::Call(CallMessage::StopCapture))
                     } else {
                         Task::none()
@@ -220,7 +221,7 @@ impl Screen for CallScreen {
                     Task::done(Message::Call(CallMessage::TryStartCapture(capture_item)))
                 }
 
-                CallMessage::TryStartCapture(capture_item) => match self.capture.try_lock() {
+                CallMessage::TryStartCapture(capture_item) => match self.capture.try_write() {
                     Ok(mut capture) => {
                         if let Err(err) = capture.set_capture_item(capture_item.clone()) {
                             tracing::error!("Failed to set capture item: {}", err);
@@ -237,7 +238,7 @@ impl Screen for CallScreen {
                     Err(_) => {
                         let capture_arc = self.capture.clone();
                         Task::future(async move {
-                            let _lock = capture_arc.lock().await;
+                            let _lock = capture_arc.write().await;
                         })
                         .map(move |_| {
                             Message::Call(CallMessage::TryStartCapture(capture_item.clone()))
@@ -245,14 +246,11 @@ impl Screen for CallScreen {
                     }
                 },
 
-                CallMessage::CaptureStarted => {
-                    self.capturing = true;
-                    Task::none()
-                }
+                CallMessage::CaptureStarted => Task::none(),
 
                 CallMessage::StopCapture => Task::done(Message::Call(CallMessage::TryStopCapture)),
 
-                CallMessage::TryStopCapture => match self.capture.try_lock() {
+                CallMessage::TryStopCapture => match self.capture.try_write() {
                     Ok(mut capture) => {
                         if let Err(err) = capture.stop_capture() {
                             tracing::error!("Failed to stop capture: {}", err);
@@ -260,16 +258,18 @@ impl Screen for CallScreen {
                         Task::done(Message::Call(CallMessage::CaptureStopped))
                     }
                     Err(_) => {
+                        tracing::debug!(
+                            "Failed to acquire capture lock. Trying again with waiter..."
+                        );
                         let capture_arc = self.capture.clone();
                         Task::future(async move {
-                            let _lock = capture_arc.lock().await;
+                            let _lock = capture_arc.write().await;
                             Message::Call(CallMessage::TryStopCapture)
                         })
                     }
                 },
 
                 CallMessage::CaptureStopped => {
-                    self.capturing = false;
                     self.frame_sender = None;
                     self.local_frame = None;
                     Task::none()
@@ -290,6 +290,8 @@ impl Screen for CallScreen {
                         let webrtc = webrtc.clone();
                         let target_fps_hz = ctx.config.framerate.to_hz();
                         let bitrate = ctx.config.bitrate;
+                        let transcoding_type = ctx.config.transcoding_type;
+                        let input_format = ctx.config.pixel_format;
 
                         tracing::debug!(
                             "Starting encoder thread. target_fps_hz: {}, bitrate: {}",
@@ -297,16 +299,22 @@ impl Screen for CallScreen {
                             bitrate
                         );
                         tokio::spawn(async move {
-                            let mut encoder = match H264Encoder::new(bitrate, target_fps_hz) {
-                                Ok(enc) => enc,
-                                Err(e) => {
-                                    tracing::error!("Failed to create encoder: {}", e);
-                                    return;
-                                }
-                            };
+                            let mut encoder =
+                                match FFmpegEncoder::new(bitrate, target_fps_hz, input_format) {
+                                    Ok(e) => e,
+                                    Err(e) => {
+                                        tracing::error!("Failed to create encoder: {}", e);
+                                        return;
+                                    }
+                                };
 
                             while let Some(frame) = rx.recv().await {
-                                match encoder.encode(&frame.data, frame.size.x, frame.size.y) {
+                                match encoder.encode(
+                                    &frame.data,
+                                    transcoding_type,
+                                    frame.size.x,
+                                    frame.size.y,
+                                ) {
                                     Ok(nal_units) => {
                                         let frame_duration = match frame.duration {
                                             Some(duration) => duration,
@@ -364,7 +372,7 @@ impl Screen for CallScreen {
                 .push(button("Settings").on_press(Message::NavigateWithBack(Route::Settings)))
                 .spacing(10);
 
-        controls_row = if self.capturing {
+        controls_row = if self.is_capturing() {
             controls_row.extend([
                 button("Change Screen").on_press(Message::Call(CallMessage::StartCapture)).into(),
                 button(if self.show_local_preview { "Hide Preview" } else { "Show Preview" })

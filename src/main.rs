@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use fjarsyn::{Result, capture_providers, ui};
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -25,7 +25,7 @@ fn main() -> Result<()> {
             .with_default_device()?
             .with_default_capture_item()?
             .build()?;
-    let windows_capture = Arc::new(Mutex::new(windows_capture));
+    let windows_capture = Arc::new(RwLock::new(windows_capture));
     tracing::info!("Windows capture provider initialized.");
 
     tracing::info!("Initializing UI...");

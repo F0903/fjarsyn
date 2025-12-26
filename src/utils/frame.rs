@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use crate::{
-    capture_providers::shared::{PixelFormat, Rect, Vector2},
-    utils::{bitmap_utils::ensure_rgba, buffer_arena::BufferRef},
+use crate::utils::{
+    bitmap_utils::ensure_rgba, buffer_arena::BufferRef, pixel_format::PixelFormat, rect::Rect,
+    vector2::Vector2,
 };
 
 #[allow(dead_code)]

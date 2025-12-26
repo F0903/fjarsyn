@@ -59,5 +59,7 @@ fn main() {
         println!("cargo:rustc-link-lib=shlwapi");
         println!("cargo:rustc-link-lib=vfw32");
         println!("cargo:rustc-link-lib=bcrypt");
+        println!("cargo:rustc-link-lib=libx264");
+        println!("cargo:rustc-link-lib=x265-static");
     }
 }

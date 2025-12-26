@@ -14,7 +14,7 @@ pub enum CaptureFramerate {
 }
 
 impl CaptureFramerate {
-    pub const ALL: [CaptureFramerate; 7] = [
+    pub const ALL: &[CaptureFramerate] = &[
         CaptureFramerate::FPS5,
         CaptureFramerate::FPS24,
         CaptureFramerate::FPS30,

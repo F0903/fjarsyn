@@ -20,21 +20,24 @@ pub struct BufferArena {
 
 impl BufferArena {
     pub fn init(capacity: usize) -> Self {
-        BufferArena { arena: Arc::new(RwLock::new(BytesMut::with_capacity(capacity))) }
+        let mut bytes = BytesMut::with_capacity(capacity);
+        unsafe { bytes.set_len(capacity) };
+        BufferArena { arena: Arc::new(RwLock::new(bytes)) }
     }
 
     pub fn get(&self, size: usize) -> BufferRef {
         let mut arena = self.arena.write().unwrap();
 
-        let current_cap = arena.capacity();
-        if current_cap < size {
+        let current_len = arena.len();
+        if current_len < size {
+            let needed = size - current_len;
             tracing::debug!(
-                "BufferArena was too small, reallocating... old_cap: {}, requested_size: {}",
-                current_cap,
-                size
+                "BufferArena ran out of space, reallocating... len: {}, needed: {}",
+                current_len,
+                needed
             );
-            arena.reserve(size);
-            unsafe { arena.set_len(size) }; // We don't care that the buffer contains garbage data
+            arena.reserve(needed);
+            unsafe { arena.set_len(current_len + needed) };
         }
 
         let chunk = arena.split_to(size);

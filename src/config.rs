@@ -3,7 +3,10 @@ use std::{fs, path::PathBuf};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
-use crate::capture_providers::shared::{CaptureFramerate, PixelFormat};
+use crate::{
+    capture_providers::shared::CaptureFramerate, media::ffmpeg::FFmpegTranscodeType,
+    utils::pixel_format::PixelFormat,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -13,6 +16,7 @@ pub struct Config {
     pub framerate: CaptureFramerate,
     pub pixel_format: PixelFormat,
     pub max_depacket_latency: u16,
+    pub transcoding_type: FFmpegTranscodeType,
 }
 
 impl Default for Config {
@@ -24,6 +28,7 @@ impl Default for Config {
             server_url: "ws://127.0.0.1:30000/ws".to_string(),
             pixel_format: PixelFormat::RGBA8,
             max_depacket_latency: 1000,
+            transcoding_type: FFmpegTranscodeType::default(),
         }
     }
 }

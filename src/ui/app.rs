@@ -3,7 +3,7 @@ use std::{collections::VecDeque, sync::Arc};
 use bytes::Bytes;
 use futures::stream::unfold;
 use iced::{Element, Program, Subscription, Task, executor, window};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 
 use super::screens::{self, Screen};
 use crate::{
@@ -26,14 +26,14 @@ pub enum ActiveScreen {
 }
 
 pub struct App {
-    capture: Arc<Mutex<PlatformCaptureProvider>>,
+    capture: Arc<RwLock<PlatformCaptureProvider>>,
 }
 
 impl App {
     const APP_TITLE: &'static str = "Fjarsyn";
 
     pub fn new(
-        capture: Arc<Mutex<PlatformCaptureProvider>>,
+        capture: Arc<RwLock<PlatformCaptureProvider>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self { capture })
     }
@@ -237,7 +237,7 @@ impl Program for App {
 
         fn screen_from_route(
             state: &mut State,
-            capture: Arc<Mutex<PlatformCaptureProvider>>,
+            capture: Arc<RwLock<PlatformCaptureProvider>>,
             route: Route,
         ) -> ActiveScreen {
             match route {

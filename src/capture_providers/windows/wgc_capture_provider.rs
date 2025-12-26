@@ -26,13 +26,17 @@ use windows_core::Interface;
 use crate::{
     capture_providers::{
         CaptureProvider,
-        shared::{BytesPerPixel, Frame, PixelFormat, ToDirectXPixelFormat, Vector2},
         windows::{
             WindowsCaptureError, WindowsCaptureStream,
             d3d11_utils::{copy_texture, map_read_texture},
         },
     },
-    utils::buffer_arena::{BufferArena, BufferRef},
+    utils::{
+        buffer_arena::{BufferArena, BufferRef},
+        frame::Frame,
+        pixel_format::PixelFormat,
+        vector2::Vector2,
+    },
 };
 
 #[derive(Debug, Default)]
@@ -187,6 +191,7 @@ impl WgcCaptureProvider {
             Ok(_) => (),
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                 tracing::warn!("Frame sender closed whilst trying to send frame.");
+                return Err(WindowsCaptureError::FrameSenderClosed);
             }
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                 tracing::debug!("Frame channel full, dropping frame.");
@@ -321,14 +326,19 @@ impl CaptureProvider for WgcCaptureProvider {
                             buffer.set_len(buffer_size);
                         }
 
-                        if let Err(e) = Self::process_frame(
+                        match Self::process_frame(
                             buffer,
                             frame,
                             staging_state_arc.clone(),
                             pixel_format,
                             tx.clone(),
                         ) {
-                            tracing::error!("Failed to process frame: {}", e);
+                            Ok(()) => (),
+                            Err(WindowsCaptureError::FrameSenderClosed) => (),
+                            Err(e) => {
+                                tracing::error!("Failed to process frame: {}", e);
+                                // We can't return a custom error here
+                            }
                         }
                     }
                     Err(e) => tracing::error!("Failed to get next frame: {}", e),
@@ -340,6 +350,7 @@ impl CaptureProvider for WgcCaptureProvider {
                 tracing::error!("Failed to set FrameArrived handler! {}", e);
                 WindowsCaptureError::FailedToSetFrameArrivedHandler(e)
             })?;
+        tracing::debug!("Added frame arrived handler with token: {}", token);
         self.stream_tokens.push(token);
 
         if self.capturing {
@@ -374,6 +385,7 @@ impl CaptureProvider for WgcCaptureProvider {
 
     fn start_capture(&mut self) -> Self::Result<()> {
         if self.capturing {
+            tracing::warn!("Tried to start capture, but was already capturing.");
             return Err(WindowsCaptureError::AlreadyCapturing);
         }
 
@@ -403,6 +415,7 @@ impl CaptureProvider for WgcCaptureProvider {
         }
         if let Some(frame_pool) = &self.frame_pool {
             for token in self.stream_tokens.drain(..) {
+                tracing::debug!("Removing frame arrived handler: {}", token);
                 frame_pool.RemoveFrameArrived(token).ok();
             }
             frame_pool.Close().ok();
@@ -412,6 +425,10 @@ impl CaptureProvider for WgcCaptureProvider {
         self.frame_pool = None;
         self.capturing = false;
         Ok(())
+    }
+
+    fn is_capturing(&self) -> bool {
+        self.capturing
     }
 }
 

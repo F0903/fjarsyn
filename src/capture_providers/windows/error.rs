@@ -44,10 +44,14 @@ pub enum WindowsCaptureError {
     FailedToCreateDispatcherQueueController(windows_core::Error),
     #[error("Failed to start capture: {0}")]
     FailedToStartCapture(windows_core::Error),
+    #[error("Failed to process frame")]
+    FailedToProcessFrame(Box<WindowsCaptureError>),
     #[error("Windows smart pointer cast failed: {0}")]
     CastFailed(windows_core::Error),
     #[error("Invalid staging depth, staging depth can't be less than 1")]
     InvalidStagingDepth,
+    #[error("Frame sender closed")]
+    FrameSenderClosed,
     #[error("Unknown Windows error: {0}")]
     UnknownWindowsError(#[from] windows_core::Error),
 }

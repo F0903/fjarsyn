@@ -7,6 +7,7 @@ use super::Screen;
 use crate::{
     capture_providers::shared::CaptureFramerate,
     config::Config,
+    media::ffmpeg::FFmpegTranscodeType,
     ui::{message::Message, state::AppContext},
 };
 
@@ -16,12 +17,14 @@ pub enum ConfigField {
     Framerate,
     ServerUrl,
     MaxDepacketLatency,
+    TranscodingType,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigValue {
     String(String),
     Framerate(CaptureFramerate),
+    TranscodingType(FFmpegTranscodeType),
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +62,10 @@ impl Screen for SettingsScreen {
 
                         (ConfigField::Framerate, ConfigValue::Framerate(rate)) => {
                             config.framerate = rate;
+                        }
+
+                        (ConfigField::TranscodingType, ConfigValue::TranscodingType(t)) => {
+                            config.transcoding_type = t;
                         }
 
                         (ConfigField::Bitrate, ConfigValue::String(s)) => {
@@ -118,11 +125,19 @@ impl Screen for SettingsScreen {
             })
             .padding(10);
 
-        let framerate_pick =
-            pick_list(&CaptureFramerate::ALL[..], Some(config.framerate), |rate| {
+        let framerate_pick = pick_list(CaptureFramerate::ALL, Some(config.framerate), |rate| {
+            Message::Settings(SettingsMessage::ConfigUpdate(
+                ConfigField::Framerate,
+                ConfigValue::Framerate(rate),
+            ))
+        })
+        .padding(10);
+
+        let transcode_pick =
+            pick_list(FFmpegTranscodeType::ALL, Some(config.transcoding_type), |t| {
                 Message::Settings(SettingsMessage::ConfigUpdate(
-                    ConfigField::Framerate,
-                    ConfigValue::Framerate(rate),
+                    ConfigField::TranscodingType,
+                    ConfigValue::TranscodingType(t),
                 ))
             })
             .padding(10);
@@ -157,6 +172,8 @@ impl Screen for SettingsScreen {
             url_input,
             text("Framerate:"),
             framerate_pick,
+            text("Transcoding Type:"),
+            transcode_pick,
             text("Bitrate:"),
             bitrate_input,
             text("Max Depacket Latency:"),

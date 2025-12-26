@@ -9,4 +9,5 @@ pub trait CaptureProvider {
     fn set_capture_item(&mut self, capture_item: Self::CaptureItem) -> Self::Result<()>;
     fn start_capture(&mut self) -> Self::Result<()>;
     fn stop_capture(&mut self) -> Self::Result<()>;
+    fn is_capturing(&self) -> bool;
 }
