@@ -27,18 +27,19 @@ pub struct WgcCaptureProviderBuilder {
     device: Option<IDirect3DDevice>,
     capture_item: Option<GraphicsCaptureItem>,
     pixel_format: PixelFormat,
+    record_cursor: bool,
+    border_indicator: bool,
 }
 
 impl WgcCaptureProviderBuilder {
-    pub fn new(pixel_format: PixelFormat) -> Self {
-        WgcCaptureProviderBuilder { device: None, capture_item: None, pixel_format }
-    }
-
-    #[allow(dead_code)]
-    pub fn with_device(mut self, device: IDirect3DDevice) -> Self {
-        tracing::debug!("Setting custom device for WindowsCaptureProviderBuilder");
-        self.device = Some(device);
-        self
+    pub fn new(pixel_format: PixelFormat, record_cursor: bool, border_indicator: bool) -> Self {
+        WgcCaptureProviderBuilder {
+            device: None,
+            capture_item: None,
+            pixel_format,
+            record_cursor,
+            border_indicator,
+        }
     }
 
     pub fn with_default_device(mut self) -> Result<Self> {
@@ -63,7 +64,12 @@ impl WgcCaptureProviderBuilder {
             WgcCaptureProviderBuilderError::MissingDevice
         })?;
 
-        let mut capture = WgcCaptureProvider::new(device, self.pixel_format);
+        let mut capture = WgcCaptureProvider::new(
+            device,
+            self.pixel_format,
+            self.record_cursor,
+            self.border_indicator,
+        );
         if let Some(capture_item) = self.capture_item {
             capture.set_capture_item(capture_item)?;
         }

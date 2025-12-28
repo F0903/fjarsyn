@@ -17,14 +17,17 @@ fn main() -> Result<()> {
 
     tracing::info!("Starting up...");
 
-    let start_config = fjarsyn::config::Config::load();
+    let initial_config = fjarsyn::config::Config::load();
 
     tracing::info!("Initializing windows capture provider...");
-    let windows_capture =
-        capture_providers::windows::WgcCaptureProviderBuilder::new(start_config.pixel_format)
-            .with_default_device()?
-            .with_default_capture_item()?
-            .build()?;
+    let windows_capture = capture_providers::windows::WgcCaptureProviderBuilder::new(
+        initial_config.pixel_format,
+        initial_config.record_cursor,
+        initial_config.recording_border_indicator,
+    )
+    .with_default_device()?
+    .with_default_capture_item()?
+    .build()?;
     let windows_capture = Arc::new(RwLock::new(windows_capture));
     tracing::info!("Windows capture provider initialized.");
 

@@ -60,6 +60,9 @@ pub struct WgcCaptureProvider {
     session: Option<GraphicsCaptureSession>,
     stream_tokens: Vec<i64>,
     capturing: bool,
+
+    record_cursor: bool,
+    border_indicator: bool,
 }
 
 impl WgcCaptureProvider {
@@ -68,7 +71,12 @@ impl WgcCaptureProvider {
     const TX_QUEUE_SIZE: usize = 2;
     const BUFFER_ARENA_SIZE: usize = 128000;
 
-    pub fn new(device: IDirect3DDevice, pixel_format: PixelFormat) -> Self {
+    pub fn new(
+        device: IDirect3DDevice,
+        pixel_format: PixelFormat,
+        record_cursor: bool,
+        border_indicator: bool,
+    ) -> Self {
         Self {
             device,
             capture_item: None,
@@ -79,6 +87,8 @@ impl WgcCaptureProvider {
             session: None,
             stream_tokens: Vec::new(),
             capturing: false,
+            record_cursor,
+            border_indicator,
         }
     }
 
@@ -286,10 +296,10 @@ impl CaptureProvider for WgcCaptureProvider {
             WindowsCaptureError::FailedToCreateCaptureSession(e)
         })?;
 
-        if let Err(e) = session.SetIsCursorCaptureEnabled(true) {
+        if let Err(e) = session.SetIsCursorCaptureEnabled(self.record_cursor) {
             tracing::warn!("Failed to set IsCursorCaptureEnabled: {}", e);
         }
-        if let Err(e) = session.SetIsBorderRequired(true) {
+        if let Err(e) = session.SetIsBorderRequired(self.border_indicator) {
             tracing::warn!("Failed to set IsBorderRequired: {}", e);
         }
 

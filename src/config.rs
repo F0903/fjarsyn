@@ -17,6 +17,8 @@ pub struct Config {
     pub pixel_format: PixelFormat,
     pub max_depacket_latency: u16,
     pub transcoding_type: FFmpegTranscodeType,
+    pub record_cursor: bool,
+    pub recording_border_indicator: bool,
 }
 
 impl Default for Config {
@@ -29,6 +31,8 @@ impl Default for Config {
             pixel_format: PixelFormat::RGBA8,
             max_depacket_latency: 1000,
             transcoding_type: FFmpegTranscodeType::default(),
+            record_cursor: true,
+            recording_border_indicator: true,
         }
     }
 }
