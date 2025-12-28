@@ -66,3 +66,10 @@ serde_json = { workspace = true }
 ffmpeg-next = { version = "8.0.0", features = ["static"] }
 directories = "6.0.0"
 serde = { workspace = true, features = ["derive"] }
+
+[profile.release]
+opt-level = "z"   # Optimize for size
+lto = true        # Enable Link Time Optimization
+codegen-units = 1 # Reduce parallelism for better optimization
+panic = "abort"   # Abort on panic (removes unwinding)
+strip = true      # Strip symbols from binary
