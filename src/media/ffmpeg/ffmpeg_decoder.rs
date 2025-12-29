@@ -164,7 +164,6 @@ impl FFmpegDecoder {
                     PixelFormat::RGBA8,
                     Vector2::<i32>::new(width as i32, height as i32),
                     None,
-                    None,
                 ));
 
                 Ok(Some(frame))

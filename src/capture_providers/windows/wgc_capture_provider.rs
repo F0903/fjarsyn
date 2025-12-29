@@ -1,5 +1,4 @@
 use std::{
-    iter::IntoIterator,
     mem::MaybeUninit,
     sync::{Arc, RwLock},
 };
@@ -180,21 +179,11 @@ impl WgcCaptureProvider {
             .unwrap_or_default();
 
         let frame_duration = std::time::Duration::from_nanos((rel_time.Duration / 100) as u64);
-
-        let dirty_regions = match frame.DirtyRegions() {
-            Ok(regions) => regions.into_iter().map(Into::into).collect(),
-            Err(err) => {
-                tracing::warn!("Failed to get frame dirty regions: {}", err);
-                Vec::new()
-            }
-        };
-
         let frame = Frame::new_ensure_rgba(
             frame_buffer,
             pixel_format,
             Vector2 { x: size.Width, y: size.Height },
             Some(frame_duration),
-            Some(dirty_regions),
         );
 
         match tx.try_send(frame) {
