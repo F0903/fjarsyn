@@ -53,13 +53,10 @@ fn main() {
 
         // Link required Windows system libraries for static FFmpeg build
         println!("cargo:rustc-link-lib=strmiids");
-        println!("cargo:rustc-link-lib=mfplat");
         println!("cargo:rustc-link-lib=mfuuid");
-        println!("cargo:rustc-link-lib=secur32");
-        println!("cargo:rustc-link-lib=shlwapi");
         println!("cargo:rustc-link-lib=vfw32");
-        println!("cargo:rustc-link-lib=bcrypt");
         println!("cargo:rustc-link-lib=libx264");
         println!("cargo:rustc-link-lib=x265-static");
+        println!("cargo:rustc-link-lib=libmfx");
     }
 }

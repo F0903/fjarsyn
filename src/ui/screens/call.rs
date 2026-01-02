@@ -120,7 +120,7 @@ impl Screen for CallScreen {
         match message {
             Message::PacketReceived(packet) => {
                 if self.decoder.is_none() {
-                    match FFmpegDecoder::new(ctx.config.transcoding_type) {
+                    match FFmpegDecoder::new(ctx.config.transcoding_type, ctx.config.pixel_format) {
                         Ok(decoder) => self.decoder = Some(Arc::new(Mutex::new(decoder))),
                         Err(e) => {
                             tracing::error!("Failed to create H264 Decoder: {}", e);

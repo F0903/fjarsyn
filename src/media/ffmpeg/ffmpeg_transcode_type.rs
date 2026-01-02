@@ -1,14 +1,30 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy)]
+pub struct EncoderInfo {
+    pub name: &'static str,
+    pub input_format: ffmpeg_next::format::Pixel,
+    pub scaler_format: ffmpeg_next::format::Pixel,
+}
+
+#[derive(Clone, Copy)]
+pub struct DecoderInfo {
+    pub name: &'static str,
+}
+
 macro_rules! define_ffmpeg_transcode_types {
     (
         $(
             $variant:ident $( => $def:tt )? {
-                encoder_name: $encoder_name:expr,
-                set_encoder_options: $set_encoder_options:expr,
-                decoder_name: $decoder_name:expr,
-                input_format: $input_format:expr,
-                hw_accel_name: $hw_accel_name:expr,
+                encoder: {
+                    name: $encoder_name:expr,
+                    set_options: $set_encoder_options:expr,
+                    input_format: $input_format:expr,
+                    scaler_format: $scaler_format:expr,
+                },
+                decoder: {
+                    name: $decoder_name:expr,
+                }
             }
         ),* $(,)?
     ) => {
@@ -44,10 +60,24 @@ macro_rules! define_ffmpeg_transcode_types {
                 )*
             ];
 
-            pub fn to_encoder_name(&self) -> &'static str {
+            pub const fn get_encoder_info(&self) -> EncoderInfo {
                 match self {
                     $(
-                        FFmpegTranscodeType::$variant => $encoder_name,
+                        FFmpegTranscodeType::$variant => EncoderInfo {
+                            name: $encoder_name,
+                            input_format: $input_format,
+                            scaler_format: $scaler_format,
+                        },
+                    )*
+                }
+            }
+
+            pub const fn get_decoder_info(&self) -> DecoderInfo {
+                match self {
+                    $(
+                        FFmpegTranscodeType::$variant => DecoderInfo {
+                            name: $decoder_name,
+                        },
                     )*
                 }
             }
@@ -58,30 +88,6 @@ macro_rules! define_ffmpeg_transcode_types {
                         FFmpegTranscodeType::$variant => {
                             $set_encoder_options(opts);
                         }
-                    )*
-                }
-            }
-
-            pub fn to_decoder_name(&self) -> &'static str {
-                match self {
-                    $(
-                        FFmpegTranscodeType::$variant => $decoder_name,
-                    )*
-                }
-            }
-
-            pub fn hw_accel_name(&self) -> Option<&'static str> {
-                match self {
-                    $(
-                        FFmpegTranscodeType::$variant => $hw_accel_name,
-                    )*
-                }
-            }
-
-            pub fn get_input_format(&self) -> ffmpeg_next::format::Pixel {
-                match self {
-                    $(
-                        FFmpegTranscodeType::$variant => $input_format,
                     )*
                 }
             }
@@ -97,35 +103,31 @@ macro_rules! define_ffmpeg_transcode_types {
 
 define_ffmpeg_transcode_types! {
     H264Software => default {
-        encoder_name: "libx264",
-        set_encoder_options: |opts: &mut ffmpeg_next::Dictionary| {
-            opts.set("preset", "ultrafast");
-            opts.set("tune", "zerolatency");
+        encoder: {
+            name: "libx264",
+            set_options: |opts: &mut ffmpeg_next::Dictionary| {
+                opts.set("preset", "ultrafast");
+                opts.set("tune", "zerolatency");
+            },
+            input_format: ffmpeg_next::format::Pixel::YUV420P,
+            scaler_format: ffmpeg_next::format::Pixel::YUV420P,
         },
-        decoder_name: "h264",
-        input_format: ffmpeg_next::format::Pixel::YUV420P,
-        hw_accel_name: None,
+        decoder: {
+            name: "h264",
+        }
     },
-    H264Vulkan {
-        encoder_name: "h264_vulkan",
-        set_encoder_options: |opts: &mut ffmpeg_next::Dictionary| {
-            opts.set("tune", "ull");
-            opts.set("usage", "conference");
-            opts.set("content", "desktop");
+    H264Nvenc {
+        encoder: {
+            name: "h264_nvenc",
+            set_options: |opts: &mut ffmpeg_next::Dictionary| {
+                opts.set("preset", "p1");
+                opts.set("tune", "ull");
+            },
+            input_format: ffmpeg_next::format::Pixel::NV12,
+            scaler_format: ffmpeg_next::format::Pixel::NV12,
         },
-        decoder_name: "h264",
-        input_format: ffmpeg_next::format::Pixel::VULKAN,
-        hw_accel_name: Some("vulkan"),
-    },
-    H265Vulkan {
-        encoder_name: "hevc_vulkan",
-        set_encoder_options: |opts: &mut ffmpeg_next::Dictionary| {
-            opts.set("tune", "ull");
-            opts.set("usage", "conference");
-            opts.set("content", "desktop");
-        },
-        decoder_name: "hevc",
-        input_format: ffmpeg_next::format::Pixel::VULKAN,
-        hw_accel_name: Some("vulkan"),
+        decoder: {
+            name: "h264",
+        }
     },
 }

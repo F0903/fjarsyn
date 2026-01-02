@@ -16,7 +16,7 @@ To set up the build dependencies for FFmpeg (ffmpeg-next static linking with MSV
 
 1. Install LLVM with winget: `winget install --id LLVM.LLVM`
 2. Make sure you have vcpkg installed. [(instructions for the bash shell)](https://learn.microsoft.com/en-us/vcpkg/get_started/get-started?pivots=shell-bash#1---set-up-vcpkg)
-3. Install FFmpeg for static linking through vcpkg: `vcpkg install ffmpeg:x64-windows-static-md`
+3. Install FFmpeg for static linking through vcpkg: `vcpkg install ffmpeg[core,gpl,x264,nvcodec,amf,qsv,swscale,swresample,avdevice] --triplet x64-windows-static-md --recurse`
 4. The project should now be able to build.
 
 #### macOS / Linux

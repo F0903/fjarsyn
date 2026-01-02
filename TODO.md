@@ -4,5 +4,5 @@ Here you can find the current TODOs for the project. The TODOs are approximately
 
 Each TODO is somewhat abstract and may require a lot of work to implement.
   
-- Contacts system for easily setting up screen sharing.
+- Contacts system for easily setting up screen sharing. 
 - Audio capture, streaming and playback.
