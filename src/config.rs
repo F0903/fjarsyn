@@ -4,7 +4,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    capture_providers::shared::CaptureFramerate,
+    capture_providers::CaptureFramerate,
     media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
     utils::pixel_format::PixelFormat,
 };

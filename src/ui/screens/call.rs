@@ -12,7 +12,7 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use super::Screen;
 use crate::{
     capture_providers::{
-        CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream, shared::CaptureFramerate,
+        CaptureFramerate, CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream,
         user_pick_platform_capture_item,
     },
     media::ffmpeg::{FFmpegDecoder, FFmpegEncoder},

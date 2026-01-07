@@ -1,7 +1,8 @@
+mod capture_framerate;
 mod capture_provider;
-pub mod shared;
 pub mod windows;
 
+pub use capture_framerate::CaptureFramerate;
 pub use capture_provider::CaptureProvider;
 
 #[derive(Debug, thiserror::Error)]

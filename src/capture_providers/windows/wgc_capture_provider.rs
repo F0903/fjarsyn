@@ -24,7 +24,7 @@ use windows_core::Interface;
 
 use crate::{
     capture_providers::{
-        CaptureProvider,
+        CaptureFramerate, CaptureProvider,
         windows::{
             WindowsCaptureError, WindowsCaptureStream,
             d3d11_utils::{copy_texture, map_read_texture},
@@ -250,10 +250,7 @@ impl CaptureProvider for WgcCaptureProvider {
     type Stream = WindowsCaptureStream;
     type CaptureItem = GraphicsCaptureItem;
 
-    fn create_stream(
-        &mut self,
-        framerate: crate::capture_providers::shared::CaptureFramerate,
-    ) -> Self::Result<Self::Stream> {
+    fn create_stream(&mut self, framerate: CaptureFramerate) -> Self::Result<Self::Stream> {
         let (tx, rx) = tokio::sync::mpsc::channel(Self::PIPELINE_DEPTH);
 
         let capture_item = self.capture_item.as_ref().ok_or_else(|| {

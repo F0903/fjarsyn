@@ -5,7 +5,7 @@ use iced::{
 
 use super::Screen;
 use crate::{
-    capture_providers::shared::CaptureFramerate,
+    capture_providers::CaptureFramerate,
     config::Config,
     define_enum_with_all,
     media::{TargetResolution, ffmpeg::FFmpegTranscodeType},

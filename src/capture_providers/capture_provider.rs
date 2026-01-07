@@ -1,4 +1,4 @@
-use crate::capture_providers::shared::CaptureFramerate;
+use super::CaptureFramerate;
 
 pub trait CaptureProvider {
     type Result<T>;
