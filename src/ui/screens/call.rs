@@ -104,7 +104,7 @@ impl Screen for CallScreen {
                 Subscription::<Frame>::run_with(
                     FrameReceiverSubData {
                         capture: self.capture.clone(),
-                        framerate: ctx.config.framerate,
+                        framerate: ctx.config.target_framerate,
                         stream_name: "frame-receiver",
                     },
                     Self::create_frame_receiver_subscription,
@@ -288,25 +288,31 @@ impl Screen for CallScreen {
                         self.frame_sender = Some(tx.clone());
 
                         let webrtc = webrtc.clone();
-                        let target_fps_hz = ctx.config.framerate.to_hz();
-                        let bitrate = ctx.config.bitrate;
+                        let target_fps_hz = ctx.config.target_framerate.to_hz();
+                        let target_resolution = ctx.config.target_resolution;
+                        let target_bitrate = ctx.config.target_bitrate;
                         let transcoding_type = ctx.config.transcoding_type;
                         let input_format = ctx.config.pixel_format;
 
                         tracing::debug!(
-                            "Starting encoder thread. target_fps_hz: {}, bitrate: {}",
+                            "Starting encoder thread. target_fps_hz: {}, target_resolution: {:?}, target_bitrate: {}",
                             target_fps_hz,
-                            bitrate
+                            target_resolution,
+                            target_bitrate
                         );
                         tokio::spawn(async move {
-                            let mut encoder =
-                                match FFmpegEncoder::new(bitrate, target_fps_hz, input_format) {
-                                    Ok(e) => e,
-                                    Err(e) => {
-                                        tracing::error!("Failed to create encoder: {}", e);
-                                        return;
-                                    }
-                                };
+                            let mut encoder = match FFmpegEncoder::new(
+                                target_bitrate,
+                                target_fps_hz,
+                                target_resolution,
+                                input_format,
+                            ) {
+                                Ok(e) => e,
+                                Err(e) => {
+                                    tracing::error!("Failed to create encoder: {}", e);
+                                    return;
+                                }
+                            };
 
                             while let Some(frame) = rx.recv().await {
                                 match encoder.encode(

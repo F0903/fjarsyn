@@ -4,7 +4,6 @@ use crate::utils::{
     bitmap_utils::ensure_rgba, buffer_arena::BufferRef, pixel_format::PixelFormat, vector2::Vector2,
 };
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Frame {
     pub data: BufferRef,

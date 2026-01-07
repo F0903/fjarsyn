@@ -123,7 +123,7 @@ impl FFmpegDecoder {
                 let frame = Arc::new(Frame::new_raw(
                     framebuf,
                     self.dst_format,
-                    Vector2::<i32>::new(width as i32, height as i32),
+                    Vector2::new(width as i32, height as i32),
                     None,
                 ));
 

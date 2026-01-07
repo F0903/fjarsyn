@@ -21,11 +21,12 @@ fn swap_first_channel(bitmap: &mut [u8]) {
 
     unsafe {
         while ptr < end {
-            // Swap the 1st byte (Blue) and 3rd byte (Red).
-            // BGRA -> RGBA
-            let tmp = *ptr;
-            *ptr = *ptr.add(2);
-            *ptr.add(2) = tmp;
+            // Swap the 1st byte and 3rd byte.
+            // BGRA -> RGBA (for example)
+            let first_byte = *ptr;
+            let third_byte_ptr = ptr.add(2);
+            *ptr = *third_byte_ptr;
+            *third_byte_ptr = first_byte;
 
             // Advance to the next pixel (4 bytes)
             ptr = ptr.add(4);
@@ -33,10 +34,10 @@ fn swap_first_channel(bitmap: &mut [u8]) {
     }
 }
 
-/// Swaps the Blue and Red channels in a BGRA buffer to convert it to RGBA.
+/// Swaps the Blue and Red channels in a BGRA8 buffer to convert it to RGBA8.
 ///
 /// # Safety
-/// This function relies on `bytes` containing valid BGRA/RGBA data (4 bytes per pixel).
+/// This function relies on `bytes` containing valid BGRA8/RGBA8 data (4 bytes per pixel).
 /// It processes chunks of 4 bytes. If the buffer length is not a multiple of 4,
 /// the trailing bytes are ignored (which is correct for pixel data).
 #[inline]

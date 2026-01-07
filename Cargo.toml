@@ -72,6 +72,7 @@ ffmpeg-next = { version = "8.0.0", default-features = false, features = [
 ] }
 directories = "6.0.0"
 serde = { workspace = true, features = ["derive"] }
+paste = "1.0.15"
 
 [profile.release]
 opt-level = "z"   # Optimize for size

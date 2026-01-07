@@ -1,12 +1,14 @@
 use crate::utils::vector2::Vector2;
 
-#[derive(Debug, Clone)]
-pub struct Rect<N = f32> {
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Rect<N = i32> {
     pub position: Vector2<N>,
     pub size: Vector2<N>,
 }
 
 impl From<windows::Foundation::Rect> for Rect<f32> {
+    #[inline]
     fn from(rect: windows::Foundation::Rect) -> Self {
         Rect {
             position: Vector2 { x: rect.X, y: rect.Y },
@@ -16,6 +18,7 @@ impl From<windows::Foundation::Rect> for Rect<f32> {
 }
 
 impl From<Rect<f32>> for windows::Foundation::Rect {
+    #[inline]
     fn from(rect: Rect<f32>) -> Self {
         windows::Foundation::Rect {
             X: rect.position.x,
@@ -27,6 +30,7 @@ impl From<Rect<f32>> for windows::Foundation::Rect {
 }
 
 impl From<windows::Graphics::RectInt32> for Rect<i32> {
+    #[inline]
     fn from(rect: windows::Graphics::RectInt32) -> Self {
         Rect {
             position: Vector2 { x: rect.X, y: rect.Y },
@@ -36,6 +40,7 @@ impl From<windows::Graphics::RectInt32> for Rect<i32> {
 }
 
 impl From<Rect<i32>> for windows::Graphics::RectInt32 {
+    #[inline]
     fn from(rect: Rect<i32>) -> Self {
         windows::Graphics::RectInt32 {
             X: rect.position.x,

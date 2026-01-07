@@ -8,7 +8,6 @@ pub enum SignalingType {
     Identity,
 }
 
-// Our signaling message format
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SignalingMessage {
     pub to: String,

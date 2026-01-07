@@ -5,7 +5,7 @@ use ffmpeg::{
 use ffmpeg_next as ffmpeg;
 
 use crate::{
-    media::ffmpeg::FFmpegTranscodeType,
+    media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
     utils::{num_utils::align_to_rounded, pixel_format::PixelFormat},
 };
 
@@ -29,7 +29,10 @@ pub struct FFmpegEncoder {
     scaler: Option<Scaler>,
     bitrate: u32,
     target_framerate_hz: f32,
+    target_resolution: TargetResolution,
     frame_count: i64,
+    current_src_width: i32,
+    current_src_height: i32,
 }
 
 impl FFmpegEncoder {
@@ -37,8 +40,15 @@ impl FFmpegEncoder {
     const B_FRAMES_VALUE: usize = 0;
     const SCALING_MODE: scaling::Flags = scaling::Flags::BILINEAR;
 
-    pub fn new(bitrate: u32, target_framerate_hz: f32, input_format: PixelFormat) -> Result<Self> {
+    pub fn new(
+        bitrate: u32,
+        target_framerate_hz: f32,
+        target_resolution: TargetResolution,
+        input_format: PixelFormat,
+    ) -> Result<Self> {
         ffmpeg::init().map_err(FFmpegEncoderError::CreateEncoderError)?;
+
+        #[cfg(debug_assertions)]
         ffmpeg::log::set_level(ffmpeg::log::Level::Debug);
 
         Ok(Self {
@@ -47,15 +57,31 @@ impl FFmpegEncoder {
             scaler: None,
             bitrate,
             target_framerate_hz,
+            target_resolution,
             frame_count: 0,
+            current_src_width: 0,
+            current_src_height: 0,
         })
+    }
+
+    fn compute_dst_resolution(&mut self, src_width: i32, src_height: i32) -> (u32, u32) {
+        // Align resolution to 2 (requirement for some formats)
+        match self.target_resolution {
+            TargetResolution::Scale(target_size) => (
+                align_to_rounded(target_size.width(), 2) as u32,
+                align_to_rounded(target_size.height(), 2) as u32,
+            ),
+            TargetResolution::Source => {
+                (align_to_rounded(src_width, 2) as u32, align_to_rounded(src_height, 2) as u32)
+            }
+        }
     }
 
     fn init_encoder(
         &mut self,
         transcoding_type: FFmpegTranscodeType,
-        width: i32,
-        height: i32,
+        src_width: i32,
+        src_height: i32,
         dst_format: format::Pixel,
     ) -> Result<()> {
         let encoder_info = transcoding_type.get_encoder_info();
@@ -63,56 +89,61 @@ impl FFmpegEncoder {
             .ok_or(FFmpegEncoderError::CreateEncoderError(ffmpeg::Error::EncoderNotFound))?;
         tracing::info!("Using encoder: {}", codec.name());
 
-        let mut context = codec::Context::new_with_codec(codec)
+        let mut codec_context = codec::Context::new_with_codec(codec)
             .encoder()
             .video()
             .map_err(FFmpegEncoderError::CreateEncoderError)?;
 
-        // Align resolution to 2 (requirement for some formats)
-        let aligned_width = align_to_rounded(width, 2);
-        let aligned_height = align_to_rounded(height, 2);
+        let (aligned_src_width, aligned_src_height) =
+            (align_to_rounded(src_width, 2), align_to_rounded(src_height, 2));
+        let (aligned_dst_width, aligned_dst_height) =
+            self.compute_dst_resolution(src_width, src_height);
 
-        context.set_width(aligned_width as u32);
-        context.set_height(aligned_height as u32);
-        context.set_format(encoder_info.input_format);
-        context.set_bit_rate(self.bitrate as usize);
+        codec_context.set_width(aligned_dst_width);
+        codec_context.set_height(aligned_dst_height);
+        codec_context.set_format(encoder_info.input_format);
+        codec_context.set_bit_rate(self.bitrate as usize);
 
         let time_base = Rational(1, self.target_framerate_hz as i32);
-        context.set_time_base(time_base);
-        context.set_frame_rate(Some(Rational(self.target_framerate_hz as i32, 1)));
+        codec_context.set_time_base(time_base);
+        codec_context.set_frame_rate(Some(Rational(self.target_framerate_hz as i32, 1)));
 
-        context.set_gop(Self::GOP_VALUE);
-        context.set_max_b_frames(Self::B_FRAMES_VALUE);
+        codec_context.set_gop(Self::GOP_VALUE);
+        codec_context.set_max_b_frames(Self::B_FRAMES_VALUE);
 
         let mut opts = ffmpeg::Dictionary::new();
         transcoding_type.set_encoder_options(&mut opts);
 
         tracing::info!(
             "Opening encoder with: width={}, height={}, bitrate={}, time_base={:?}, frame_rate={:?}, gop={}, max_b_frames={}, format={:?}",
-            aligned_width,
-            aligned_height,
+            aligned_src_width,
+            aligned_src_height,
             self.bitrate,
             time_base,
-            context.frame_rate(),
+            codec_context.frame_rate(),
             Self::GOP_VALUE,
             Self::B_FRAMES_VALUE,
             encoder_info.input_format
         );
 
-        let encoder = context.open_with(opts).map_err(FFmpegEncoderError::CreateEncoderError)?;
+        let encoder =
+            codec_context.open_with(opts).map_err(FFmpegEncoderError::CreateEncoderError)?;
         self.encoder = Some(encoder);
 
         let scaler = scaling::Context::get(
             self.input_format.to_ffmpeg_pixel_format(),
-            width as u32,
-            height as u32,
+            src_width as u32,
+            src_height as u32,
             dst_format,
-            aligned_width as u32,
-            aligned_height as u32,
+            aligned_dst_width as u32,
+            aligned_dst_height as u32,
             Self::SCALING_MODE,
         )
         .map_err(FFmpegEncoderError::ScalerError)?;
         self.scaler = Some(scaler);
+
+        self.current_src_width = src_width;
+        self.current_src_height = src_height;
 
         Ok(())
     }
@@ -127,20 +158,15 @@ impl FFmpegEncoder {
     ) -> Result<Vec<Vec<u8>>> {
         let dst_format = transcoding_type.get_encoder_info().scaler_format;
 
-        if self.encoder.is_none() {
+        if self.encoder.is_none()
+            || self.current_src_width != width
+            || self.current_src_height != height
+        {
             self.init_encoder(transcoding_type, width, height, dst_format)?;
         }
 
-        // Align resolution to 2 (requirement for some formats)
-        let aligned_width = align_to_rounded(width, 2);
-        let aligned_height = align_to_rounded(height, 2);
-
-        if let Some(enc) = &self.encoder {
-            if enc.width() != aligned_width as u32 || enc.height() != aligned_height as u32 {
-                // Re-init
-                self.init_encoder(transcoding_type, width, height, dst_format)?;
-            }
-        }
+        // Compute destination resolution for correct frame allocation
+        let (dst_w, dst_h) = self.compute_dst_resolution(width, height);
 
         let encoder = self.encoder.as_mut().unwrap();
         let scaler = self.scaler.as_mut().unwrap();
@@ -157,16 +183,12 @@ impl FFmpegEncoder {
             let stride = width * self.input_format.bytes_per_pixel() as i32;
 
             // Set data pointers
-            (*ptr).data[0] = bitmap.as_ptr() as *mut u8;
+            (*ptr).data[0] = bitmap.as_ptr() as *mut u8; // Despite being cast to a mut pointer, the data will not be mutated.
             (*ptr).linesize[0] = stride;
-
-            // NOTE: We do not set extended_data for simple formats usually,
-            // but for safety with some swscale versions, it mimics data.
             (*ptr).extended_data = (*ptr).data.as_mut_ptr();
         }
 
-        let mut dst_frame =
-            frame::Video::new(dst_format, aligned_width as u32, aligned_height as u32);
+        let mut dst_frame = frame::Video::new(dst_format, dst_w, dst_h);
 
         let scale_result = scaler.run(&input_frame, &mut dst_frame);
 
@@ -205,6 +227,7 @@ impl std::fmt::Debug for FFmpegEncoder {
         f.debug_struct("FFmpegEncoder")
             .field("bitrate", &self.bitrate)
             .field("target_framerate_hz", &self.target_framerate_hz)
+            .field("target_resolution", &self.target_resolution)
             .field("frame_count", &self.frame_count)
             .finish()
     }

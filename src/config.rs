@@ -4,7 +4,8 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    capture_providers::shared::CaptureFramerate, media::ffmpeg::FFmpegTranscodeType,
+    capture_providers::shared::CaptureFramerate,
+    media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
     utils::pixel_format::PixelFormat,
 };
 
@@ -12,8 +13,9 @@ use crate::{
 pub struct Config {
     pub onboarding_done: bool,
     pub server_url: String,
-    pub bitrate: u32,
-    pub framerate: CaptureFramerate,
+    pub target_bitrate: u32,
+    pub target_framerate: CaptureFramerate,
+    pub target_resolution: TargetResolution,
     pub pixel_format: PixelFormat,
     pub max_depacket_latency: u16,
     pub transcoding_type: FFmpegTranscodeType,
@@ -25,8 +27,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             onboarding_done: false,
-            bitrate: 8_000_000,
-            framerate: CaptureFramerate::FPS30,
+            target_bitrate: 8_000_000,
+            target_framerate: CaptureFramerate::FPS60,
+            target_resolution: TargetResolution::Source,
             server_url: "ws://127.0.0.1:30000/ws".to_string(),
             pixel_format: PixelFormat::RGBA8,
             max_depacket_latency: 1000,
