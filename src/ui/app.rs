@@ -125,6 +125,10 @@ impl Program for App {
         Self::APP_TITLE
     }
 
+    fn title(&self, _state: &Self::State, _window: window::Id) -> String {
+        Self::APP_TITLE.to_string()
+    }
+
     fn settings(&self) -> iced::Settings {
         iced::Settings::default()
     }
