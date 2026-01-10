@@ -33,12 +33,15 @@ fn main() -> Result<()> {
     let windows_capture = Arc::new(RwLock::new(windows_capture));
     tracing::info!("Windows capture provider initialized.");
 
-    tracing::info!("Initializing UI...");
-    let app = ui::app::App::new(windows_capture)?;
-    tracing::info!("UI initialized.");
-
     tracing::info!("Running app...");
-    app.run()?;
+    iced::daemon(
+        move || ui::app::App::init(windows_capture.clone()),
+        ui::app::App::update,
+        ui::app::App::view,
+    )
+    .subscription(ui::app::App::subscription)
+    .title(ui::app::App::title)
+    .run()?;
     tracing::info!("App exited.");
 
     Ok(())

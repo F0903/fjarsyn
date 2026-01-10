@@ -1,9 +1,10 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use bytes::Bytes;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
+    capture_providers::PlatformCaptureProvider,
     config::Config,
     networking::webrtc::{WebRTC, WebRTCEvent},
     ui::{
@@ -12,8 +13,15 @@ use crate::{
     },
 };
 
+pub struct WindowInfo {
+    pub iced_id: iced::window::Id,
+    pub raw_id: Option<u64>,
+}
+
 pub struct AppContext {
     pub config: Config,
+
+    pub capture: Arc<RwLock<PlatformCaptureProvider>>,
 
     pub back_queue: VecDeque<ActiveScreen>,
 
@@ -23,7 +31,7 @@ pub struct AppContext {
     pub webrtc_event_tx: Option<mpsc::Sender<WebRTCEvent>>,
     pub webrtc_event_rx: Option<Arc<Mutex<mpsc::Receiver<WebRTCEvent>>>>,
 
-    pub main_window_handle: Option<u64>,
+    pub main_window: Option<WindowInfo>,
 
     pub webrtc: Option<WebRTC>,
     pub target_id: Option<String>,

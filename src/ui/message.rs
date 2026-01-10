@@ -35,7 +35,8 @@ pub enum Message {
     PacketReceived(Bytes),
 
     WindowOpened(iced::window::Id),
-    WindowIdFetched(u64),
+    WindowClosed(iced::window::Id),
+    WindowRawIdFetched((iced::window::Id, u64)),
 
     Tick(std::time::Instant),
     DismissNotification(u64),

@@ -2,7 +2,7 @@ use std::{collections::VecDeque, sync::Arc};
 
 use bytes::Bytes;
 use futures::stream::unfold;
-use iced::{Element, Program, Subscription, Task, executor, window};
+use iced::{Element, Subscription, Task, window};
 use tokio::sync::{Mutex, RwLock, mpsc};
 
 use super::screens::{self, Screen};
@@ -13,7 +13,7 @@ use crate::{
     ui::{
         message::{Message, Route},
         notification_provider::NotificationProvider,
-        state::{AppContext, State},
+        state::{AppContext, State, WindowInfo},
     },
 };
 
@@ -25,24 +25,8 @@ pub enum ActiveScreen {
     Settings(screens::settings::SettingsScreen),
 }
 
-pub struct App {
-    capture: Arc<RwLock<PlatformCaptureProvider>>,
-}
-
-impl App {
-    const APP_TITLE: &'static str = "Fjarsyn";
-
-    pub fn new(
-        capture: Arc<RwLock<PlatformCaptureProvider>>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self { capture })
-    }
-
-    pub fn run(self) -> crate::Result<()> {
-        iced_winit::run(self)?;
-        Ok(())
-    }
-}
+#[derive(Clone)]
+pub struct App {}
 
 // Wrapper to implement Hash which is needed by iced subscriptions.
 #[derive(Clone)]
@@ -114,30 +98,14 @@ fn frame_subscription_stream(
     })))
 }
 
-impl Program for App {
-    type State = State;
-    type Message = Message;
-    type Theme = iced::Theme;
-    type Renderer = iced::Renderer;
-    type Executor = executor::Default;
+impl App {
+    const APP_TITLE: &'static str = "Fjarsyn";
 
-    fn name() -> &'static str {
-        Self::APP_TITLE
-    }
-
-    fn title(&self, _state: &Self::State, _window: window::Id) -> String {
+    pub fn title(_state: &State, _window: window::Id) -> String {
         Self::APP_TITLE.to_string()
     }
 
-    fn settings(&self) -> iced::Settings {
-        iced::Settings::default()
-    }
-
-    fn window(&self) -> Option<window::Settings> {
-        Some(window::Settings { visible: true, transparent: true, ..Default::default() })
-    }
-
-    fn boot(&self) -> (Self::State, Task<Self::Message>) {
+    pub fn init(capture: Arc<RwLock<PlatformCaptureProvider>>) -> (State, Task<Message>) {
         const REMOTE_FRAMES_BUFFER: usize = 100;
         const WEBRTC_EVENT_BUFFER: usize = 100;
         let (frame_tx, frame_rx) = mpsc::channel(REMOTE_FRAMES_BUFFER);
@@ -154,7 +122,8 @@ impl Program for App {
 
         let mut ctx = AppContext {
             config,
-            main_window_handle: None,
+            capture,
+            main_window: None,
 
             back_queue: VecDeque::new(),
 
@@ -192,10 +161,16 @@ impl Program for App {
             Task::none()
         };
 
-        (State { ctx, active_screen }, init_task)
+        let window_settings =
+            window::Settings { visible: true, transparent: true, ..Default::default() };
+
+        let (_id, open_window_task) = window::open(window_settings);
+        let open_window_task = open_window_task.map(Message::WindowOpened);
+
+        (State { ctx, active_screen }, Task::batch([init_task, open_window_task]))
     }
 
-    fn subscription(&self, state: &Self::State) -> Subscription<Message> {
+    pub fn subscription(state: &State) -> Subscription<Message> {
         let screen_subscriptions = match &state.active_screen {
             ActiveScreen::Onboarding(screen) => screen.subscription(&state.ctx),
             ActiveScreen::Home(screen) => screen.subscription(&state.ctx),
@@ -216,6 +191,7 @@ impl Program for App {
         };
 
         let window_open_subscription = iced::window::open_events().map(Message::WindowOpened);
+        let window_close_subscription = iced::window::close_events().map(Message::WindowClosed);
         let tick_subscription =
             iced::time::every(std::time::Duration::from_millis(500)).map(Message::Tick);
 
@@ -224,11 +200,12 @@ impl Program for App {
             frame_subscription,
             event_subscription,
             window_open_subscription,
+            window_close_subscription,
             tick_subscription,
         ])
     }
 
-    fn update(&self, state: &mut Self::State, message: Self::Message) -> Task<Self::Message> {
+    pub fn update(state: &mut State, message: Message) -> Task<Message> {
         fn delegate_to_screen(state: &mut State, msg: Message) -> Task<Message> {
             let task = match &mut state.active_screen {
                 ActiveScreen::Onboarding(screen) => screen.update(&mut state.ctx, msg),
@@ -257,11 +234,11 @@ impl Program for App {
         // The exception being messages like Navigate.
         match message {
             Message::Navigate(route) => {
-                state.active_screen = screen_from_route(state, self.capture.clone(), route);
+                state.active_screen = screen_from_route(state, state.ctx.capture.clone(), route);
                 Task::none()
             }
             Message::NavigateWithBack(route) => {
-                let mut screen = screen_from_route(state, self.capture.clone(), route);
+                let mut screen = screen_from_route(state, state.ctx.capture.clone(), route);
                 std::mem::swap(&mut state.active_screen, &mut screen);
                 // screen is not set to the old screen
 
@@ -283,14 +260,31 @@ impl Program for App {
                 state.ctx.notifications.dismiss(id);
                 delegate_to_screen(state, message)
             }
-            Message::WindowOpened(id) => Task::batch([
-                iced::window::raw_id::<Message>(id).map(Message::WindowIdFetched),
-                delegate_to_screen(state, message),
-            ]),
 
-            Message::WindowIdFetched(id) => {
-                if state.ctx.main_window_handle.is_none() {
-                    state.ctx.main_window_handle = Some(id);
+            Message::WindowOpened(id) => {
+                if state.ctx.main_window.is_none() {
+                    state.ctx.main_window = Some(WindowInfo { iced_id: id, raw_id: None });
+                }
+                Task::batch([
+                    iced::window::raw_id::<Message>(id)
+                        .map(move |raw_id| Message::WindowRawIdFetched((id, raw_id))),
+                    delegate_to_screen(state, message),
+                ])
+            }
+            Message::WindowClosed(id) => {
+                if let Some(main_window) = state.ctx.main_window.as_ref()
+                    && main_window.iced_id == id
+                {
+                    state.ctx.main_window = None;
+                    return iced::exit();
+                }
+                delegate_to_screen(state, message)
+            }
+            Message::WindowRawIdFetched((id, raw_id)) => {
+                if let Some(main_window) = state.ctx.main_window.as_mut()
+                    && main_window.iced_id == id
+                {
+                    main_window.raw_id = Some(raw_id);
                 }
                 delegate_to_screen(state, message)
             }
@@ -330,7 +324,7 @@ impl Program for App {
                     tracing::info!("WebRTC Connected!");
 
                     if let ActiveScreen::Home(_) = state.active_screen {
-                        let call_screen = screens::call::CallScreen::new(self.capture.clone());
+                        let call_screen = screens::call::CallScreen::new(state.ctx.capture.clone());
 
                         state.active_screen = ActiveScreen::Call(call_screen);
                     }
@@ -348,11 +342,10 @@ impl Program for App {
         }
     }
 
-    fn view<'a>(
-        &self,
-        state: &'a Self::State,
+    pub fn view<'a>(
+        state: &'a State,
         _window: window::Id,
-    ) -> Element<'a, Self::Message, Self::Theme, Self::Renderer> {
+    ) -> Element<'a, Message, iced::Theme, iced::Renderer> {
         let screen_content = match &state.active_screen {
             ActiveScreen::Onboarding(screen) => screen.view(&state.ctx),
             ActiveScreen::Home(screen) => screen.view(&state.ctx),

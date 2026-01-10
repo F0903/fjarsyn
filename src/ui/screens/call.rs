@@ -184,7 +184,7 @@ impl Screen for CallScreen {
                     ])
                 }
                 CallMessage::StartCapture => {
-                    let window_handle = match ctx.main_window_handle {
+                    let window_handle = match ctx.main_window.as_ref().map(|w| w.raw_id).flatten() {
                         Some(handle) => handle,
                         None => {
                             tracing::error!("No active window handle");

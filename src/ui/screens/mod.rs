@@ -5,7 +5,7 @@ pub mod settings;
 
 use iced::{Element, Subscription, Task};
 
-use crate::ui::{app::App, message::Message, state::AppContext};
+use crate::ui::{message::Message, state::AppContext};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScreenError {
@@ -14,11 +14,7 @@ pub enum ScreenError {
 }
 
 pub trait Screen {
-    fn update(
-        &mut self,
-        ctx: &mut AppContext,
-        message: <App as iced::Program>::Message,
-    ) -> Task<Message>;
+    fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message>;
     fn view(&self, ctx: &AppContext) -> Element<'_, Message>;
     fn subscription(&self, ctx: &AppContext) -> Subscription<Message>;
 }
