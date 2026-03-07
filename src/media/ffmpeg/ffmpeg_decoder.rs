@@ -8,7 +8,7 @@ use ffmpeg_next as ffmpeg;
 
 use crate::{
     media::ffmpeg::FFmpegTranscodeType,
-    utils::{buffer_arena::BufferArena, frame::Frame, pixel_format::PixelFormat, vector2::Vector2},
+    utils::{buffer_pool::BufferPool, frame::Frame, pixel_format::PixelFormat, vector2::Vector2},
 };
 
 type Result<T> = std::result::Result<T, FFmpegDecoderError>;
@@ -29,12 +29,13 @@ pub struct FFmpegDecoder {
     dst_format: PixelFormat,
     decoder: decoder::Video,
     scaler: Option<Scaler>,
-    decoding_pool: BufferArena,
+    decoding_pool: BufferPool,
     cached_dims: (u32, u32),
 }
 
 impl FFmpegDecoder {
-    const POOL_SIZE: usize = 128000;
+    const BUFFER_SIZE: usize = 128000;
+    const BUFFER_MAX_COUNT: usize = 4;
     const SCALING_MODE: scaling::Flags = scaling::Flags::BILINEAR;
 
     pub fn new(transcoding_type: FFmpegTranscodeType, dst_format: PixelFormat) -> Result<Self> {
@@ -58,7 +59,7 @@ impl FFmpegDecoder {
             dst_format,
             decoder,
             scaler: None,
-            decoding_pool: BufferArena::init(Self::POOL_SIZE),
+            decoding_pool: BufferPool::init(Self::BUFFER_SIZE, Self::BUFFER_MAX_COUNT),
             cached_dims: (0, 0),
         })
     }
@@ -103,7 +104,7 @@ impl FFmpegDecoder {
 
                 let dst_bytes_per_pixel = self.dst_format.bytes_per_pixel();
                 let dst_size = (width * height * dst_bytes_per_pixel) as usize;
-                let mut framebuf = self.decoding_pool.get(dst_size);
+                let mut framebuf = self.decoding_pool.get_unzeroed(dst_size);
 
                 // Copy from the first plane
                 let data = rgb_frame.data(0);

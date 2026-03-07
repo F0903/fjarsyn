@@ -1,5 +1,5 @@
 pub mod bitmap_utils;
-pub(crate) mod buffer_arena;
+pub(crate) mod buffer_pool;
 pub mod frame;
 #[macro_use]
 pub mod define_enum_with_all;

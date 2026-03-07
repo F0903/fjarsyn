@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::utils::{
-    bitmap_utils::ensure_rgba, buffer_arena::BufferRef, pixel_format::PixelFormat, vector2::Vector2,
+    bitmap_utils::ensure_rgba, buffer_pool::BufferRef, pixel_format::PixelFormat, vector2::Vector2,
 };
 
 #[derive(Debug)]

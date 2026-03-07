@@ -31,7 +31,7 @@ use crate::{
         },
     },
     utils::{
-        buffer_arena::{BufferArena, BufferRef},
+        buffer_pool::{BufferPool, BufferRef},
         frame::Frame,
         pixel_format::PixelFormat,
         vector2::Vector2,
@@ -53,7 +53,7 @@ pub struct WgcCaptureProvider {
     capture_item: Option<GraphicsCaptureItem>,
     pixel_format: PixelFormat,
     staging_state: Arc<RwLock<Staging>>,
-    buffer_pool: BufferArena,
+    buffer_pool: BufferPool,
 
     frame_pool: Option<Direct3D11CaptureFramePool>,
     session: Option<GraphicsCaptureSession>,
@@ -68,7 +68,8 @@ impl WgcCaptureProvider {
     const WGC_FRAME_BUFFERS: i32 = 2;
     const PIPELINE_DEPTH: usize = 2;
     const TX_QUEUE_SIZE: usize = 2;
-    const BUFFER_ARENA_SIZE: usize = 128000;
+    const BUFFER_SIZE: usize = 128000;
+    const BUFFER_MAX_COUNT: usize = 4;
 
     pub fn new(
         device: IDirect3DDevice,
@@ -81,7 +82,7 @@ impl WgcCaptureProvider {
             capture_item: None,
             pixel_format,
             staging_state: Arc::new(RwLock::new(Staging::default())),
-            buffer_pool: BufferArena::init(Self::BUFFER_ARENA_SIZE),
+            buffer_pool: BufferPool::init(Self::BUFFER_SIZE, Self::BUFFER_MAX_COUNT),
             frame_pool: None,
             session: None,
             stream_tokens: Vec::new(),
@@ -317,7 +318,7 @@ impl CaptureProvider for WgcCaptureProvider {
                             return Ok(());
                         }
 
-                        let mut buffer = buffer_pool.get(buffer_size);
+                        let mut buffer = buffer_pool.get_unzeroed(buffer_size);
                         unsafe {
                             buffer.set_len(buffer_size);
                         }
