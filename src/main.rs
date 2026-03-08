@@ -34,10 +34,15 @@ fn main() -> Result<()> {
     tracing::info!("Windows capture provider initialized.");
 
     tracing::info!("Running app...");
-    iced::daemon(move || ui::app::init(windows_capture.clone()), ui::app::update, ui::app::view)
-        .subscription(ui::app::subscription)
-        .title(ui::app::title)
-        .run()?;
+    iced::daemon(
+        move || ui::handlers::init(windows_capture.clone()),
+        ui::handlers::update,
+        ui::layout::view,
+    )
+    .subscription(ui::subscription::subscription)
+    .title(ui::layout::title)
+    .theme(ui::theme::theme_fn)
+    .run()?;
     tracing::info!("App exited.");
 
     Ok(())

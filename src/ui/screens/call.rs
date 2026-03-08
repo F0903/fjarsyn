@@ -159,11 +159,16 @@ impl Screen for CallScreen {
                 }
 
                 CallMessage::EndCall => {
-                    let stop_capture_task = if self.is_capturing() {
-                        Task::done(Message::Call(CallMessage::StopCapture))
-                    } else {
-                        Task::none()
-                    };
+                    self.frame_sender = None;
+                    let capture_arc = self.capture.clone();
+
+                    let stop_capture_task = Task::future(async move {
+                        let mut capture = capture_arc.write().await;
+                        if let Err(e) = capture.stop_capture() {
+                            tracing::error!("Failed to stop capture: {}", e);
+                        }
+                        Message::Call(CallMessage::CaptureStopped)
+                    });
 
                     let disconnect_task = if let Some(webrtc) = &ctx.webrtc {
                         let webrtc_clone = webrtc.clone();
@@ -204,7 +209,7 @@ impl Screen for CallScreen {
                             }
                         }),
                         Err(err) => {
-                            tracing::error!("Failed to pick capture item: {}", err);
+                            tracing::error!("Failed to pick_platform_capture_item: {}", err);
                             Task::none()
                         }
                     }
@@ -372,7 +377,7 @@ impl Screen for CallScreen {
         }
     }
 
-    fn view(&self, _ctx: &AppContext) -> Element<'_, Message> {
+    fn view<'a>(&'a self, _ctx: &'a AppContext) -> Element<'a, Message> {
         let mut controls_row: iced::widget::Row<'_, Message, iced::Theme, iced::Renderer> =
             iced::widget::Row::new()
                 .push(button("Settings").on_press(Message::NavigateWithBack(Route::Settings)))

@@ -1,6 +1,6 @@
 use iced::{
     Alignment, Element, Length, Padding, Subscription, Task,
-    widget::{button, checkbox, column, container, pick_list, row, text, text_input},
+    widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
 };
 
 use super::Screen;
@@ -78,7 +78,6 @@ pub enum ConfigField {
     Resolution,
     Framerate,
     Bitrate,
-    ServerUrl,
     MaxDepacketLatency,
     TranscodingType,
     RecordCursor,
@@ -113,7 +112,6 @@ impl SettingsScreen {
 
 impl Screen for SettingsScreen {
     fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
-        // We operate on pending_config
         let Some(pending) = &mut self.pending_config else {
             return Task::none();
         };
@@ -123,10 +121,6 @@ impl Screen for SettingsScreen {
                 SettingsMessage::ConfigUpdate(field, value) => {
                     tracing::info!("Pending config update: {:?} {:?}", field, value);
                     match (field, value) {
-                        (ConfigField::ServerUrl, ConfigValue::String(s)) => {
-                            pending.server_url = s;
-                        }
-
                         (ConfigField::Resolution, ConfigValue::Resolution(res)) => {
                             pending.target_resolution = res.into();
                         }
@@ -138,9 +132,6 @@ impl Screen for SettingsScreen {
                         (ConfigField::Bitrate, ConfigValue::String(s)) => {
                             if let Ok(num) = s.parse() {
                                 pending.target_bitrate = num;
-                            } else {
-                                tracing::error!("Unable to parse bitrate: {}", s);
-                                //TODO: show field as invalid
                             }
                         }
 
@@ -151,9 +142,6 @@ impl Screen for SettingsScreen {
                         (ConfigField::MaxDepacketLatency, ConfigValue::String(s)) => {
                             if let Ok(num) = s.parse() {
                                 pending.max_depacket_latency = num;
-                            } else {
-                                tracing::error!("Unable to parse max depacket latency: {}", s);
-                                //TODO: show field as invalid
                             }
                         }
 
@@ -190,22 +178,10 @@ impl Screen for SettingsScreen {
         }
     }
 
-    fn view(&self, ctx: &AppContext) -> Element<'_, Message> {
+    fn view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message> {
         let config = self.pending_config.as_ref().unwrap_or(&ctx.config);
 
         let title = text("Settings").size(30);
-
-        let url_input = container(column![
-            container(text("Server URL:")).padding(Padding::ZERO.bottom(10)),
-            text_input("", &config.server_url)
-                .on_input(|val| {
-                    Message::Settings(SettingsMessage::ConfigUpdate(
-                        ConfigField::ServerUrl,
-                        ConfigValue::String(val),
-                    ))
-                })
-                .padding(10)
-        ]);
 
         let resolution_pick = container(column![
             container(text("Target Resolution:")).padding(Padding::ZERO.bottom(10)),
@@ -303,7 +279,6 @@ impl Screen for SettingsScreen {
 
         let content = column![
             title,
-            url_input,
             resolution_pick,
             framerate_pick,
             bitrate_input,
@@ -315,13 +290,13 @@ impl Screen for SettingsScreen {
         ]
         .spacing(20)
         .padding(20)
-        .max_width(600);
+        .max_width(600)
+        .align_x(Alignment::Center);
 
-        container(content)
+        container(scrollable(content))
             .width(Length::Fill)
             .height(Length::Fill)
             .center_x(Length::Fill)
-            .center_y(Length::Fill)
             .into()
     }
 

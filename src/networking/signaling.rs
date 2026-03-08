@@ -1,106 +1,185 @@
-use fjarsyn_shared::SignalingMessage;
-use futures_util::{
-    SinkExt, StreamExt,
-    stream::{SplitSink, SplitStream},
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+use futures_util::{SinkExt, StreamExt, stream::SplitSink};
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::{TcpListener, TcpStream},
+    sync::{broadcast, mpsc},
 };
-use tokio::{net::TcpStream, sync::mpsc};
 use tokio_tungstenite::{
-    MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message,
+    WebSocketStream, accept_async, connect_async, tungstenite::protocol::Message,
 };
 
-use crate::networking::signaling_error::SignalingError;
+use crate::networking::{protocol::SignalingMessage, signaling_error::SignalingError};
 
 type Result<T> = std::result::Result<T, SignalingError>;
 
-/// Connects to the signaling server, returning a channel sender to send
-/// messages to the server. Incoming messages from the server will be sent
-/// to the `to_webrtc_tx` channel.
-pub async fn connect(
-    url: String,
+/// Connects directly to a peer's signaling listener.
+pub async fn dial(
+    addr: SocketAddr,
     to_webrtc_tx: mpsc::Sender<SignalingMessage>,
-) -> Result<(mpsc::Sender<SignalingMessage>, String)> {
-    let (ws_stream, _) = connect_async(url).await.map_err(SignalingError::ConnectionFailed)?;
-    let (write, mut read) = ws_stream.split();
+) -> Result<mpsc::Sender<SignalingMessage>> {
+    let url = format!("ws://{}/ws", addr);
+    tracing::debug!("Connecting to signaling URL: {}", url);
 
-    tracing::info!("Successfully connected to signaling server. Waiting for ID response...");
+    let (ws_stream, _) = connect_async(url).await.map_err(|e| {
+        tracing::error!("Failed to connect to signaling at {}: {}", addr, e);
+        SignalingError::ConnectionFailed(e.into())
+    })?;
+    let (write, read) = ws_stream.split();
 
-    let id = match read
-        .next()
-        .await
-        .ok_or(SignalingError::IdResponseError("No response".to_string()))??
-    {
-        Message::Text(body) => {
-            let msg: SignalingMessage = serde_json::from_str(&body)
-                .map_err(|e| SignalingError::IdResponseError(e.to_string()))?;
-            msg.data
-        }
-        _ => return Err(SignalingError::IdResponseError("Invalid response content".to_string())),
-    };
+    let (to_peer_tx, to_peer_rx) = mpsc::channel::<SignalingMessage>(100);
 
-    tracing::info!("Got ID: {}", id);
-
-    // Channel for sending messages to the server's writer task
-    let (to_server_tx, to_server_rx) = mpsc::channel::<SignalingMessage>(100);
-    spawn_writer_task(to_server_rx, write);
+    spawn_writer_task(to_peer_rx, write);
     spawn_reader_task(to_webrtc_tx, read);
 
-    Ok((to_server_tx, id))
+    Ok(to_peer_tx)
 }
 
-fn spawn_writer_task(
-    mut to_server_rx: mpsc::Receiver<SignalingMessage>,
-    mut write: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
-) {
+/// Starts a signaling listener on the specified port.
+pub async fn listen(
+    port: u16,
+    to_webrtc_tx: mpsc::Sender<SignalingMessage>,
+) -> Result<(mpsc::Sender<SignalingMessage>, u16)> {
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
+    let listener = TcpListener::bind(addr).await.map_err(|e| {
+        tracing::error!("Failed to bind signaling listener to {}: {}", addr, e);
+        SignalingError::ConnectionFailed(e.into())
+    })?;
+
+    let bound_port = listener.local_addr().unwrap().port();
+
+    let (to_peer_tx, mut to_peer_rx_source) = mpsc::channel::<SignalingMessage>(100);
+    let (broadcast_tx, _) = broadcast::channel::<SignalingMessage>(100);
+    let broadcast_tx_clone = broadcast_tx.clone();
+
+    // Forward mpsc to broadcast for many-to-many direct signaling
     tokio::spawn(async move {
-        while let Some(message) = to_server_rx.recv().await {
-            match serde_json::to_string(&message) {
-                Ok(json) => {
-                    if write.send(Message::Text(json.into())).await.is_err() {
-                        tracing::error!(
-                            "Failed to send message to signaling server. WebSocket connection closed."
-                        );
-                        break;
-                    }
+        while let Some(msg) = to_peer_rx_source.recv().await {
+            let _ = broadcast_tx_clone.send(msg);
+        }
+    });
+
+    tokio::spawn(async move {
+        tracing::info!("P2P Signaling listener active on 0.0.0.0:{}", bound_port);
+        loop {
+            match listener.accept().await {
+                Ok((stream, peer_addr)) => {
+                    let to_webrtc_tx = to_webrtc_tx.clone();
+                    let to_peer_rx = broadcast_tx.subscribe();
+                    tokio::spawn(handle_incoming_connection(
+                        stream,
+                        peer_addr,
+                        to_webrtc_tx,
+                        to_peer_rx,
+                    ));
                 }
                 Err(e) => {
-                    tracing::error!("Failed to serialize signaling message: {}", e);
+                    tracing::error!("TCP accept error: {}", e);
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
         }
-        tracing::info!("Signaling WebSocket writer task finished.");
+    });
+
+    Ok((to_peer_tx, bound_port))
+}
+
+async fn handle_incoming_connection(
+    stream: TcpStream,
+    peer_addr: SocketAddr,
+    to_webrtc_tx: mpsc::Sender<SignalingMessage>,
+    to_peer_rx: broadcast::Receiver<SignalingMessage>,
+) {
+    tracing::info!("New signaling connection from {}", peer_addr);
+
+    let ws_stream = match accept_async(stream).await {
+        Ok(ws) => ws,
+        Err(e) => {
+            tracing::error!("Failed to accept WebSocket from {}: {}", peer_addr, e);
+            return;
+        }
+    };
+
+    let (write, read) = ws_stream.split();
+    spawn_reader_task(to_webrtc_tx, read);
+    spawn_broadcast_writer_task(to_peer_rx, write);
+}
+
+fn spawn_writer_task<S>(
+    mut to_peer_rx: mpsc::Receiver<SignalingMessage>,
+    write: SplitSink<WebSocketStream<S>, Message>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut write = write;
+        while let Some(message) = to_peer_rx.recv().await {
+            if send_signaling_message(&mut write, &message).await.is_err() {
+                break;
+            }
+        }
     });
 }
 
-fn spawn_reader_task(
-    to_webrtc_tx: mpsc::Sender<SignalingMessage>,
-    mut read: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
-) {
+fn spawn_broadcast_writer_task<S>(
+    mut to_peer_rx: broadcast::Receiver<SignalingMessage>,
+    write: SplitSink<WebSocketStream<S>, Message>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
     tokio::spawn(async move {
-        while let Some(message) = read.next().await {
-            match message {
-                Ok(msg) => {
-                    if let Message::Text(text) = msg {
-                        match serde_json::from_str::<SignalingMessage>(&text) {
-                            Ok(signaling_message) => {
-                                if to_webrtc_tx.send(signaling_message).await.is_err() {
-                                    tracing::error!(
-                                        "Failed to send message to WebRTC task. Channel closed."
-                                    );
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to deserialize signaling message: {}", e);
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Error receiving signaling message: {}", e);
-                    break;
-                }
+        let mut write = write;
+        while let Ok(message) = to_peer_rx.recv().await {
+            if send_signaling_message(&mut write, &message).await.is_err() {
+                break;
             }
         }
-        tracing::info!("Signaling WebSocket reader task finished.");
+    });
+}
+
+async fn send_signaling_message<S>(
+    write: &mut SplitSink<WebSocketStream<S>, Message>,
+    msg: &SignalingMessage,
+) -> std::result::Result<(), ()>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    match serde_json::to_string(msg) {
+        Ok(json) => {
+            if write.send(Message::Text(json.into())).await.is_err() {
+                return Err(());
+            }
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!("Failed to serialize signaling message: {}", e);
+            Err(())
+        }
+    }
+}
+
+fn spawn_reader_task<S>(
+    to_webrtc_tx: mpsc::Sender<SignalingMessage>,
+    mut read: futures_util::stream::SplitStream<WebSocketStream<S>>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        while let Some(msg) = read.next().await {
+            match msg {
+                Ok(Message::Text(text)) => {
+                    if let Ok(signaling_message) = serde_json::from_str::<SignalingMessage>(&text) {
+                        let _ = to_webrtc_tx.send(signaling_message).await;
+                    }
+                }
+                Ok(Message::Close(_)) => break,
+                Err(e) => {
+                    tracing::error!("WebSocket read error: {}", e);
+                    break;
+                }
+                _ => {}
+            }
+        }
     });
 }

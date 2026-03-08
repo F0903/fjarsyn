@@ -6,10 +6,13 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use crate::{
     capture_providers::PlatformCaptureProvider,
     config::Config,
-    networking::webrtc::{WebRTC, WebRTCEvent},
+    networking::{
+        discovery::{DiscoveryEvent, PeerInfo},
+        webrtc::{WebRTC, WebRTCEvent},
+    },
     ui::{
-        app::{ActiveScreen, PacketReceiverRef},
-        notification_provider::NotificationProvider,
+        notification_provider::NotificationProvider, screens::ActiveScreen,
+        subscription::EventReceiverRef,
     },
 };
 
@@ -26,15 +29,22 @@ pub struct AppContext {
     pub back_queue: VecDeque<ActiveScreen>,
 
     pub packet_tx: Option<mpsc::Sender<Bytes>>,
-    pub packet_rx: PacketReceiverRef,
+    pub packet_rx: EventReceiverRef<Bytes>,
 
     pub webrtc_event_tx: Option<mpsc::Sender<WebRTCEvent>>,
     pub webrtc_event_rx: Option<Arc<Mutex<mpsc::Receiver<WebRTCEvent>>>>,
+
+    pub discovery_event_tx: Option<mpsc::Sender<DiscoveryEvent>>,
+    pub discovery_event_rx: Option<Arc<Mutex<mpsc::Receiver<DiscoveryEvent>>>>,
 
     pub main_window: Option<WindowInfo>,
 
     pub webrtc: Option<WebRTC>,
     pub target_id: Option<String>,
+    pub incoming_call_id: Option<String>,
+    pub incoming_call_timeout: Option<std::time::Instant>,
+    pub discovered_peers: Vec<PeerInfo>,
+    pub recent_peers: Vec<PeerInfo>,
 
     pub notifications: NotificationProvider,
 }

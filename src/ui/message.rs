@@ -3,16 +3,19 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use crate::{
-    networking::webrtc::{WebRTC, WebRTCError, WebRTCEvent},
+    networking::{
+        discovery::DiscoveryEvent,
+        webrtc::{WebRTC, WebRTCError, WebRTCEvent},
+    },
     ui::screens::{
-        call::CallMessage, home::HomeMessage, onboarding::OnboardingMessage,
-        settings::SettingsMessage,
+        call::CallMessage, contacts::ContactsMessage, home::HomeMessage, settings::SettingsMessage,
     },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Route {
     Home,
+    Contacts,
     Call,
     Settings,
 }
@@ -23,15 +26,21 @@ pub enum Message {
     NavigateWithBack(Route),
     Back,
 
+    AcceptCall,
+    DeclineCall,
+
     // Sub-screen messages
     Home(HomeMessage),
+    Contacts(ContactsMessage),
     Call(CallMessage),
     Settings(SettingsMessage),
-    Onboarding(OnboardingMessage),
 
     // Global / Shared
     WebRTCInitialized(Result<WebRTC, Arc<WebRTCError>>),
+    WebRTCReinit,
+    WebRTCReinitDone,
     WebRTCEvent(WebRTCEvent),
+    DiscoveryEvent(DiscoveryEvent),
     PacketReceived(Bytes),
 
     WindowOpened(iced::window::Id),

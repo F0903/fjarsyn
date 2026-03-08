@@ -190,7 +190,6 @@ impl WgcCaptureProvider {
         match tx.try_send(frame) {
             Ok(_) => (),
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                tracing::warn!("Frame sender closed whilst trying to send frame.");
                 return Err(WindowsCaptureError::FrameSenderClosed);
             }
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
@@ -252,6 +251,9 @@ impl CaptureProvider for WgcCaptureProvider {
     type CaptureItem = GraphicsCaptureItem;
 
     fn create_stream(&mut self, framerate: CaptureFramerate) -> Self::Result<Self::Stream> {
+        // Stop any existing session before starting a new one
+        self.stop_capture().ok();
+
         let (tx, rx) = tokio::sync::mpsc::channel(Self::PIPELINE_DEPTH);
 
         let capture_item = self.capture_item.as_ref().ok_or_else(|| {
@@ -296,11 +298,16 @@ impl CaptureProvider for WgcCaptureProvider {
         })?;
 
         let buffer_pool = self.buffer_pool.clone();
-        let staging_state_arc = staging_state_arc.clone();
+        let staging_state_arc_inner = staging_state_arc.clone();
         let pixel_format = self.pixel_format.clone();
 
         let token = frame_pool
             .FrameArrived(&TypedEventHandler::new(move |sender, _| {
+                // If the channel is closed, we shouldn't even try to get the frame.
+                if tx.is_closed() {
+                    return Ok(());
+                }
+
                 let sender: &Direct3D11CaptureFramePool = match &*sender {
                     Some(s) => s,
                     None => return Ok(()),
@@ -326,7 +333,7 @@ impl CaptureProvider for WgcCaptureProvider {
                         match Self::process_frame(
                             buffer,
                             frame,
-                            staging_state_arc.clone(),
+                            staging_state_arc_inner.clone(),
                             pixel_format,
                             tx.clone(),
                         ) {
@@ -334,7 +341,6 @@ impl CaptureProvider for WgcCaptureProvider {
                             Err(WindowsCaptureError::FrameSenderClosed) => (),
                             Err(e) => {
                                 tracing::error!("Failed to process frame: {}", e);
-                                // We can't return a custom error here
                             }
                         }
                     }
@@ -350,12 +356,13 @@ impl CaptureProvider for WgcCaptureProvider {
         tracing::debug!("Added frame arrived handler with token: {}", token);
         self.stream_tokens.push(token);
 
-        if self.capturing {
-            session.StartCapture().map_err(|e| {
-                tracing::error!("Failed to start capture! {}", e);
-                WindowsCaptureError::FailedToStartCapture(e)
-            })?;
-        }
+        // ALWAYS start capture when a stream is created
+        session.StartCapture().map_err(|e| {
+            tracing::error!("Failed to start capture! {}", e);
+            WindowsCaptureError::FailedToStartCapture(e)
+        })?;
+
+        self.capturing = true;
 
         self.frame_pool = Some(frame_pool);
         self.session = Some(session);
@@ -383,7 +390,7 @@ impl CaptureProvider for WgcCaptureProvider {
     fn start_capture(&mut self) -> Self::Result<()> {
         if self.capturing {
             tracing::warn!("Tried to start capture, but was already capturing.");
-            return Err(WindowsCaptureError::AlreadyCapturing);
+            return Ok(());
         }
 
         if self.capture_item.is_none() {
@@ -403,14 +410,18 @@ impl CaptureProvider for WgcCaptureProvider {
     }
 
     fn stop_capture(&mut self) -> Self::Result<()> {
+        tracing::info!("Stopping capture session...");
         if !self.capturing {
+            tracing::info!("Capture already stopped.");
             return Ok(());
         }
 
         if let Some(session) = &self.session {
+            tracing::info!("Closing GraphicsCaptureSession");
             session.Close().ok();
         }
         if let Some(frame_pool) = &self.frame_pool {
+            tracing::info!("Closing Direct3D11CaptureFramePool");
             for token in self.stream_tokens.drain(..) {
                 tracing::debug!("Removing frame arrived handler: {}", token);
                 frame_pool.RemoveFrameArrived(token).ok();
@@ -421,6 +432,7 @@ impl CaptureProvider for WgcCaptureProvider {
         self.session = None;
         self.frame_pool = None;
         self.capturing = false;
+        tracing::info!("Capture session stopped successfully.");
         Ok(())
     }
 

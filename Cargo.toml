@@ -5,7 +5,7 @@ version = "0.2.0"
 edition = "2024"
 
 [workspace]
-members = ["bifrost", "shared"]
+members = []
 
 [workspace.dependencies]
 tracing = "0.1"
@@ -56,12 +56,11 @@ windows = { version = "0.62.2", features = [
     "System",
 ] }
 windows-core = "0.62.2"
-bytes = { git = "https://github.com/tokio-rs/bytes", version = "1" } # Use latest until try_unsplit is public in stable
+bytes = "1"
 windows-future = "0.3.2"
 webrtc = "0.14"
 tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
 futures-util = "0.3"
-fjarsyn-shared = { path = "./shared" }
 serde_json = { workspace = true }
 ffmpeg-next = { version = "8.0.0", default-features = false, features = [
     "static",
@@ -73,6 +72,9 @@ ffmpeg-next = { version = "8.0.0", default-features = false, features = [
 directories = "6.0.0"
 serde = { workspace = true, features = ["derive"] }
 paste = "1.0.15"
+mdns-sd = "0.13"
+uuid = { version = "1", features = ["v4"] }
+iced_fonts = { version = "0.3", features = ["lucide"] }
 
 [patch.crates-io]
 bytes = { git = "https://github.com/tokio-rs/bytes" } # We need this until try_unsplit is public in stable

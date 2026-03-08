@@ -5,13 +5,12 @@ pub enum SignalingType {
     Offer,
     Answer,
     Candidate,
-    Identity,
+    Decline,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SignalingMessage {
-    pub to: String,
-    pub from: String,
+    pub from: String, // Peer ID of the sender
     pub sig_type: SignalingType,
     pub data: String,
 }

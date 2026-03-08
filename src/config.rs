@@ -12,7 +12,6 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub onboarding_done: bool,
-    pub server_url: String,
     pub target_bitrate: u32,
     pub target_framerate: CaptureFramerate,
     pub target_resolution: TargetResolution,
@@ -30,7 +29,6 @@ impl Default for Config {
             target_bitrate: 8_000_000,
             target_framerate: CaptureFramerate::FPS60,
             target_resolution: TargetResolution::Source,
-            server_url: "ws://127.0.0.1:30000/ws".to_string(),
             pixel_format: PixelFormat::RGBA8,
             max_depacket_latency: 1000,
             transcoding_type: FFmpegTranscodeType::default(),
