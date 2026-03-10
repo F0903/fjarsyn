@@ -6,6 +6,7 @@ use iced_fonts::lucide;
 
 use super::Screen;
 use crate::ui::{
+    fonts,
     message::{CallTarget, Message, Route},
     state::AppContext,
     theme,
