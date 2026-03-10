@@ -74,13 +74,48 @@ pub fn init(capture: Arc<RwLock<PlatformCaptureProvider>>) -> (State, Task<Messa
         .map(Message::WebRTCInitialized)
     };
 
-    let window_settings =
-        window::Settings { visible: true, transparent: true, ..Default::default() };
+    let window_settings = window::Settings {
+        visible: true,
+        transparent: false,
+        blur: false,
+        decorations: false,
+        resizable: true,
+        #[cfg(target_os = "windows")]
+        platform_specific: window::settings::PlatformSpecific {
+            undecorated_shadow: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let (_id, open_window_task) = window::open(window_settings);
     let open_window_task = open_window_task.map(Message::WindowOpened);
-    let font_load_task = iced::font::load(iced_fonts::LUCIDE_FONT_BYTES).map(|_| Message::NoOp);
 
-    (State { ctx, active_screen }, Task::batch([init_task, open_window_task, font_load_task]))
+    let font_loads = Task::batch([
+        // Lucide
+        iced::font::load(iced_fonts::LUCIDE_FONT_BYTES).map(|_| Message::NoOp),
+        // Outfit
+        iced::font::load(crate::ui::fonts::outfit::THIN_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::outfit::EXTRA_LIGHT_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::outfit::LIGHT_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::outfit::REGULAR_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::outfit::MEDIUM_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::outfit::SEMIBOLD_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::outfit::BOLD_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::outfit::EXTRA_BOLD_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::outfit::BLACK_BYTES).map(|_| Message::NoOp),
+        // Geist
+        iced::font::load(crate::ui::fonts::geist::THIN_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::geist::EXTRA_LIGHT_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::geist::LIGHT_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::geist::REGULAR_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::geist::MEDIUM_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::geist::SEMIBOLD_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::geist::BOLD_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::geist::EXTRA_BOLD_BYTES).map(|_| Message::NoOp),
+        iced::font::load(crate::ui::fonts::geist::BLACK_BYTES).map(|_| Message::NoOp),
+    ]);
+
+    (State { ctx, active_screen }, Task::batch([init_task, open_window_task, font_loads]))
 }
 
 pub fn update(state: &mut State, message: Message) -> Task<Message> {
@@ -107,14 +142,69 @@ pub fn update(state: &mut State, message: Message) -> Task<Message> {
             state.ctx.notifications.dismiss(id);
             state.active_screen.update(&mut state.ctx, Message::DismissNotification(id))
         }
+        Message::NotifyError(msg) => {
+            state.ctx.notifications.error(msg);
+            Task::none()
+        }
+        Message::NotifyInfo(msg) => {
+            state.ctx.notifications.info(msg);
+            Task::none()
+        }
+        Message::NotifySuccess(msg) => {
+            state.ctx.notifications.success(msg);
+            Task::none()
+        }
         Message::WindowOpened(id) => handle_window_opened(state, id),
         Message::WindowClosed(id) => handle_window_closed(state, id),
+        Message::WindowMaximized(maximized) => {
+            if let Some(main_window) = state.ctx.main_window.as_mut() {
+                main_window.maximized = maximized;
+            }
+            Task::none()
+        }
+        Message::SyncMaximized => {
+            if let Some(main_window) = state.ctx.main_window.as_ref() {
+                return window::is_maximized(main_window.iced_id).map(Message::WindowMaximized);
+            }
+            Task::none()
+        }
         Message::WindowRawIdFetched((id, raw_id)) => handle_window_raw_id(state, id, raw_id),
+        Message::Minimize => {
+            if let Some(main_window) = state.ctx.main_window.as_ref() {
+                return window::minimize(main_window.iced_id, true);
+            }
+            Task::none()
+        }
+        Message::Maximize => {
+            if let Some(main_window) = state.ctx.main_window.as_ref() {
+                return window::toggle_maximize(main_window.iced_id);
+            }
+            Task::none()
+        }
+        Message::Close => {
+            if let Some(main_window) = state.ctx.main_window.as_ref() {
+                return window::close(main_window.iced_id);
+            }
+            Task::none()
+        }
+        Message::Drag => {
+            if let Some(main_window) = state.ctx.main_window.as_ref() {
+                return window::drag(main_window.iced_id);
+            }
+            Task::none()
+        }
+        Message::Resize(direction) => {
+            if let Some(main_window) = state.ctx.main_window.as_ref() {
+                return window::drag_resize(main_window.iced_id, direction);
+            }
+            Task::none()
+        }
         Message::WebRTCInitialized(ref result) => {
             handle_webrtc_initialized(state, result.clone(), message)
         }
         Message::AcceptCall => handle_accept_call(state),
         Message::DeclineCall => handle_decline_call(state),
+        Message::StartCall(target) => handle_start_call(state, target),
         Message::WebRTCEvent(ref event) => handle_webrtc_event(state, event.clone(), message),
         Message::DiscoveryEvent(ref event) => handle_discovery_event(state, event.clone()),
         _ => state.active_screen.update(&mut state.ctx, message),
@@ -130,12 +220,13 @@ fn handle_tick(state: &mut State, now: std::time::Instant) -> Task<Message> {
             return Task::done(Message::DeclineCall);
         }
     }
+
     state.active_screen.update(&mut state.ctx, Message::Tick(now))
 }
 
 fn handle_window_opened(state: &mut State, id: iced::window::Id) -> Task<Message> {
     if state.ctx.main_window.is_none() {
-        state.ctx.main_window = Some(WindowInfo { iced_id: id, raw_id: None });
+        state.ctx.main_window = Some(WindowInfo { iced_id: id, raw_id: None, maximized: false });
     }
     Task::batch([
         iced::window::raw_id::<Message>(id)
@@ -176,7 +267,6 @@ fn handle_webrtc_initialized(
     match result {
         Ok(webrtc) => {
             tracing::info!("WebRTC P2P listener initialized.");
-            state.ctx.notifications.success("P2P Signaling active.");
             state.ctx.webrtc = Some(webrtc);
         }
         Err(err) => {
@@ -283,4 +373,78 @@ fn handle_discovery_event(state: &mut State, event: DiscoveryEvent) -> Task<Mess
         }
     }
     Task::none()
+}
+
+fn handle_start_call(state: &mut State, target: crate::ui::message::CallTarget) -> Task<Message> {
+    use crate::ui::message::CallTarget;
+
+    let webrtc = match &state.ctx.webrtc {
+        Some(webrtc) => webrtc.clone(),
+        None => {
+            tracing::warn!("WebRTC not initialized...");
+            return Task::none();
+        }
+    };
+
+    let discovered_peers = state.ctx.discovered_peers.clone();
+
+    Task::future(async move {
+        match target {
+            CallTarget::Address(addr_str) => {
+                let addr = match addr_str.parse::<std::net::SocketAddr>() {
+                    Ok(addr) => addr,
+                    Err(e) => {
+                        let err_msg = format!("Failed to parse address '{}': {}", addr_str, e);
+                        tracing::error!(err_msg);
+                        return Message::NotifyError(err_msg);
+                    }
+                };
+
+                tracing::info!("Attempting manual direct dial to {}", addr);
+                if let Err(e) = webrtc.dial_direct(addr).await {
+                    let err_msg = format!("Manual dial failed: {}", e);
+                    tracing::error!(err_msg);
+                    return Message::NotifyError(err_msg);
+                }
+            }
+            CallTarget::PeerId(id) => {
+                let discovered_peer = discovered_peers.iter().find(|p| p.id == id).cloned();
+
+                let peer = match discovered_peer {
+                    Some(peer) => peer,
+                    None => {
+                        let err_msg = format!("Peer ID '{}' was not found in discovered peers", id);
+                        tracing::error!(err_msg);
+                        return Message::NotifyError(err_msg);
+                    }
+                };
+
+                let mut success = false;
+                for addr in &peer.addresses {
+                    let socket_addr = std::net::SocketAddr::new(*addr, peer.port);
+                    tracing::info!("Attempting direct signaling to {}", socket_addr);
+                    if let Ok(_) = webrtc.dial_direct(socket_addr).await {
+                        tracing::info!("Successfully connected to signaling at {}", socket_addr);
+                        success = true;
+                        break;
+                    }
+                }
+
+                if !success {
+                    let err_msg = format!("Failed to connect to any address for peer {}", id);
+                    tracing::error!(err_msg);
+                    return Message::NotifyError(err_msg);
+                }
+            }
+        }
+
+        match webrtc.create_offer().await {
+            Ok(_) => Message::Navigate(Route::Call),
+            Err(e) => {
+                let err_msg = format!("Failed to create offer: {}", e);
+                tracing::error!(err_msg);
+                return Message::NotifyError(err_msg);
+            }
+        }
+    })
 }

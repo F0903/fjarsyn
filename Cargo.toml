@@ -1,7 +1,7 @@
 [package]
 name = "fjarsyn"
 description = "A native and efficient screen sharing application."
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [workspace]

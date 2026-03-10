@@ -1,3 +1,4 @@
+pub mod fonts;
 pub mod frame_viewer;
 pub mod handlers;
 pub mod layout;

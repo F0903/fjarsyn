@@ -42,6 +42,7 @@ fn main() -> Result<()> {
     .subscription(ui::subscription::subscription)
     .title(ui::layout::title)
     .theme(ui::theme::theme_fn)
+    .default_font(ui::fonts::outfit::REGULAR)
     .run()?;
     tracing::info!("App exited.");
 

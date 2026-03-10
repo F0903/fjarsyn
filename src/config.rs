@@ -9,7 +9,7 @@ use crate::{
     utils::pixel_format::PixelFormat,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     pub onboarding_done: bool,
     pub target_bitrate: u32,

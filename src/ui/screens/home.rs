@@ -5,32 +5,26 @@ use iced::{
 use iced_fonts::lucide;
 
 use super::Screen;
-use crate::{
-    networking::webrtc::WebRTCEvent,
-    ui::{
-        message::{Message, Route},
-        state::AppContext,
-    },
+use crate::ui::{
+    message::{CallTarget, Message, Route},
+    state::AppContext,
+    theme,
 };
 
 #[derive(Debug, Clone)]
 pub enum HomeMessage {
-    StartCall(String),
-    AcceptCall,
-    DeclineCall,
     CopyId(String),
-    TargetIdChanged(String),
+    TargetAddressChanged(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct HomeScreen {
-    incoming_call: Option<String>,
-    manual_target_id: String,
+    manual_target_address: String,
 }
 
 impl HomeScreen {
     pub fn new(_ctx: &mut AppContext) -> Self {
-        Self { incoming_call: None, manual_target_id: String::new() }
+        Self { manual_target_address: String::new() }
     }
 }
 
@@ -39,95 +33,12 @@ impl Screen for HomeScreen {
         Subscription::none()
     }
 
-    fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
+    fn update(&mut self, _ctx: &mut AppContext, message: Message) -> Task<Message> {
         match message {
-            Message::WebRTCEvent(WebRTCEvent::IncomingCall(sender)) => {
-                self.incoming_call = Some(sender);
-                Task::none()
-            }
-            Message::WebRTCEvent(WebRTCEvent::Disconnected) => {
-                self.incoming_call = None;
-                Task::none()
-            }
             Message::Home(msg) => match msg {
-                HomeMessage::TargetIdChanged(val) => {
-                    self.manual_target_id = val;
+                HomeMessage::TargetAddressChanged(val) => {
+                    self.manual_target_address = val;
                     Task::none()
-                }
-                HomeMessage::StartCall(target_id) => {
-                    if let Some(webrtc) = &ctx.webrtc {
-                        let webrtc_clone = webrtc.clone();
-                        let discovered_peer =
-                            ctx.discovered_peers.iter().find(|p| p.id == target_id).cloned();
-
-                        Task::future(async move {
-                            if let Some(peer) = discovered_peer {
-                                let mut success = false;
-                                for addr in &peer.addresses {
-                                    let socket_addr = std::net::SocketAddr::new(*addr, peer.port);
-                                    tracing::info!(
-                                        "Attempting direct signaling to {}",
-                                        socket_addr
-                                    );
-                                    if let Ok(_) = webrtc_clone.dial_direct(socket_addr).await {
-                                        tracing::info!(
-                                            "Successfully connected to signaling at {}",
-                                            socket_addr
-                                        );
-                                        success = true;
-                                        break;
-                                    }
-                                }
-
-                                if !success {
-                                    tracing::error!(
-                                        "Failed to connect to any address for peer {}",
-                                        target_id
-                                    );
-                                    return Message::NoOp;
-                                }
-                            }
-
-                            match webrtc_clone.create_offer().await {
-                                Ok(_) => Message::Navigate(Route::Call),
-                                Err(e) => {
-                                    tracing::error!("Failed to create offer: {}", e);
-                                    Message::NoOp
-                                }
-                            }
-                        })
-                    } else {
-                        tracing::warn!("WebRTC not initialized...");
-                        Task::none()
-                    }
-                }
-                HomeMessage::AcceptCall => {
-                    if let Some(webrtc) = &ctx.webrtc {
-                        let webrtc_clone = webrtc.clone();
-                        Task::future(async move {
-                            match webrtc_clone.accept_call().await {
-                                Ok(_) => Message::Navigate(Route::Call),
-                                Err(e) => {
-                                    tracing::error!("Failed to accept call: {}", e);
-                                    Message::NoOp
-                                }
-                            }
-                        })
-                    } else {
-                        Task::none()
-                    }
-                }
-                HomeMessage::DeclineCall => {
-                    self.incoming_call = None;
-                    if let Some(webrtc) = &ctx.webrtc {
-                        let webrtc_clone = webrtc.clone();
-                        Task::future(async move {
-                            let _ = webrtc_clone.decline_call().await;
-                            Message::NoOp
-                        })
-                    } else {
-                        Task::none()
-                    }
                 }
                 HomeMessage::CopyId(id) => iced::clipboard::write(id),
             },
@@ -136,24 +47,28 @@ impl Screen for HomeScreen {
     }
 
     fn view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message> {
-        let title = text("Discovery").size(32).style(text::primary);
+        let title = text("Discovery").size(32).style(text::primary).font(fonts::outfit::BOLD);
 
         let mut content = column![title].spacing(30);
 
-        // Call by ID section
-        let call_by_id = container(
+        // Call by Address section
+        let call_by_addr = container(
             column![
-                text("Call by ID").size(18),
+                text("Manual Call").size(18),
                 row![
-                    text_input("Enter Peer ID...", &self.manual_target_id)
-                        .on_input(|val| Message::Home(HomeMessage::TargetIdChanged(val)))
-                        .padding(10),
+                    text_input(
+                        "Enter IP:Port (e.g. 192.168.1.50:8080)...",
+                        &self.manual_target_address
+                    )
+                    .on_input(|val| Message::Home(HomeMessage::TargetAddressChanged(val)))
+                    .padding(10)
+                    .style(theme::text_input_style),
                     button(row![lucide::phone().size(16), text("Call")].spacing(10))
-                        .on_press(Message::Home(HomeMessage::StartCall(
-                            self.manual_target_id.clone()
+                        .on_press(Message::StartCall(CallTarget::Address(
+                            self.manual_target_address.clone()
                         )))
                         .padding(10)
-                        .style(button::primary),
+                        .style(|theme, status| theme::button_style(theme, status, true)),
                 ]
                 .spacing(10)
             ]
@@ -162,7 +77,7 @@ impl Screen for HomeScreen {
         .padding(20)
         .style(crate::ui::theme::card_container);
 
-        content = content.push(call_by_id);
+        content = content.push(call_by_addr);
 
         let mut nearby_section = column![
             row![lucide::antenna().size(20), text("Nearby Peers").size(20)]
@@ -183,32 +98,42 @@ impl Screen for HomeScreen {
             for peer in &ctx.discovered_peers {
                 let peer_card = container(
                     row![
-                        container(lucide::user().size(20))
+                        // Icon bubble
+                        container(container(lucide::user().size(20).center()).center(Length::Fill))
+                            .padding(6)
+                            .style(crate::ui::theme::icon_bubble_container)
                             .width(Length::Fixed(44.0))
-                            .height(Length::Fixed(44.0))
-                            .center_x(Length::Fill)
-                            .center_y(Length::Fill)
-                            .style(crate::ui::theme::icon_bubble_container),
-                        column![
-                            text(&peer.instance_name).size(16),
-                            text(format!("ID: {}", &peer.id)).size(12).style(text::secondary),
-                        ]
-                        .spacing(2)
-                        .width(Length::Fill),
-                        row![
-                            action_button(lucide::message_square(), Message::NoOp, false),
-                            action_button(
-                                lucide::phone(),
-                                Message::Home(HomeMessage::StartCall(peer.id.clone())),
-                                false
-                            ),
-                            action_button(
-                                lucide::user_plus(),
-                                Message::Navigate(Route::Contacts),
-                                true
-                            ),
-                        ]
-                        .spacing(8)
+                            .height(Length::Fixed(44.0)),
+                        // Content area
+                        container(
+                            row![
+                                column![
+                                    text(peer.addresses[0].to_string()).size(16),
+                                    text(format!("ID: {}", &peer.id))
+                                        .size(12)
+                                        .style(text::secondary),
+                                ]
+                                .spacing(2)
+                                .width(Length::Fill),
+                                row![
+                                    action_button(lucide::message_square(), Message::NoOp, false),
+                                    action_button(
+                                        lucide::phone(),
+                                        Message::StartCall(CallTarget::PeerId(peer.id.clone())),
+                                        false
+                                    ),
+                                    action_button(
+                                        lucide::user_plus(),
+                                        Message::Navigate(Route::Contacts),
+                                        true
+                                    ),
+                                ]
+                                .spacing(8)
+                            ]
+                            .spacing(15)
+                            .align_y(Alignment::Center)
+                        )
+                        .width(Length::Fill)
                     ]
                     .spacing(15)
                     .align_y(Alignment::Center),
@@ -236,5 +161,5 @@ fn action_button<'a>(
         .on_press(msg)
         .width(Length::Fixed(36.0))
         .height(Length::Fixed(36.0))
-        .style(if is_primary { button::primary } else { button::secondary })
+        .style(move |theme, status| theme::button_style(theme, status, is_primary))
 }

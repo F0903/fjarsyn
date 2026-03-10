@@ -18,6 +18,7 @@ use crate::{
     media::ffmpeg::{FFmpegDecoder, FFmpegEncoder},
     networking::webrtc::WebRTCEvent,
     ui::{
+        self,
         frame_viewer::FrameViewer,
         message::{Message, Route},
         state::AppContext,
@@ -406,7 +407,7 @@ impl Screen for CallScreen {
             .into()]);
 
         let controls_row: Element<'_, Message> =
-            container(controls_row).padding(10).center_x(Length::Fill).into();
+            container(controls_row).padding(15).style(ui::theme::card_container).into();
 
         let remote_view: Element<Message> = match self.remote_frame.clone() {
             Some(frame) => container(FrameViewer::new(frame)).center(Length::Fill).into(),
@@ -429,15 +430,25 @@ impl Screen for CallScreen {
                     .align_x(iced::alignment::Horizontal::Right)
                     .align_y(iced::alignment::Vertical::Bottom)
                     .padding(20),
-                container(controls_row).width(Length::Fill).align_y(iced::alignment::Vertical::Top)
+                container(controls_row)
+                    .width(Length::Fill)
+                    .align_y(iced::alignment::Vertical::Bottom)
+                    .padding(20)
             ]
         } else {
             stack![
                 remote_view,
-                container(controls_row).width(Length::Fill).align_y(iced::alignment::Vertical::Top)
+                container(controls_row)
+                    .width(Length::Fill)
+                    .align_y(iced::alignment::Vertical::Bottom)
+                    .padding(20)
             ]
         };
 
-        content.into()
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(ui::theme::main_content_container)
+            .into()
     }
 }

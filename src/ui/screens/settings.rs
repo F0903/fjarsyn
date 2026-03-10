@@ -2,6 +2,7 @@ use iced::{
     Alignment, Element, Length, Padding, Subscription, Task,
     widget::{button, checkbox, column, container, pick_list, row, scrollable, text, text_input},
 };
+use iced_fonts::lucide;
 
 use super::Screen;
 use crate::{
@@ -9,7 +10,7 @@ use crate::{
     config::Config,
     define_enum_with_all,
     media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
-    ui::{message::Message, state::AppContext},
+    ui::{fonts, message::Message, state::AppContext, theme},
     utils::vector2::Vector2,
 };
 
@@ -97,6 +98,7 @@ pub enum ConfigValue {
 pub enum SettingsMessage {
     ConfigUpdate(ConfigField, ConfigValue),
     SaveConfig,
+    DiscardChanges,
 }
 
 #[derive(Debug, Clone)]
@@ -119,43 +121,34 @@ impl Screen for SettingsScreen {
         match message {
             Message::Settings(msg) => match msg {
                 SettingsMessage::ConfigUpdate(field, value) => {
-                    tracing::info!("Pending config update: {:?} {:?}", field, value);
                     match (field, value) {
                         (ConfigField::Resolution, ConfigValue::Resolution(res)) => {
                             pending.target_resolution = res.into();
                         }
-
                         (ConfigField::Framerate, ConfigValue::Framerate(rate)) => {
                             pending.target_framerate = rate;
                         }
-
                         (ConfigField::Bitrate, ConfigValue::String(s)) => {
                             if let Ok(num) = s.parse() {
                                 pending.target_bitrate = num;
                             }
                         }
-
                         (ConfigField::TranscodingType, ConfigValue::TranscodingType(t)) => {
                             pending.transcoding_type = t;
                         }
-
                         (ConfigField::MaxDepacketLatency, ConfigValue::String(s)) => {
                             if let Ok(num) = s.parse() {
                                 pending.max_depacket_latency = num;
                             }
                         }
-
                         (ConfigField::RecordCursor, ConfigValue::Bool(b)) => {
                             pending.record_cursor = b;
                         }
-
                         (ConfigField::RecordingBorderIndicator, ConfigValue::Bool(b)) => {
                             pending.recording_border_indicator = b;
                         }
-
                         _ => {}
                     }
-
                     Task::none()
                 }
 
@@ -167,131 +160,164 @@ impl Screen for SettingsScreen {
                             tracing::error!(msg);
                             ctx.notifications.error(msg);
                         } else {
-                            ctx.notifications.success("Config saved!");
+                            ctx.notifications.success("Settings saved successfully!");
                         }
+                        // Re-initialize with updated config
+                        self.pending_config = Some(ctx.config.clone());
                     }
                     Task::none()
                 }
-            },
 
+                SettingsMessage::DiscardChanges => {
+                    self.pending_config = Some(ctx.config.clone());
+                    ctx.notifications.info("Changes discarded.");
+                    Task::none()
+                }
+            },
             _ => Task::none(),
         }
     }
 
     fn view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message> {
         let config = self.pending_config.as_ref().unwrap_or(&ctx.config);
+        let has_changes = self.pending_config.as_ref().map(|p| p != &ctx.config).unwrap_or(false);
 
-        let title = text("Settings").size(30);
-
-        let resolution_pick = container(column![
-            container(text("Target Resolution:")).padding(Padding::ZERO.bottom(10)),
-            pick_list(
-                ResolutionChoice::ALL,
-                Some(ResolutionChoice::from_target(config.target_resolution)),
-                |res| {
-                    Message::Settings(SettingsMessage::ConfigUpdate(
-                        ConfigField::Resolution,
-                        ConfigValue::Resolution(res),
-                    ))
-                }
-            )
-            .padding(10)
-        ]);
-
-        let framerate_pick = container(column![
-            container(text("Target Framerate:")).padding(Padding::ZERO.bottom(10)),
-            pick_list(CaptureFramerate::ALL, Some(config.target_framerate), |rate| {
-                Message::Settings(SettingsMessage::ConfigUpdate(
-                    ConfigField::Framerate,
-                    ConfigValue::Framerate(rate),
-                ))
-            })
-            .padding(10)
-        ]);
-
-        let bitrate_input = container(column![
-            container(text("Target Bitrate (bps):")).padding(Padding::ZERO.bottom(10)),
-            text_input("", &config.target_bitrate.to_string())
-                .on_input(|val| {
-                    Message::Settings(SettingsMessage::ConfigUpdate(
-                        ConfigField::Bitrate,
-                        ConfigValue::String(val),
-                    ))
-                })
-                .padding(10)
-        ]);
-
-        let transcode_pick = container(column![
-            container(text("Transcoding Type:")).padding(Padding::ZERO.bottom(10)),
-            pick_list(FFmpegTranscodeType::ALL, Some(config.transcoding_type), |t| {
-                Message::Settings(SettingsMessage::ConfigUpdate(
-                    ConfigField::TranscodingType,
-                    ConfigValue::TranscodingType(t),
-                ))
-            })
-            .padding(10)
-        ]);
-
-        let max_depacket_input = container(column![
-            container(text("Max Depacket Latency (ms)")).padding(Padding::ZERO.bottom(10)),
-            text_input("", &config.max_depacket_latency.to_string())
-                .on_input(|val| {
-                    Message::Settings(SettingsMessage::ConfigUpdate(
-                        ConfigField::MaxDepacketLatency,
-                        ConfigValue::String(val),
-                    ))
-                })
-                .padding(10)
-        ]);
-
-        let record_cursor_input = container(
-            row![
-                container(text("Record Cursor")),
-                container(checkbox(config.record_cursor).on_toggle(|val| {
-                    Message::Settings(SettingsMessage::ConfigUpdate(
-                        ConfigField::RecordCursor,
-                        ConfigValue::Bool(val),
-                    ))
-                }))
-                .padding(10),
-            ]
-            .align_y(Alignment::Center),
-        );
-
-        let recording_border_indicator_input = container(
-            row![
-                container(text("Recording Border Indicator")),
-                container(checkbox(config.recording_border_indicator).on_toggle(|val| {
-                    Message::Settings(SettingsMessage::ConfigUpdate(
-                        ConfigField::RecordingBorderIndicator,
-                        ConfigValue::Bool(val),
-                    ))
-                }))
-                .padding(10)
-            ]
-            .align_y(Alignment::Center),
-        );
-
-        let save_button =
-            button("Save").on_press(Message::Settings(SettingsMessage::SaveConfig)).padding(10);
-
-        let back_button = button("Back").on_press(Message::Back).padding(10);
-
-        let content = column![
-            title,
-            resolution_pick,
-            framerate_pick,
-            bitrate_input,
-            transcode_pick,
-            max_depacket_input,
-            record_cursor_input,
-            recording_border_indicator_input,
-            row![save_button, back_button].spacing(20)
+        let header = column![
+            text("Settings").size(32).style(text::primary).font(fonts::outfit::BOLD),
+            text("Configure your streaming and capture preferences")
+                .size(14)
+                .style(text::secondary),
         ]
-        .spacing(20)
-        .padding(20)
-        .max_width(600)
-        .align_x(Alignment::Center);
+        .spacing(10);
+
+        let stream_quality = self.section(
+            "Stream Quality",
+            lucide::video(),
+            column![
+                self.setting_row(
+                    "Target Resolution",
+                    "Choose the output resolution for the stream.",
+                    pick_list(
+                        ResolutionChoice::ALL,
+                        Some(ResolutionChoice::from_target(config.target_resolution)),
+                        |res| {
+                            Message::Settings(SettingsMessage::ConfigUpdate(
+                                ConfigField::Resolution,
+                                ConfigValue::Resolution(res),
+                            ))
+                        }
+                    )
+                    .width(150)
+                    .padding(8)
+                ),
+                self.setting_row(
+                    "Target Framerate",
+                    "Higher framerates provide smoother motion but require more bandwidth.",
+                    pick_list(CaptureFramerate::ALL, Some(config.target_framerate), |rate| {
+                        Message::Settings(SettingsMessage::ConfigUpdate(
+                            ConfigField::Framerate,
+                            ConfigValue::Framerate(rate),
+                        ))
+                    })
+                    .width(150)
+                    .padding(8)
+                ),
+                self.setting_row(
+                    "Target Bitrate",
+                    "Control the stream quality and bandwidth usage (bps).",
+                    text_input("", &config.target_bitrate.to_string())
+                        .on_input(|val| {
+                            Message::Settings(SettingsMessage::ConfigUpdate(
+                                ConfigField::Bitrate,
+                                ConfigValue::String(val),
+                            ))
+                        })
+                        .width(150)
+                        .padding(8)
+                        .style(theme::text_input_style)
+                ),
+                self.setting_row(
+                    "Transcoding",
+                    "Choose between hardware or software encoding.",
+                    pick_list(FFmpegTranscodeType::ALL, Some(config.transcoding_type), |t| {
+                        Message::Settings(SettingsMessage::ConfigUpdate(
+                            ConfigField::TranscodingType,
+                            ConfigValue::TranscodingType(t),
+                        ))
+                    })
+                    .width(150)
+                    .padding(8)
+                ),
+            ],
+        );
+
+        let networking = self.section(
+            "Networking",
+            lucide::network(),
+            column![
+                self.setting_row(
+                    "Max Depacket Latency",
+                    "Maximum buffer time for reordering incoming packets (ms).",
+                    text_input("", &config.max_depacket_latency.to_string())
+                        .on_input(|val| {
+                            Message::Settings(SettingsMessage::ConfigUpdate(
+                                ConfigField::MaxDepacketLatency,
+                                ConfigValue::String(val),
+                            ))
+                        })
+                        .width(150)
+                        .padding(8)
+                        .style(theme::text_input_style)
+                )
+            ],
+        );
+
+        let capture = self.section(
+            "Capture Preferences",
+            lucide::monitor(),
+            column![
+                self.setting_row(
+                    "Record Cursor",
+                    "Whether to include the mouse cursor in the screen share.",
+                    checkbox(config.record_cursor).on_toggle(|val| {
+                        Message::Settings(SettingsMessage::ConfigUpdate(
+                            ConfigField::RecordCursor,
+                            ConfigValue::Bool(val),
+                        ))
+                    })
+                ),
+                self.setting_row(
+                    "Border Indicator",
+                    "Show a yellow border around the recorded area.",
+                    checkbox(config.recording_border_indicator).on_toggle(|val| {
+                        Message::Settings(SettingsMessage::ConfigUpdate(
+                            ConfigField::RecordingBorderIndicator,
+                            ConfigValue::Bool(val),
+                        ))
+                    })
+                ),
+            ],
+        );
+
+        let footer = row![
+            button(row![lucide::save().size(16), text("Save Changes")].spacing(10))
+                .on_press_maybe(has_changes.then(|| Message::Settings(SettingsMessage::SaveConfig)))
+                .padding(Padding::from([10, 20]))
+                .style(|theme, status| theme::button_style(theme, status, true)),
+            button("Discard Changes")
+                .on_press_maybe(
+                    has_changes.then(|| Message::Settings(SettingsMessage::DiscardChanges))
+                )
+                .padding(Padding::from([10, 20]))
+                .style(|theme, status| theme::button_style(theme, status, false)),
+        ]
+        .spacing(15)
+        .align_y(Alignment::Center);
+
+        let content = column![header, stream_quality, networking, capture, footer]
+            .spacing(30)
+            .padding(20)
+            .max_width(800);
 
         container(scrollable(content))
             .width(Length::Fill)
@@ -302,5 +328,48 @@ impl Screen for SettingsScreen {
 
     fn subscription(&self, _ctx: &AppContext) -> Subscription<Message> {
         Subscription::none()
+    }
+}
+
+impl SettingsScreen {
+    fn section<'a>(
+        &self,
+        title: &'a str,
+        icon: iced::widget::Text<'a>,
+        content: impl Into<Element<'a, Message>>,
+    ) -> Element<'a, Message> {
+        container(
+            column![
+                row![
+                    icon.size(20).style(text::primary),
+                    text(title).size(20).font(fonts::outfit::BOLD)
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
+                container(content).padding(Padding::ZERO.top(10.0))
+            ]
+            .spacing(15),
+        )
+        .padding(20)
+        .style(theme::section_container)
+        .width(Length::Fill)
+        .into()
+    }
+
+    fn setting_row<'a>(
+        &self,
+        label: &'a str,
+        description: &'a str,
+        control: impl Into<Element<'a, Message>>,
+    ) -> Element<'a, Message> {
+        row![
+            column![text(label).size(16), text(description).size(12).style(text::secondary)]
+                .spacing(5)
+                .width(Length::Fill),
+            container(control).width(Length::Shrink).align_y(Alignment::Center)
+        ]
+        .padding(Padding::from([10, 0]))
+        .align_y(Alignment::Center)
+        .into()
     }
 }

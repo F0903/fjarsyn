@@ -4,6 +4,7 @@ Here you can find the current TODOs for the project. The TODOs are approximately
 
 Each TODO is somewhat abstract and may require a lot of work to implement.
   
+- Persistent Peer ID based on something like a machines MAC address.
 - Database setup.
 - Contacts system for easily setting up screen sharing sessions. 
 - Messaging system.

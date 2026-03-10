@@ -21,6 +21,12 @@ pub enum Route {
 }
 
 #[derive(Debug, Clone)]
+pub enum CallTarget {
+    PeerId(String),
+    Address(String),
+}
+
+#[derive(Debug, Clone)]
 pub enum Message {
     Navigate(Route),
     NavigateWithBack(Route),
@@ -28,14 +34,14 @@ pub enum Message {
 
     AcceptCall,
     DeclineCall,
+    StartCall(CallTarget),
 
-    // Sub-screen messages
+    // Screen messages
     Home(HomeMessage),
     Contacts(ContactsMessage),
     Call(CallMessage),
     Settings(SettingsMessage),
 
-    // Global / Shared
     WebRTCInitialized(Result<WebRTC, Arc<WebRTCError>>),
     WebRTCReinit,
     WebRTCReinitDone,
@@ -46,6 +52,18 @@ pub enum Message {
     WindowOpened(iced::window::Id),
     WindowClosed(iced::window::Id),
     WindowRawIdFetched((iced::window::Id, u64)),
+    WindowMaximized(bool),
+    SyncMaximized,
+
+    NotifyError(String),
+    NotifyInfo(String),
+    NotifySuccess(String),
+
+    Minimize,
+    Maximize,
+    Close,
+    Drag,
+    Resize(iced::window::Direction),
 
     Tick(std::time::Instant),
     DismissNotification(u64),

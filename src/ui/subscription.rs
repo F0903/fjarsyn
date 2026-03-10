@@ -50,6 +50,10 @@ pub fn subscription(state: &State) -> Subscription<Message> {
 
     let window_open_subscription = iced::window::open_events().map(Message::WindowOpened);
     let window_close_subscription = iced::window::close_events().map(Message::WindowClosed);
+    let window_event_subscription = iced::event::listen().filter_map(|event| match event {
+        iced::Event::Window(iced::window::Event::Resized(_)) => Some(Message::SyncMaximized),
+        _ => None,
+    });
     let tick_subscription =
         iced::time::every(std::time::Duration::from_millis(500)).map(Message::Tick);
 
@@ -60,6 +64,7 @@ pub fn subscription(state: &State) -> Subscription<Message> {
         discovery_subscription,
         window_open_subscription,
         window_close_subscription,
+        window_event_subscription,
         tick_subscription,
     ])
 }

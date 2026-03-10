@@ -49,6 +49,10 @@ impl NotificationProvider {
     }
 
     pub fn view<'a>(&'a self) -> Element<'a, Message> {
+        if self.notifications.is_empty() {
+            return iced::widget::column![].into();
+        }
+
         let content = iced::widget::column(
             self.notifications
                 .values()

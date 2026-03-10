@@ -10,8 +10,15 @@ pub const SUCCESS: Color = color!(0x43a047);
 pub const DANGER: Color = color!(0xd32f2f);
 pub const WARNING: Color = color!(0xffb300);
 
-pub const BORDER_RADIUS: f32 = 10.0;
+pub const BORDER_RADIUS: f32 = 12.0;
 pub const LARGE_BORDER_RADIUS: f32 = 24.0;
+
+// Window Control Colors
+pub const CONTROL_DARK: Color = color!(0x1a1a1a);
+pub const CONTROL_CLOSE_HOVER: Color = color!(0xff6b6b); // Pastel red
+
+pub const HOVER_COLOR_LIGHTEN: f32 = 0.05;
+pub const PRESSED_COLOR_DARKEN: f32 = 0.05;
 
 pub fn theme() -> Theme {
     Theme::custom(
@@ -32,11 +39,35 @@ pub fn theme_fn(_state: &crate::ui::state::State, _window: iced::window::Id) -> 
 }
 
 pub fn sidebar_container(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style { background: Some(BACKGROUND.into()), ..Default::default() }
+    iced::widget::container::Style {
+        background: Some(BACKGROUND.into()),
+        border: iced::Border {
+            radius: iced::border::Radius {
+                top_left: BORDER_RADIUS.into(),
+                top_right: 0.0.into(),
+                bottom_right: 0.0.into(),
+                bottom_left: BORDER_RADIUS.into(),
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 pub fn titlebar_container(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style { background: Some(BACKGROUND.into()), ..Default::default() }
+    iced::widget::container::Style {
+        background: Some(BACKGROUND.into()),
+        border: iced::Border {
+            radius: iced::border::Radius {
+                top_left: BORDER_RADIUS.into(),
+                top_right: BORDER_RADIUS.into(),
+                bottom_right: 0.0.into(),
+                bottom_left: 0.0.into(),
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 pub fn main_content_container(_theme: &Theme) -> iced::widget::container::Style {
@@ -48,7 +79,7 @@ pub fn main_content_container(_theme: &Theme) -> iced::widget::container::Style 
             radius: iced::border::Radius {
                 top_left: LARGE_BORDER_RADIUS.into(),
                 top_right: 0.0.into(),
-                bottom_right: 0.0.into(),
+                bottom_right: BORDER_RADIUS.into(),
                 bottom_left: 0.0.into(),
             },
         },
@@ -60,6 +91,14 @@ pub fn card_container(_theme: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(color!(0x262626).into()),
         border: iced::Border { color: color!(0x303030), width: 1.0, radius: BORDER_RADIUS.into() },
+        ..Default::default()
+    }
+}
+
+pub fn section_container(_theme: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(color!(0x1a1a1a).into()),
+        border: iced::Border { color: color!(0x2a2a2a), width: 1.0, radius: BORDER_RADIUS.into() },
         ..Default::default()
     }
 }
@@ -85,9 +124,28 @@ pub fn icon_bubble_container(_theme: &Theme) -> iced::widget::container::Style {
 
 // Get the contrasting text color for a given background color.
 pub fn contrasting_text_color(background: Color) -> Color {
-    // Relative luminance formula (W3C standard)
     let luminance = 0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b;
     if luminance > 0.45 { Color::BLACK } else { Color::WHITE }
+}
+
+pub fn window_control_style(
+    _theme: &Theme,
+    status: iced::widget::button::Status,
+    hover_color: Option<Color>,
+) -> iced::widget::button::Style {
+    let bg = match status {
+        iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed => {
+            hover_color.unwrap_or(iced::theme::palette::lighten(CONTROL_DARK, HOVER_COLOR_LIGHTEN))
+        }
+        _ => CONTROL_DARK,
+    };
+
+    iced::widget::button::Style {
+        background: Some(bg.into()),
+        text_color: contrasting_text_color(bg),
+        border: iced::Border { radius: 100.0.into(), ..Default::default() },
+        ..Default::default()
+    }
 }
 
 pub fn sidebar_button_style(
@@ -99,8 +157,8 @@ pub fn sidebar_button_style(
 
     let base_bg = if active { ACCENT } else { color!(0x1a1a1a) };
     let bg = match status {
-        iced::widget::button::Status::Hovered => palette::lighten(base_bg, 0.1),
-        iced::widget::button::Status::Pressed => palette::darken(base_bg, 0.1),
+        iced::widget::button::Status::Hovered => palette::lighten(base_bg, HOVER_COLOR_LIGHTEN),
+        iced::widget::button::Status::Pressed => palette::darken(base_bg, PRESSED_COLOR_DARKEN),
         _ => base_bg,
     };
 
@@ -108,6 +166,65 @@ pub fn sidebar_button_style(
         background: Some(bg.into()),
         text_color: if active { contrasting_text_color(bg) } else { TEXT },
         border: iced::Border { radius: 12.0.into(), ..Default::default() },
+        ..Default::default()
+    }
+}
+
+pub fn text_input_style(
+    _theme: &Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    let base = iced::widget::text_input::Style {
+        background: color!(0x2a2a2a).into(),
+        border: iced::Border { radius: BORDER_RADIUS.into(), width: 1.0, color: color!(0x3a3a3a) },
+        icon: color!(0x666666),
+        placeholder: color!(0x666666),
+        value: TEXT,
+        selection: ACCENT,
+    };
+
+    match status {
+        iced::widget::text_input::Status::Hovered => iced::widget::text_input::Style {
+            border: iced::Border { color: color!(0x4a4a4a), ..base.border },
+            ..base
+        },
+        iced::widget::text_input::Status::Focused { .. } => iced::widget::text_input::Style {
+            border: iced::Border { color: ACCENT, ..base.border },
+            ..base
+        },
+        _ => base,
+    }
+}
+
+pub fn button_style(
+    _theme: &Theme,
+    status: iced::widget::button::Status,
+    is_primary: bool,
+) -> iced::widget::button::Style {
+    let base_bg = if is_primary { ACCENT } else { color!(0x2a2a2a) };
+    let bg = match status {
+        iced::widget::button::Status::Hovered => {
+            iced::theme::palette::lighten(base_bg, HOVER_COLOR_LIGHTEN)
+        }
+        iced::widget::button::Status::Pressed => {
+            iced::theme::palette::darken(base_bg, PRESSED_COLOR_DARKEN)
+        }
+        iced::widget::button::Status::Disabled => {
+            let mut color = base_bg;
+            color.a = 0.2; // Desaturate/transparent
+            color
+        }
+        _ => base_bg,
+    };
+
+    iced::widget::button::Style {
+        background: Some(bg.into()),
+        text_color: if status == iced::widget::button::Status::Disabled {
+            color!(0x666666)
+        } else {
+            contrasting_text_color(bg)
+        },
+        border: iced::Border { radius: BORDER_RADIUS.into(), ..Default::default() },
         ..Default::default()
     }
 }

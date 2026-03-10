@@ -1,11 +1,12 @@
 use iced::{
-    Element, Length, Padding,
-    widget::{button, column, container, row, scrollable, stack, text},
+    Alignment, Color, Element, Length, Padding, mouse,
+    widget::{Space, button, column, container, mouse_area, row, scrollable, stack, text},
     window,
 };
 use iced_fonts::lucide;
 
 use crate::ui::{
+    fonts,
     message::{Message, Route},
     screens::{ActiveScreen, Screen},
     state::{AppContext, State},
@@ -38,14 +39,105 @@ pub fn sidebar_button<'a>(
     .style(move |theme, status| theme::sidebar_button_style(theme, status, is_active))
 }
 
-pub fn render_titlebar<'a>() -> Element<'a, Message> {
-    container(
-        row![text(APP_TITLE).size(18).width(Length::Fill)]
-            .padding(Padding::from([5, 15]))
-            .align_y(iced::Alignment::Center),
+pub fn render_window_controls<'a>(is_maximized: bool) -> Element<'a, Message> {
+    let control_button = |icon: iced::widget::Text<'a>, msg: Message, hover: Option<Color>| {
+        button(
+            container(icon.size(10))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+        )
+        .on_press(msg)
+        .style(move |theme, status| theme::window_control_style(theme, status, hover))
+        .width(23)
+        .height(23)
+        .padding(0)
+    };
+
+    row![
+        control_button(lucide::minus(), Message::Minimize, None),
+        control_button(
+            if is_maximized { lucide::copy() } else { lucide::maximize() },
+            Message::Maximize,
+            None
+        ),
+        control_button(lucide::x(), Message::Close, Some(theme::CONTROL_CLOSE_HOVER)),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+pub fn render_titlebar<'a>(_ctx: &AppContext) -> Element<'a, Message> {
+    let title = container(text(APP_TITLE).size(12).style(text::primary).font(fonts::outfit::BOLD))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_y(Length::Fill);
+
+    mouse_area(
+        container(title)
+            .width(Length::Fill)
+            .height(Length::Fixed(40.0))
+            .padding(Padding::from([0, 15]))
+            .style(theme::titlebar_container),
     )
+    .on_press(Message::Drag)
+    .on_double_click(Message::Maximize)
+    .into()
+}
+
+pub fn render_resize_grid<'a>() -> Element<'a, Message> {
+    let handle_size = 5.0;
+    let corner_size = handle_size;
+
+    let resize_handle =
+        |direction: window::Direction, width: Length, height: Length| -> Element<'a, Message> {
+            mouse_area(container(Space::new()).width(width).height(height))
+                .on_press(Message::Resize(direction))
+                .interaction(match direction {
+                    window::Direction::North | window::Direction::South => {
+                        mouse::Interaction::ResizingVertically
+                    }
+                    window::Direction::West | window::Direction::East => {
+                        mouse::Interaction::ResizingHorizontally
+                    }
+                    window::Direction::NorthWest | window::Direction::SouthEast => {
+                        mouse::Interaction::ResizingDiagonallyDown
+                    }
+                    window::Direction::NorthEast | window::Direction::SouthWest => {
+                        mouse::Interaction::ResizingDiagonallyUp
+                    }
+                })
+                .into()
+        };
+
+    column![
+        row![
+            resize_handle(window::Direction::NorthWest, corner_size.into(), corner_size.into()),
+            resize_handle(window::Direction::North, Length::Fill, handle_size.into()),
+            resize_handle(window::Direction::NorthEast, corner_size.into(), corner_size.into()),
+        ]
+        .spacing(0)
+        .align_y(Alignment::Start),
+        row![
+            resize_handle(window::Direction::West, handle_size.into(), Length::Fill),
+            Space::new().width(Length::Fill).height(Length::Fill),
+            resize_handle(window::Direction::East, handle_size.into(), Length::Fill),
+        ]
+        .height(Length::Fill)
+        .spacing(0),
+        row![
+            resize_handle(window::Direction::SouthWest, corner_size.into(), corner_size.into()),
+            resize_handle(window::Direction::South, Length::Fill, handle_size.into()),
+            resize_handle(window::Direction::SouthEast, corner_size.into(), corner_size.into()),
+        ]
+        .spacing(0)
+        .align_y(Alignment::End),
+    ]
     .width(Length::Fill)
-    .style(theme::titlebar_container)
+    .height(Length::Fill)
+    .spacing(0)
     .into()
 }
 
@@ -68,9 +160,8 @@ pub fn render_sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<
     ]
     .spacing(5);
 
-    // Recent conversations/peers (Discord style)
     let chats_header = row![
-        text("CHATS").size(12).style(text::secondary).width(Length::Fill),
+        text("CHATS").size(12).style(text::secondary).font(fonts::outfit::BOLD).width(Length::Fill),
         button(lucide::user_plus().size(14))
             .on_press(Message::Navigate(Route::Contacts))
             .style(button::text)
@@ -105,7 +196,7 @@ pub fn render_sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<
                     .align_y(iced::Alignment::Center),
                 )
                 .width(Length::Fill)
-                .on_press(Message::Home(crate::ui::screens::home::HomeMessage::StartCall(
+                .on_press(Message::StartCall(crate::ui::message::CallTarget::PeerId(
                     peer.id.clone(),
                 )))
                 .style(button::text),
@@ -211,24 +302,43 @@ pub fn view<'a>(
     let screen_content = state.active_screen.view(&state.ctx);
     let current_route = state.active_screen.get_route();
 
-    let mut layout = match state.active_screen {
-        ActiveScreen::Call(_) => screen_content,
-        _ => {
-            let titlebar = render_titlebar();
-            let sidebar = render_sidebar(&state.ctx, current_route);
-            let main_content = container(screen_content)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(theme::main_content_container);
+    let titlebar = render_titlebar(&state.ctx);
 
-            column![titlebar, row![sidebar, main_content]].into()
-        }
-    };
+    let mut main_layout: Element<'a, Message, iced::Theme, iced::Renderer> =
+        match state.active_screen {
+            ActiveScreen::Call(_) => column![titlebar, screen_content].into(),
+            _ => {
+                let sidebar = render_sidebar(&state.ctx, current_route);
+                let main_content = container(screen_content)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(theme::main_content_container);
+
+                column![titlebar, row![sidebar, main_content]].into()
+            }
+        };
 
     if state.ctx.incoming_call_id.is_some() {
         let popup = render_incoming_call_popup(&state.ctx);
-        layout = stack![layout, popup].into();
+        main_layout = stack![main_layout, popup].into();
     }
 
-    stack![layout, state.ctx.notifications.view()].into()
+    let notifications = state.ctx.notifications.view();
+
+    let is_maximized = state.ctx.main_window.as_ref().map(|w| w.maximized).unwrap_or(false);
+
+    let controls = container(render_window_controls(is_maximized))
+        .width(Length::Fill)
+        .height(Length::Fixed(40.0))
+        .padding(Padding::from([0, 15]))
+        .align_x(Alignment::End)
+        .align_y(Alignment::Center);
+
+    let content_stack = stack![main_layout, notifications, controls];
+
+    if is_maximized {
+        content_stack.into()
+    } else {
+        stack![content_stack, render_resize_grid()].into()
+    }
 }

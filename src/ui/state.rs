@@ -19,6 +19,7 @@ use crate::{
 pub struct WindowInfo {
     pub iced_id: iced::window::Id,
     pub raw_id: Option<u64>,
+    pub maximized: bool,
 }
 
 pub struct AppContext {
