@@ -1,9 +1,6 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-use std::sync::Arc;
-
-use fjarsyn::{Result, capture_providers, ui};
-use tokio::sync::RwLock;
+use fjarsyn::{Result, ui};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -14,37 +11,16 @@ const LOG_LEVEL: Level = Level::INFO;
 
 fn main() -> Result<()> {
     let subscriber = FmtSubscriber::builder().with_max_level(LOG_LEVEL).finish();
-
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    tracing::info!("Starting app...");
 
-    tracing::info!("Starting up...");
+    iced::daemon(ui::handlers::init, ui::handlers::update, ui::layout::view)
+        .subscription(ui::subscription::subscription)
+        .title(ui::layout::title)
+        .theme(ui::theme::theme_fn)
+        .default_font(ui::fonts::outfit::REGULAR)
+        .run()?;
 
-    let initial_config = fjarsyn::config::Config::load();
-
-    tracing::info!("Initializing windows capture provider...");
-    let windows_capture = capture_providers::windows::WgcCaptureProviderBuilder::new(
-        initial_config.pixel_format,
-        initial_config.record_cursor,
-        initial_config.recording_border_indicator,
-    )
-    .with_default_device()?
-    .with_default_capture_item()?
-    .build()?;
-    let windows_capture = Arc::new(RwLock::new(windows_capture));
-    tracing::info!("Windows capture provider initialized.");
-
-    tracing::info!("Running app...");
-    iced::daemon(
-        move || ui::handlers::init(windows_capture.clone()),
-        ui::handlers::update,
-        ui::layout::view,
-    )
-    .subscription(ui::subscription::subscription)
-    .title(ui::layout::title)
-    .theme(ui::theme::theme_fn)
-    .default_font(ui::fonts::outfit::REGULAR)
-    .run()?;
     tracing::info!("App exited.");
-
     Ok(())
 }

@@ -24,9 +24,8 @@ pub struct WindowInfo {
 
 pub struct AppContext {
     pub config: Config,
-
-    pub capture: Arc<RwLock<PlatformCaptureProvider>>,
-
+    pub db: Option<sqlx::SqlitePool>,
+    pub capture: Option<Arc<RwLock<PlatformCaptureProvider>>>,
     pub back_queue: VecDeque<ActiveScreen>,
 
     pub packet_tx: Option<mpsc::Sender<Bytes>>,
@@ -46,6 +45,7 @@ pub struct AppContext {
     pub incoming_call_timeout: Option<std::time::Instant>,
     pub discovered_peers: Vec<PeerInfo>,
     pub recent_peers: Vec<PeerInfo>,
+    pub contacts: Vec<crate::database::Contact>,
 
     pub notifications: NotificationProvider,
 }

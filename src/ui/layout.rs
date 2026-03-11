@@ -160,8 +160,12 @@ pub fn render_sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<
     ]
     .spacing(5);
 
-    let chats_header = row![
-        text("CHATS").size(12).style(text::secondary).font(fonts::outfit::BOLD).width(Length::Fill),
+    let contacts_header = row![
+        text("CONTACTS")
+            .size(12)
+            .style(text::secondary)
+            .font(fonts::outfit::BOLD)
+            .width(Length::Fill),
         button(lucide::user_plus().size(14))
             .on_press(Message::Navigate(Route::Contacts))
             .style(button::text)
@@ -169,26 +173,51 @@ pub fn render_sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<
     .spacing(10)
     .align_y(iced::Alignment::Center);
 
-    let mut recent_peers_list = column![chats_header].spacing(8);
-    if ctx.recent_peers.is_empty() {
-        recent_peers_list = recent_peers_list.push(
-            text("No recent chats")
+    let mut contacts_list = column![contacts_header].spacing(8);
+    if ctx.contacts.is_empty() {
+        contacts_list = contacts_list.push(
+            text("No contacts")
                 .size(12)
                 .style(text::secondary)
                 .width(Length::Fill)
                 .align_x(iced::alignment::Horizontal::Center),
         );
     } else {
-        for peer in &ctx.recent_peers {
-            recent_peers_list = recent_peers_list.push(
+        for contact in &ctx.contacts {
+            let is_online = ctx.discovered_peers.iter().any(|p| p.id == contact.peer_id);
+
+            contacts_list = contacts_list.push(
                 button(
                     row![
                         container(lucide::user().size(16))
                             .padding(8)
                             .style(theme::icon_bubble_container),
                         column![
-                            text(&peer.instance_name).size(14),
-                            text(&peer.id[..8]).size(10).style(text::secondary),
+                            text(&contact.name).size(14),
+                            row![
+                                container(Space::new().width(6)).width(6).height(6).style(
+                                    move |_| container::Style {
+                                        background: Some(
+                                            if is_online {
+                                                iced::Color::from_rgb(0.2, 0.8, 0.2)
+                                            } else {
+                                                iced::Color::from_rgb(0.5, 0.5, 0.5)
+                                            }
+                                            .into(),
+                                        ),
+                                        border: iced::Border {
+                                            radius: 3.0.into(),
+                                            ..Default::default()
+                                        },
+                                        ..Default::default()
+                                    }
+                                ),
+                                text(if is_online { "Online" } else { "Offline" })
+                                    .size(10)
+                                    .style(text::secondary),
+                            ]
+                            .spacing(5)
+                            .align_y(Alignment::Center),
                         ]
                         .spacing(2),
                     ]
@@ -196,9 +225,7 @@ pub fn render_sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<
                     .align_y(iced::Alignment::Center),
                 )
                 .width(Length::Fill)
-                .on_press(Message::StartCall(crate::ui::message::CallTarget::PeerId(
-                    peer.id.clone(),
-                )))
+                .on_press(Message::StartCall(crate::ui::message::CallTarget::ContactId(contact.id)))
                 .style(button::text),
             );
         }
@@ -211,7 +238,9 @@ pub fn render_sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<
             row![
                 column![
                     text("YOUR ID").size(10).style(text::secondary),
-                    text(format!("{}...", &id_clone[..12])).size(12).style(text::primary),
+                    text(format!("{}...", crate::utils::string_utils::truncate(&id_clone, 12)))
+                        .size(12)
+                        .style(text::primary),
                 ]
                 .width(Length::Fill),
                 button(lucide::copy().size(14))
@@ -230,7 +259,7 @@ pub fn render_sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<
     container(
         column![
             sidebar_nav,
-            container(scrollable(recent_peers_list)).height(Length::Fill),
+            container(scrollable(contacts_list)).height(Length::Fill),
             my_id,
             sidebar_button(
                 current_route,
@@ -256,7 +285,9 @@ pub fn render_incoming_call_popup<'a>(ctx: &'a AppContext) -> Element<'a, Messag
             .iter()
             .find(|p| p.id == *sender_id)
             .map(|p| p.instance_name.clone())
-            .unwrap_or_else(|| format!("{}...", &sender_id[..8]));
+            .unwrap_or_else(|| {
+                format!("{}...", crate::utils::string_utils::truncate(sender_id, 8))
+            });
 
         container(
             container(

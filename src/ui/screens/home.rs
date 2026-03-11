@@ -7,7 +7,7 @@ use iced_fonts::lucide;
 use super::Screen;
 use crate::ui::{
     fonts,
-    message::{CallTarget, Message, Route},
+    message::{CallTarget, Message},
     state::AppContext,
     theme,
 };
@@ -125,7 +125,14 @@ impl Screen for HomeScreen {
                                     ),
                                     action_button(
                                         lucide::user_plus(),
-                                        Message::Navigate(Route::Contacts),
+                                        Message::SaveContact {
+                                            peer_id: peer.id.clone(),
+                                            name: peer.instance_name.clone(),
+                                            address: peer
+                                                .addresses
+                                                .first()
+                                                .map(|ip| format!("{}:{}", ip, peer.port)),
+                                        },
                                         true
                                     ),
                                 ]

@@ -75,9 +75,14 @@ paste = "1.0.15"
 mdns-sd = "0.13"
 uuid = { version = "1", features = ["v4"] }
 iced_fonts = { version = "0.3", features = ["lucide"] }
-
-[patch.crates-io]
-bytes = { git = "https://github.com/tokio-rs/bytes" } # We need this until try_unsplit is public in stable
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "sqlite",
+    "macros",
+    "migrate",
+    "chrono",
+] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [profile.release]
 opt-level = "z"   # Optimize for size

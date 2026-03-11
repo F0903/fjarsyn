@@ -4,6 +4,8 @@ pub mod frame;
 #[macro_use]
 pub mod define_enum_with_all;
 pub mod num_utils;
+pub mod paths;
 pub mod pixel_format;
 pub mod rect;
+pub mod string_utils;
 pub mod vector2;

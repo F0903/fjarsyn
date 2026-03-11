@@ -15,6 +15,7 @@
     "request": "launch",
     "adapter": "CodeLLDB",
     "terminal": "integrated",
+    "env": { "FJARSYN_PEER_ID": "random" },
   },
   {
     "label": "Build & Debug Fjarsyn client [RELEASE MODE]",

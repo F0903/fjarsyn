@@ -67,7 +67,13 @@ impl WebRTC {
         peer_id: Option<String>,
     ) -> WebRTCResult<Self> {
         let (signal_tx, signal_rx) = mpsc::channel(100);
-        let local_peer_id = peer_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        // Allow environment variable to override for debugging multiple instances
+        let local_peer_id = match std::env::var("FJARSYN_PEER_ID") {
+            Ok(val) if val == "random" => uuid::Uuid::new_v4().to_string(),
+            Ok(val) => val,
+            Err(_) => peer_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        };
 
         let (listener_tx, direct_port) = signaling::listen(0, signal_tx.clone()).await?;
         let signaling_tx = Arc::new(RwLock::new(Some(listener_tx)));

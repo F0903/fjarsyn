@@ -1,12 +1,11 @@
 use std::{fs, path::PathBuf};
 
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     capture_providers::CaptureFramerate,
     media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
-    utils::pixel_format::PixelFormat,
+    utils::{paths::CONFIG_DIR, pixel_format::PixelFormat},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -39,22 +38,20 @@ impl Default for Config {
 }
 
 impl Config {
-    fn get_config_path() -> Option<PathBuf> {
-        ProjectDirs::from("", "", "fjarsyn")
-            .map(|proj_dirs| proj_dirs.config_dir().join("config.json"))
+    fn get_config_path() -> PathBuf {
+        CONFIG_DIR.join("config.json")
     }
 
     pub fn load() -> Self {
         tracing::info!("Loading config");
-        if let Some(path) = Self::get_config_path() {
-            if path.exists() {
-                match fs::read(&path) {
-                    Ok(content) => match serde_json::from_slice(&content) {
-                        Ok(config) => return config,
-                        Err(e) => tracing::error!("Failed to parse config file: {}", e),
-                    },
-                    Err(e) => tracing::error!("Failed to read config file: {}", e),
-                }
+        let path = Self::get_config_path();
+        if path.exists() {
+            match fs::read(&path) {
+                Ok(content) => match serde_json::from_slice(&content) {
+                    Ok(config) => return config,
+                    Err(e) => tracing::error!("Failed to parse config file: {}", e),
+                },
+                Err(e) => tracing::error!("Failed to read config file: {}", e),
             }
         }
 
@@ -67,13 +64,13 @@ impl Config {
     }
 
     pub fn save(&self) -> std::io::Result<()> {
-        if let Some(path) = Self::get_config_path() {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let content = serde_json::to_string_pretty(self)?;
-            fs::write(path, content)?;
+        let path = Self::get_config_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
         }
+        let content = serde_json::to_string_pretty(self)?;
+        fs::write(path, content)?;
+
         Ok(())
     }
 }

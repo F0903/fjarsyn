@@ -1,5 +1,7 @@
 pub mod capture_providers;
 pub mod config;
+#[macro_use]
+pub mod database;
 pub mod media;
 pub mod networking;
 pub mod ui;
@@ -21,8 +23,10 @@ pub enum Error {
     IoError(#[from] std::io::Error),
     #[error("WebRTC error: {0}")]
     WebRtcError(#[from] crate::networking::webrtc::WebRTCError),
-    #[error("Other error: {0}")]
-    OtherError(#[from] Box<dyn std::error::Error>),
+    #[error("Database error: {0}")]
+    DatabaseError(#[from] sqlx::Error),
+    #[error("Migration error: {0}")]
+    MigrationError(#[from] sqlx::migrate::MigrateError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
