@@ -11,7 +11,7 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
-    pub onboarding_done: bool,
+    pub peer_id: Option<String>,
     pub target_bitrate: u32,
     pub target_framerate: CaptureFramerate,
     pub target_resolution: TargetResolution,
@@ -25,7 +25,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            onboarding_done: false,
+            peer_id: None,
             target_bitrate: 8_000_000,
             target_framerate: CaptureFramerate::FPS60,
             target_resolution: TargetResolution::Source,

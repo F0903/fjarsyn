@@ -64,9 +64,10 @@ impl WebRTC {
         packet_sink: mpsc::Sender<Bytes>,
         event_tx: mpsc::Sender<WebRTCEvent>,
         max_depacket_latency: u16,
+        peer_id: Option<String>,
     ) -> WebRTCResult<Self> {
         let (signal_tx, signal_rx) = mpsc::channel(100);
-        let local_peer_id = uuid::Uuid::new_v4().to_string();
+        let local_peer_id = peer_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         let (listener_tx, direct_port) = signaling::listen(0, signal_tx.clone()).await?;
         let signaling_tx = Arc::new(RwLock::new(Some(listener_tx)));

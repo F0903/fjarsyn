@@ -56,10 +56,11 @@ pub fn init(capture: Arc<RwLock<PlatformCaptureProvider>>) -> (State, Task<Messa
         let init_frame_tx = ctx.packet_tx.clone().unwrap();
         let init_event_tx = ctx.webrtc_event_tx.clone().unwrap();
         let max_depacket_latency = ctx.config.max_depacket_latency;
+        let peer_id = ctx.config.peer_id.clone();
 
         Task::future(async move {
             let webrtc_result =
-                WebRTC::init(init_frame_tx, init_event_tx, max_depacket_latency).await;
+                WebRTC::init(init_frame_tx, init_event_tx, max_depacket_latency, peer_id).await;
             if let Ok(ref webrtc) = webrtc_result {
                 let id = webrtc.get_local_id();
                 let port = webrtc.direct_signaling_port;
@@ -267,6 +268,16 @@ fn handle_webrtc_initialized(
     match result {
         Ok(webrtc) => {
             tracing::info!("WebRTC P2P listener initialized.");
+
+            // Update peer_id in config if it's new
+            if state.ctx.config.peer_id.is_none() {
+                let id = webrtc.get_local_id();
+                state.ctx.config.peer_id = Some(id);
+                if let Err(e) = state.ctx.config.save() {
+                    tracing::error!("Failed to save config with new peer_id: {}", e);
+                }
+            }
+
             state.ctx.webrtc = Some(webrtc);
         }
         Err(err) => {
