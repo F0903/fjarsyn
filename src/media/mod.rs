@@ -13,6 +13,7 @@ pub enum TargetResolution {
 impl TargetResolution {
     pub const ALL: &'static [Self] = &[
         Self::Source,
+        Self::Scale(Vector2 { x: 3840, y: 2160 }),
         Self::Scale(Vector2 { x: 1920, y: 1080 }),
         Self::Scale(Vector2 { x: 1280, y: 720 }),
         Self::Scale(Vector2 { x: 854, y: 480 }),
