@@ -83,6 +83,7 @@ sqlx = { version = "0.8", features = [
     "chrono",
 ] }
 chrono = { version = "0.4", features = ["serde"] }
+syn = "2.0.117"
 
 [profile.release]
 opt-level = "z"   # Optimize for size

@@ -1,257 +1,280 @@
-use iced::{Color, Theme, color, theme::Palette};
+use iced::{
+    Border, Color, Shadow, Theme, Vector,
+    theme::Palette,
+    widget::{button, container, text_input},
+};
 
-use crate::ui::notification::NotificationKind;
+use crate::services::notification_service::NotificationKind;
 
-pub const BACKGROUND: Color = color!(0x121212); // Deep neutral dark
-pub const SURFACE: Color = color!(0x1e1e1e); // Warmer dark for the main "sheet"
-pub const TEXT: Color = color!(0xeeeeee);
-pub const ACCENT: Color = color!(0xfd8935); // Sunset orange
-pub const SUCCESS: Color = color!(0x43a047);
-pub const DANGER: Color = color!(0xd32f2f);
-pub const WARNING: Color = color!(0xffb300);
+// --- Palette Constants ---
+pub const PRIMARY_COLOR: Color = Color::from_rgb(1.0, 0.5, 0.2);
+pub const BACKGROUND_COLOR: Color = Color::from_rgb(0.05, 0.04, 0.03);
+pub const CARD_BACKGROUND: Color = Color::from_rgb(0.1, 0.09, 0.08);
+pub const SIDEBAR_BACKGROUND: Color = Color::from_rgb(0.08, 0.07, 0.06);
+pub const BORDER_COLOR: Color = Color::from_rgb(0.18, 0.15, 0.12);
+pub const TEXT_PRIMARY: Color = Color::from_rgb(0.95, 0.92, 0.9);
+pub const TEXT_SECONDARY: Color = Color::from_rgb(0.6, 0.55, 0.5);
 
-pub const BORDER_RADIUS: f32 = 12.0;
-pub const LARGE_BORDER_RADIUS: f32 = 24.0;
+pub const LIGHTER_RADIUS: f32 = 10.0;
+pub const LIGHT_RADIUS: f32 = 12.0;
+pub const REGULAR_RADIUS: f32 = 16.0;
+pub const CIRCLE_RADIUS: f32 = 100.0;
 
-// Window Control Colors
-pub const CONTROL_DARK: Color = color!(0x1a1a1a);
-pub const CONTROL_CLOSE_HOVER: Color = color!(0xff6b6b); // Pastel red
+pub const CONTROL_CLOSE_HOVER: Color = Color::from_rgb(0.9, 0.2, 0.2);
 
-pub const HOVER_COLOR_LIGHTEN: f32 = 0.05;
-pub const PRESSED_COLOR_DARKEN: f32 = 0.05;
-
-pub fn theme() -> Theme {
+/// Returns the custom Fjarsyn theme.
+pub fn fjarsyn_theme() -> Theme {
     Theme::custom(
         "Fjarsyn".to_string(),
         Palette {
-            background: BACKGROUND,
-            text: TEXT,
-            primary: ACCENT,
-            success: SUCCESS,
-            danger: DANGER,
-            warning: WARNING,
+            background: BACKGROUND_COLOR,
+            text: TEXT_PRIMARY,
+            primary: PRIMARY_COLOR,
+            success: Color::from_rgb(0.2, 0.7, 0.2),
+            danger: Color::from_rgb(0.8, 0.2, 0.2),
+            warning: Color::from_rgb(0.9, 0.6, 0.1),
         },
     )
 }
 
-pub fn theme_fn(_state: &crate::ui::state::State, _window: iced::window::Id) -> Theme {
-    theme()
-}
-
-pub fn sidebar_container(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(BACKGROUND.into()),
-        border: iced::Border {
-            radius: iced::border::Radius {
-                top_left: BORDER_RADIUS.into(),
-                top_right: 0.0.into(),
-                bottom_right: 0.0.into(),
-                bottom_left: BORDER_RADIUS.into(),
-            },
+pub fn main_content_container(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(palette.background.base.color.into()),
+        border: Border { width: 0.0, ..Default::default() },
+        shadow: Shadow {
+            color: Color { a: 0.25, ..Color::BLACK },
+            offset: Vector::new(0.0, 0.0),
+            blur_radius: 15.0,
             ..Default::default()
         },
         ..Default::default()
     }
 }
 
-pub fn titlebar_container(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(BACKGROUND.into()),
-        border: iced::Border {
-            radius: iced::border::Radius {
-                top_left: BORDER_RADIUS.into(),
-                top_right: BORDER_RADIUS.into(),
-                bottom_right: 0.0.into(),
-                bottom_left: 0.0.into(),
-            },
+pub fn sidebar_container(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(SIDEBAR_BACKGROUND.into()),
+        border: Border { width: 0.0, ..Default::default() },
+        ..Default::default()
+    }
+}
+
+pub fn card_container(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(CARD_BACKGROUND.into()),
+        border: Border {
+            color: BORDER_COLOR,
+            width: 1.0,
+            radius: REGULAR_RADIUS.into(),
+            ..Default::default()
+        },
+        shadow: Shadow {
+            color: Color { a: 0.15, ..Color::BLACK },
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
+        },
+        ..Default::default()
+    }
+}
+
+pub fn id_card_container(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Color { a: 0.05, ..Color::WHITE }.into()),
+        border: Border {
+            color: BORDER_COLOR,
+            width: 1.0,
+            radius: LIGHT_RADIUS.into(),
             ..Default::default()
         },
         ..Default::default()
     }
 }
 
-pub fn main_content_container(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(SURFACE.into()),
-        border: iced::Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: iced::border::Radius {
-                top_left: LARGE_BORDER_RADIUS.into(),
-                top_right: 0.0.into(),
-                bottom_right: BORDER_RADIUS.into(),
-                bottom_left: 0.0.into(),
-            },
-        },
+pub fn icon_bubble_container(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Color { a: 0.1, ..Color::WHITE }.into()),
+        border: Border { radius: CIRCLE_RADIUS.into(), ..Default::default() },
         ..Default::default()
     }
 }
 
-pub fn card_container(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(color!(0x262626).into()),
-        border: iced::Border { color: color!(0x303030), width: 1.0, radius: BORDER_RADIUS.into() },
+pub fn warning_accent_container(theme: &Theme) -> container::Style {
+    let palette = theme.extended_palette();
+    container::Style {
+        background: Some(Color { a: 0.15, ..palette.warning.base.color }.into()),
+        border: Border { radius: LIGHT_RADIUS.into(), ..Default::default() },
         ..Default::default()
     }
 }
 
-pub fn section_container(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(color!(0x1a1a1a).into()),
-        border: iced::Border { color: color!(0x2a2a2a), width: 1.0, radius: BORDER_RADIUS.into() },
+pub fn titlebar_container(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(SIDEBAR_BACKGROUND.into()),
+        border: Border { color: BORDER_COLOR, width: 1.0, ..Default::default() },
         ..Default::default()
     }
 }
 
-pub fn id_card_container(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(color!(0x1a1a1a).into()),
-        border: iced::Border { color: color!(0x2a2a2a), width: 1.0, radius: BORDER_RADIUS.into() },
+pub fn section_container(_theme: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Color { a: 0.03, ..Color::WHITE }.into()),
+        border: Border { color: BORDER_COLOR, width: 1.0, radius: LIGHT_RADIUS.into() },
         ..Default::default()
     }
 }
 
-pub fn icon_bubble_container(_theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(color!(0x3a3a3a).into()),
-        border: iced::Border {
-            radius: 100.0.into(), // Circular
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
+pub fn notification_container(theme: &Theme, kind: NotificationKind) -> container::Style {
+    let palette = theme.extended_palette();
 
-// Get the contrasting text color for a given background color.
-pub fn contrasting_text_color(background: Color) -> Color {
-    let luminance = 0.2126 * background.r + 0.7152 * background.g + 0.0722 * background.b;
-    if luminance > 0.45 { Color::BLACK } else { Color::WHITE }
-}
-
-pub fn window_control_style(
-    _theme: &Theme,
-    status: iced::widget::button::Status,
-    hover_color: Option<Color>,
-) -> iced::widget::button::Style {
-    let bg = match status {
-        iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed => {
-            hover_color.unwrap_or(iced::theme::palette::lighten(CONTROL_DARK, HOVER_COLOR_LIGHTEN))
-        }
-        _ => CONTROL_DARK,
+    let color = match kind {
+        NotificationKind::Error => palette.danger.base.color,
+        NotificationKind::Info => palette.primary.base.color,
+        NotificationKind::Success => palette.success.base.color,
     };
 
-    iced::widget::button::Style {
-        background: Some(bg.into()),
-        text_color: contrasting_text_color(bg),
-        border: iced::Border { radius: 100.0.into(), ..Default::default() },
+    container::Style {
+        background: Some(CARD_BACKGROUND.into()),
+        border: Border { color, width: 1.0, radius: LIGHT_RADIUS.into() },
+        shadow: Shadow {
+            color: Color { a: 0.2, ..Color::BLACK },
+            offset: Vector::new(0.0, 4.0),
+            blur_radius: 12.0,
+        },
         ..Default::default()
     }
 }
 
 pub fn sidebar_button_style(
-    _theme: &Theme,
-    status: iced::widget::button::Status,
-    active: bool,
-) -> iced::widget::button::Style {
-    use iced::theme::palette;
+    theme: &Theme,
+    status: button::Status,
+    is_active: bool,
+) -> button::Style {
+    let palette = theme.extended_palette();
 
-    let base_bg = if active { ACCENT } else { color!(0x1a1a1a) };
-    let bg = match status {
-        iced::widget::button::Status::Hovered => palette::lighten(base_bg, HOVER_COLOR_LIGHTEN),
-        iced::widget::button::Status::Pressed => palette::darken(base_bg, PRESSED_COLOR_DARKEN),
-        _ => base_bg,
-    };
-
-    iced::widget::button::Style {
-        background: Some(bg.into()),
-        text_color: if active { contrasting_text_color(bg) } else { TEXT },
-        border: iced::Border { radius: 12.0.into(), ..Default::default() },
+    let base = button::Style {
+        background: if is_active {
+            Some(Color { a: 0.1, ..palette.background.base.text }.into())
+        } else {
+            None
+        },
+        text_color: if is_active { palette.background.base.text } else { TEXT_SECONDARY },
+        border: Border { radius: LIGHTER_RADIUS.into(), ..Default::default() },
         ..Default::default()
-    }
-}
-
-pub fn text_input_style(
-    _theme: &Theme,
-    status: iced::widget::text_input::Status,
-) -> iced::widget::text_input::Style {
-    let base = iced::widget::text_input::Style {
-        background: color!(0x2a2a2a).into(),
-        border: iced::Border { radius: BORDER_RADIUS.into(), width: 1.0, color: color!(0x3a3a3a) },
-        icon: color!(0x666666),
-        placeholder: color!(0x666666),
-        value: TEXT,
-        selection: ACCENT,
     };
 
     match status {
-        iced::widget::text_input::Status::Hovered => iced::widget::text_input::Style {
-            border: iced::Border { color: color!(0x4a4a4a), ..base.border },
+        button::Status::Hovered => button::Style {
+            background: Some(Color { a: 0.05, ..palette.background.base.text }.into()),
+            text_color: palette.background.base.text,
             ..base
         },
-        iced::widget::text_input::Status::Focused { .. } => iced::widget::text_input::Style {
-            border: iced::Border { color: ACCENT, ..base.border },
+        button::Status::Pressed => button::Style {
+            background: Some(Color { a: 0.15, ..palette.background.base.text }.into()),
             ..base
         },
         _ => base,
     }
 }
 
-pub fn button_style(
+pub fn window_control_style(
     _theme: &Theme,
-    status: iced::widget::button::Status,
-    is_primary: bool,
-) -> iced::widget::button::Style {
-    let base_bg = if is_primary { ACCENT } else { color!(0x2a2a2a) };
-    let bg = match status {
-        iced::widget::button::Status::Hovered => {
-            iced::theme::palette::lighten(base_bg, HOVER_COLOR_LIGHTEN)
-        }
-        iced::widget::button::Status::Pressed => {
-            iced::theme::palette::darken(base_bg, PRESSED_COLOR_DARKEN)
-        }
-        iced::widget::button::Status::Disabled => {
-            let mut color = base_bg;
-            color.a = 0.2; // Desaturate/transparent
-            color
-        }
-        _ => base_bg,
+    status: button::Status,
+    hover_color: Option<Color>,
+) -> button::Style {
+    let base = button::Style {
+        border: Border { radius: LIGHT_RADIUS.into(), ..Default::default() },
+        ..Default::default()
     };
 
-    iced::widget::button::Style {
-        background: Some(bg.into()),
-        text_color: if status == iced::widget::button::Status::Disabled {
-            color!(0x666666)
-        } else {
-            contrasting_text_color(bg)
+    match status {
+        button::Status::Hovered => button::Style {
+            background: Some(hover_color.unwrap_or(Color { a: 0.1, ..Color::WHITE }).into()),
+            text_color: TEXT_PRIMARY,
+            ..base
         },
-        border: iced::Border { radius: BORDER_RADIUS.into(), ..Default::default() },
-        ..Default::default()
+        button::Status::Pressed => {
+            button::Style { background: Some(Color { a: 0.2, ..Color::WHITE }.into()), ..base }
+        }
+        _ => button::Style { text_color: TEXT_SECONDARY, ..Default::default() },
     }
 }
 
-pub fn notification_container(
-    _theme: &Theme,
-    kind: NotificationKind,
-) -> iced::widget::container::Style {
-    let bg_color = match kind {
-        NotificationKind::Info => ACCENT,
-        NotificationKind::Error => DANGER,
-        NotificationKind::Success => SUCCESS,
+pub fn button_style(theme: &Theme, status: button::Status, is_primary: bool) -> button::Style {
+    let palette = theme.extended_palette();
+
+    let base = button::Style {
+        background: if is_primary {
+            Some(palette.primary.base.color.into())
+        } else {
+            Some(Color { a: 0.1, ..palette.background.base.text }.into())
+        },
+        text_color: if is_primary {
+            palette.primary.base.text
+        } else {
+            palette.background.base.text
+        },
+        border: Border { radius: LIGHT_RADIUS.into(), ..Default::default() },
+        ..Default::default()
     };
 
-    iced::widget::container::Style {
-        background: Some(bg_color.into()),
-        text_color: Some(contrasting_text_color(bg_color)),
-        border: iced::Border {
-            color: Color::TRANSPARENT,
-            width: 0.0,
-            radius: BORDER_RADIUS.into(),
+    match status {
+        button::Status::Hovered => button::Style {
+            background: if is_primary {
+                Some(Color { r: 1.0, g: 0.6, b: 0.3, a: 1.0 }.into())
+            } else {
+                Some(Color { a: 0.15, ..palette.background.base.text }.into())
+            },
+            ..base
         },
-        shadow: iced::Shadow {
-            color: Color { a: 0.4, ..Color::BLACK },
-            offset: iced::Vector::new(0.0, 6.0),
-            blur_radius: 15.0,
+        button::Status::Pressed => button::Style {
+            background: if is_primary {
+                Some(Color { r: 0.9, g: 0.4, b: 0.1, a: 1.0 }.into())
+            } else {
+                Some(Color { a: 0.2, ..palette.background.base.text }.into())
+            },
+            ..base
         },
-        ..Default::default()
+        _ => base,
     }
+}
+
+pub fn danger_button_style(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+
+    let base = button::Style {
+        background: Some(palette.danger.base.color.into()),
+        text_color: palette.danger.base.text,
+        border: Border { radius: LIGHT_RADIUS.into(), ..Default::default() },
+        ..Default::default()
+    };
+
+    match status {
+        button::Status::Hovered => button::Style {
+            background: Some(Color { r: 0.9, g: 0.3, b: 0.3, a: 1.0 }.into()),
+            ..base
+        },
+        button::Status::Pressed => button::Style {
+            background: Some(Color { r: 0.7, g: 0.1, b: 0.1, a: 1.0 }.into()),
+            ..base
+        },
+        _ => base,
+    }
+}
+
+pub fn text_input_style(theme: &Theme, _status: text_input::Status) -> text_input::Style {
+    let palette = theme.extended_palette();
+
+    text_input::Style {
+        background: Color { a: 0.05, ..palette.background.base.text }.into(),
+        border: Border { color: BORDER_COLOR, width: 1.0, radius: LIGHTER_RADIUS.into() },
+        icon: Color { a: 0.5, ..palette.background.base.text },
+        placeholder: TEXT_SECONDARY,
+        value: palette.background.base.text,
+        selection: Color { a: 0.2, ..palette.primary.base.color },
+    }
+}
+
+pub fn spacer_style(_theme: &Theme) -> container::Style {
+    container::Style { background: Some(BORDER_COLOR.into()), ..Default::default() }
 }

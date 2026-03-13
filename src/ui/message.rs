@@ -62,6 +62,8 @@ pub enum Message {
     NotifyInfo(String),
     NotifySuccess(String),
 
+    CopyId(String),
+
     // Database / Contact messages
     DatabaseInitialized(Result<sqlx::SqlitePool, Arc<crate::Error>>),
     CaptureInitialized(

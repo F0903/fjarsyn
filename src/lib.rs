@@ -4,6 +4,7 @@ pub mod config;
 pub mod database;
 pub mod media;
 pub mod networking;
+pub mod services;
 pub mod ui;
 pub mod utils;
 

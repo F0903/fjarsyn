@@ -1,59 +1,32 @@
 use iced::{
-    Alignment, Element, Length, Subscription, Task,
+    Alignment, Element, Length,
     widget::{button, column, container, row, scrollable, text, text_input},
 };
 use iced_fonts::lucide;
 
-use super::Screen;
+use super::{HomeMessage, HomeScreen};
 use crate::ui::{
+    app::AppContext,
     fonts,
     message::{CallTarget, Message},
-    state::AppContext,
     theme,
 };
 
-#[derive(Debug, Clone)]
-pub enum HomeMessage {
-    CopyId(String),
-    TargetAddressChanged(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct HomeScreen {
-    manual_target_address: String,
-}
-
 impl HomeScreen {
-    pub fn new(_ctx: &mut AppContext) -> Self {
-        Self { manual_target_address: String::new() }
-    }
-}
+    pub fn render_view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message> {
+        let content =
+            column![self.view_header(), self.view_manual_call(), self.view_nearby_peers(ctx)]
+                .spacing(30);
 
-impl Screen for HomeScreen {
-    fn subscription(&self, _ctx: &AppContext) -> Subscription<Message> {
-        Subscription::none()
+        container(scrollable(content)).width(Length::Fill).height(Length::Fill).padding(20).into()
     }
 
-    fn update(&mut self, _ctx: &mut AppContext, message: Message) -> Task<Message> {
-        match message {
-            Message::Home(msg) => match msg {
-                HomeMessage::TargetAddressChanged(val) => {
-                    self.manual_target_address = val;
-                    Task::none()
-                }
-                HomeMessage::CopyId(id) => iced::clipboard::write(id),
-            },
-            _ => Task::none(),
-        }
+    fn view_header(&self) -> Element<'_, Message> {
+        text("Discovery").size(32).style(text::primary).font(fonts::outfit::BOLD).into()
     }
 
-    fn view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message> {
-        let title = text("Discovery").size(32).style(text::primary).font(fonts::outfit::BOLD);
-
-        let mut content = column![title].spacing(30);
-
-        // Call by Address section
-        let call_by_addr = container(
+    fn view_manual_call(&self) -> Element<'_, Message> {
+        container(
             column![
                 text("Manual Call").size(18),
                 row![
@@ -76,10 +49,11 @@ impl Screen for HomeScreen {
             .spacing(10),
         )
         .padding(20)
-        .style(crate::ui::theme::card_container);
+        .style(crate::ui::theme::card_container)
+        .into()
+    }
 
-        content = content.push(call_by_addr);
-
+    fn view_nearby_peers(&self, ctx: &AppContext) -> Element<'_, Message> {
         let mut nearby_section = column![
             row![lucide::antenna().size(20), text("Nearby Peers").size(20)]
                 .spacing(10)
@@ -117,13 +91,17 @@ impl Screen for HomeScreen {
                                 .spacing(2)
                                 .width(Length::Fill),
                                 row![
-                                    action_button(lucide::message_square(), Message::NoOp, false),
-                                    action_button(
+                                    self.action_button(
+                                        lucide::message_square(),
+                                        Message::NoOp,
+                                        false
+                                    ),
+                                    self.action_button(
                                         lucide::phone(),
                                         Message::StartCall(CallTarget::PeerId(peer.id.clone())),
                                         false
                                     ),
-                                    action_button(
+                                    self.action_button(
                                         lucide::user_plus(),
                                         Message::SaveContact {
                                             peer_id: peer.id.clone(),
@@ -154,20 +132,19 @@ impl Screen for HomeScreen {
             nearby_section = nearby_section.push(peers_list);
         }
 
-        content = content.push(nearby_section);
-
-        container(scrollable(content)).width(Length::Fill).height(Length::Fill).padding(20).into()
+        nearby_section.into()
     }
-}
 
-fn action_button<'a>(
-    icon: iced::widget::Text<'a>,
-    msg: Message,
-    is_primary: bool,
-) -> iced::widget::Button<'a, Message> {
-    button(container(icon.size(16)).center_x(Length::Fill).center_y(Length::Fill))
-        .on_press(msg)
-        .width(Length::Fixed(36.0))
-        .height(Length::Fixed(36.0))
-        .style(move |theme, status| theme::button_style(theme, status, is_primary))
+    fn action_button<'a>(
+        &self,
+        icon: iced::widget::Text<'a>,
+        msg: Message,
+        is_primary: bool,
+    ) -> iced::widget::Button<'a, Message> {
+        button(container(icon.size(16)).center_x(Length::Fill).center_y(Length::Fill))
+            .on_press(msg)
+            .width(Length::Fixed(36.0))
+            .height(Length::Fixed(36.0))
+            .style(move |theme, status| theme::button_style(theme, status, is_primary))
+    }
 }

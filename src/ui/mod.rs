@@ -1,11 +1,7 @@
+pub mod app;
+pub mod components;
 pub mod fonts;
-pub mod frame_viewer;
-pub mod handlers;
-pub mod layout;
 pub mod message;
-pub mod notification;
-pub mod notification_provider;
 pub mod screens;
-pub mod state;
 pub mod subscription;
 pub mod theme;

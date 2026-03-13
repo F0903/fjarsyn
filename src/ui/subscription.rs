@@ -7,7 +7,7 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     networking::{discovery::DiscoveryEvent, webrtc::WebRTCEvent},
-    ui::{message::Message, state::State},
+    ui::{app::Fjarsyn, message::Message},
 };
 
 // Wrapper to implement Hash which is needed by iced subscriptions.
@@ -27,21 +27,21 @@ impl<T> PartialEq for EventReceiverRef<T> {
 }
 impl<T> Eq for EventReceiverRef<T> {}
 
-pub fn subscription(state: &State) -> Subscription<Message> {
+pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
     use crate::ui::screens::Screen;
 
-    let screen_subscriptions = state.active_screen.subscription(&state.ctx);
+    let screen_subscriptions = app.active_screen.subscription(&app.ctx);
 
-    let frame_subscription = packet_subscription(state.ctx.packet_rx.0.clone());
+    let frame_subscription = packet_subscription(app.ctx.frame_packet_rx.0.clone());
 
-    let event_subscription = state
+    let event_subscription = app
         .ctx
         .webrtc_event_rx
         .as_ref()
         .map(|rx| webrtc_event_subscription(rx.clone()))
         .unwrap_or(Subscription::none());
 
-    let discovery_subscription = state
+    let discovery_subscription = app
         .ctx
         .discovery_event_rx
         .as_ref()

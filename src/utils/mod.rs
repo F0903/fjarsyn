@@ -8,4 +8,5 @@ pub mod paths;
 pub mod pixel_format;
 pub mod rect;
 pub mod string_utils;
+pub mod type_utils;
 pub mod vector2;
