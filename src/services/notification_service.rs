@@ -4,14 +4,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use iced::{
-    Element, Length,
-    widget::{button, container, row, text},
-};
-use iced_fonts::lucide;
-
-use crate::ui::message::Message;
-
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 const INFO_DEFAULT_DURATION: Duration = Duration::from_secs(7);
@@ -35,7 +27,7 @@ pub struct Notification {
 }
 
 impl Notification {
-    pub(super) fn new(id: u64, message: String, kind: NotificationKind) -> Self {
+    pub fn new(id: u64, message: String, kind: NotificationKind) -> Self {
         Self {
             id,
             message,
@@ -89,43 +81,7 @@ impl NotificationService {
         self.notifications.retain(|_k, n| !n.expired(now));
     }
 
-    pub fn view<'a>(&'a self) -> Element<'a, Message> {
-        if self.notifications.is_empty() {
-            return iced::widget::column![].into();
-        }
-
-        let content = iced::widget::column(
-            self.notifications
-                .values()
-                .map(|n| {
-                    let kind = n.kind;
-                    container(
-                        row![
-                            text(&n.message).size(14).width(Length::Fill),
-                            button(lucide::x().size(12))
-                                .on_press(Message::DismissNotification(n.id))
-                                .style(button::text)
-                                .padding(5)
-                        ]
-                        .align_y(iced::Alignment::Center)
-                        .spacing(10),
-                    )
-                    .padding(12)
-                    .style(move |theme| crate::ui::theme::notification_container(theme, kind))
-                    .width(Length::Fixed(320.0))
-                    .into()
-                })
-                .collect::<Vec<_>>(),
-        )
-        .spacing(10)
-        .align_x(iced::Alignment::End);
-
-        container(content)
-            .padding(20)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(iced::Alignment::End)
-            .align_y(iced::Alignment::End)
-            .into()
+    pub fn notifications(&self) -> impl Iterator<Item = &Notification> {
+        self.notifications.values()
     }
 }

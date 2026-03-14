@@ -685,7 +685,7 @@ impl Fjarsyn {
             call_popup_stack = call_popup_stack.push(popup);
         }
 
-        let notifications = self.ctx.notifications.view();
+        let notifications = components::notifications_view(self.ctx.notifications.notifications());
         let is_maximized = self.ctx.main_window.as_ref().map(|w| w.maximized).unwrap_or(false);
 
         let controls = container(components::window_controls(is_maximized))
