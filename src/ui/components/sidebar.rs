@@ -122,17 +122,18 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
 
     let my_id = if let Some(service) = &ctx.call_service {
         let id = service.local_id();
-        let id_clone = id.clone();
         container(
             row![
                 column![
                     text("YOUR ID").size(10).style(text::secondary),
-                    text(format!("{}...", crate::utils::string_utils::truncate(&id_clone, 12)))
+                    text(format!("{}...", crate::utils::string_utils::truncate(id, 12)))
                         .size(12)
                         .style(text::primary),
                 ]
                 .width(Length::Fill),
-                button(lucide::copy().size(14)).on_press(Message::CopyId(id)).style(button::text)
+                button(lucide::copy().size(14))
+                    .on_press(Message::CopyId(id.to_owned()))
+                    .style(button::text)
             ]
             .align_y(Alignment::Center)
             .spacing(5),
