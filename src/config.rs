@@ -1,12 +1,23 @@
-use std::{fs, path::PathBuf};
+use std::{fs, io, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::{
     capture_providers::CaptureFramerate,
     media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
     utils::{paths::CONFIG_DIR, pixel_format::PixelFormat},
 };
+
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("Failed to read config file: {0}")]
+    Read(#[source] io::Error),
+    #[error("Failed to parse config file: {0}")]
+    Parse(#[from] serde_json::Error),
+    #[error("Failed to save default config: {0}")]
+    Save(#[source] io::Error),
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Config {
@@ -42,25 +53,19 @@ impl Config {
         CONFIG_DIR.join("config.json")
     }
 
-    pub fn load() -> Self {
+    pub fn load() -> Result<Self, ConfigError> {
         tracing::info!("Loading config");
         let path = Self::get_config_path();
         if path.exists() {
-            match fs::read(&path) {
-                Ok(content) => match serde_json::from_slice(&content) {
-                    Ok(config) => return config,
-                    Err(e) => tracing::error!("Failed to parse config file: {}", e),
-                },
-                Err(e) => tracing::error!("Failed to read config file: {}", e),
-            }
+            let content = fs::read(&path).map_err(ConfigError::Read)?;
+            let config: Config = serde_json::from_slice(&content)?;
+            return Ok(config);
         }
 
-        tracing::info!("No config file could be loaded, using default config.");
+        tracing::info!("No config file found, creating default config.");
         let default = Self::default();
-        if let Err(e) = default.save() {
-            tracing::error!("Failed to save default config: {}", e);
-        }
-        default
+        default.save().map_err(ConfigError::Save)?;
+        Ok(default)
     }
 
     pub fn save(&self) -> std::io::Result<()> {

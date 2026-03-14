@@ -2,6 +2,7 @@ use iced::{Subscription, Task};
 
 use crate::ui::{app::AppContext, message::Message, screens::Screen};
 
+mod handlers;
 mod view;
 
 #[derive(Debug, Clone)]
@@ -25,16 +26,8 @@ impl Screen for HomeScreen {
         Subscription::none()
     }
 
-    fn update(&mut self, _ctx: &mut AppContext, message: Message) -> Task<Message> {
-        match message {
-            Message::Home(msg) => match msg {
-                HomeMessage::TargetAddressChanged(val) => {
-                    self.manual_target_address = val;
-                    Task::none()
-                }
-            },
-            _ => Task::none(),
-        }
+    fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
+        self.handle_message(ctx, message)
     }
 
     fn view<'a>(&'a self, ctx: &'a AppContext) -> iced::Element<'a, Message> {

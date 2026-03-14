@@ -12,12 +12,9 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use crate::{
     capture_providers::PlatformCaptureProvider,
     config::Config,
-    networking::{
-        discovery::{Discovery, DiscoveryEvent, PeerInfo},
-        webrtc::{WebRTC, WebRTCEvent},
-    },
+    networking::discovery::{Discovery, DiscoveryEvent, PeerInfo},
     services::{
-        call_service::{CallService, DialResult},
+        call_service::{CallEvent, CallService, CallServiceConfig, DialSuccess},
         contact_service::ContactService,
         notification_service::NotificationService,
     },
@@ -47,15 +44,14 @@ pub struct AppContext {
     pub frame_packet_tx: Option<mpsc::Sender<Bytes>>,
     pub frame_packet_rx: EventReceiverRef<Bytes>,
 
-    pub webrtc_event_tx: Option<mpsc::Sender<WebRTCEvent>>,
-    pub webrtc_event_rx: Option<Arc<Mutex<mpsc::Receiver<WebRTCEvent>>>>,
-
     pub discovery_event_tx: Option<mpsc::Sender<DiscoveryEvent>>,
     pub discovery_event_rx: Option<Arc<Mutex<mpsc::Receiver<DiscoveryEvent>>>>,
 
+    pub call_event_rx: Option<Arc<Mutex<mpsc::Receiver<CallEvent>>>>,
+
     pub main_window: Option<WindowInfo>,
 
-    pub call_service: Option<CallService>,
+    pub call_service: Option<Arc<CallService>>,
     pub target_id: Option<String>,
     pub incoming_call_id: Option<String>,
     pub incoming_call_timeout: Option<std::time::Instant>,
@@ -88,10 +84,13 @@ pub struct Fjarsyn {
 impl Fjarsyn {
     pub fn init() -> (Self, Task<Message>) {
         let (frame_packet_tx, frame_packet_rx) = mpsc::channel(100);
-        let (webrtc_event_tx, webrtc_event_rx) = mpsc::channel(100);
         let (discovery_event_tx, discovery_event_rx) = mpsc::channel(100);
+        let (call_event_tx, call_event_rx) = mpsc::channel(100);
 
-        let config = Config::load();
+        let config = Config::load().unwrap_or_else(|e| {
+            tracing::error!("Failed to load config: {}", e);
+            Config::default()
+        });
         let mut ctx = AppContext {
             config: config.clone(),
             db: None,
@@ -100,10 +99,9 @@ impl Fjarsyn {
             back_queue: VecDeque::new(),
             frame_packet_tx: Some(frame_packet_tx.clone()),
             frame_packet_rx: subscription::EventReceiverRef(Arc::new(Mutex::new(frame_packet_rx))),
-            webrtc_event_tx: Some(webrtc_event_tx.clone()),
-            webrtc_event_rx: Some(Arc::new(Mutex::new(webrtc_event_rx))),
             discovery_event_tx: Some(discovery_event_tx.clone()),
             discovery_event_rx: Some(Arc::new(Mutex::new(discovery_event_rx))),
+            call_event_rx: Some(Arc::new(Mutex::new(call_event_rx))),
             call_service: None,
             target_id: None,
             incoming_call_id: None,
@@ -123,9 +121,9 @@ impl Fjarsyn {
                     Message::DatabaseInitialized(crate::database::init().await.map_err(Arc::new))
                 }),
                 Self::init_capture_task(&config),
-                Self::init_webrtc_task(
+                Self::init_call_service_task(
                     frame_packet_tx,
-                    webrtc_event_tx,
+                    call_event_tx,
                     discovery_event_tx,
                     config.max_depacket_latency,
                     config.peer_id,
@@ -271,7 +269,7 @@ impl Fjarsyn {
                 self.ctx.incoming_call_timeout = None;
                 let Some(service) = self.ctx.call_service.clone() else { return Task::none() };
                 Task::future(async move {
-                    match service.accept_call().await {
+                    match service.accept().await {
                         Ok(_) => Message::Navigate(Route::Call),
                         Err(_) => Message::NoOp,
                     }
@@ -283,7 +281,7 @@ impl Fjarsyn {
                 self.ctx.incoming_call_timeout = None;
                 let Some(service) = self.ctx.call_service.clone() else { return Task::none() };
                 Task::future(async move {
-                    let _ = service.decline_call().await;
+                    let _ = service.decline().await;
                     Message::NoOp
                 })
             }
@@ -295,12 +293,7 @@ impl Fjarsyn {
                 let contacts = self.ctx.contacts.clone();
                 Task::future(async move {
                     match service.dial(target, &contacts, &discovered).await {
-                        DialResult::Success {
-                            peer_id,
-                            name,
-                            socket_addr,
-                            update_contact_address,
-                        } => {
+                        Ok(DialSuccess { peer_id, name, socket_addr, update_contact_address }) => {
                             let mut batch = Vec::new();
                             if let Some((id, addr)) = update_contact_address {
                                 batch.push(Message::UpdateContactAddress { id, new_address: addr });
@@ -318,7 +311,7 @@ impl Fjarsyn {
                             batch.push(Message::Navigate(Route::Call));
                             Message::Batch(batch)
                         }
-                        DialResult::Failure(e_msg) => Message::NotifyError(e_msg),
+                        Err(e_msg) => Message::NotifyError(e_msg),
                     }
                 })
             }
@@ -353,26 +346,26 @@ impl Fjarsyn {
                 }
             }
 
-            Message::WebRTCInitialized(res) => {
-                if let Ok(w) = res {
+            Message::CallServiceInitialized(res) => {
+                if let Ok(service) = res {
                     if self.ctx.config.peer_id.is_none() {
-                        self.ctx.config.peer_id = Some(w.get_local_id());
+                        self.ctx.config.peer_id = Some(service.local_id().to_string());
                         let _ = self.ctx.config.save();
                     }
-                    self.ctx.call_service = Some(CallService::new(w.clone()));
+                    self.ctx.call_service = Some(service.clone());
                 }
                 Task::none()
             }
 
-            Message::WebRTCEvent(event) => {
+            Message::CallEvent(event) => {
                 match event {
-                    WebRTCEvent::IncomingCall(sender) => {
-                        self.ctx.target_id = Some(sender.clone());
-                        self.ctx.incoming_call_id = Some(sender.clone());
+                    CallEvent::IncomingCall { peer_id } => {
+                        self.ctx.target_id = Some(peer_id.clone());
+                        self.ctx.incoming_call_id = Some(peer_id.clone());
                         self.ctx.incoming_call_timeout =
                             Some(std::time::Instant::now() + std::time::Duration::from_secs(30));
                     }
-                    WebRTCEvent::Connected => {
+                    CallEvent::CallConnected => {
                         self.ctx.incoming_call_id = None;
                         self.ctx.incoming_call_timeout = None;
                         if let Some(tid) = &self.ctx.target_id {
@@ -385,7 +378,7 @@ impl Fjarsyn {
                         }
                         return Task::done(Message::Navigate(Route::Call));
                     }
-                    WebRTCEvent::Disconnected => {
+                    CallEvent::CallEnded => {
                         if self.ctx.target_id.is_some() {
                             self.ctx.notify_info("Call ended.");
                         }
@@ -414,7 +407,7 @@ impl Fjarsyn {
                             .ctx
                             .call_service
                             .as_ref()
-                            .map(|s| s.webrtc().get_local_id() == peer.id)
+                            .map(|s| s.local_id() == peer.id)
                             .unwrap_or(false)
                         {
                             return Task::none();
@@ -437,12 +430,7 @@ impl Fjarsyn {
 
             Message::PeerFound(peer) => {
                 // Return if the peer is us
-                if self
-                    .ctx
-                    .call_service
-                    .as_ref()
-                    .map(|s| s.webrtc().get_local_id() == peer.id)
-                    .unwrap_or(false)
+                if self.ctx.call_service.as_ref().map(|s| s.local_id() == peer.id).unwrap_or(false)
                 {
                     return Task::none();
                 }
@@ -523,22 +511,24 @@ impl Fjarsyn {
         self.ctx.main_window.as_ref().map(|w| f(w.iced_id)).unwrap_or(Task::none())
     }
 
-    fn init_webrtc_task(
+    fn init_call_service_task(
         frame_packet_tx: mpsc::Sender<Bytes>,
-        webrtc_event_tx: mpsc::Sender<WebRTCEvent>,
+        call_event_tx: mpsc::Sender<CallEvent>,
         discovery_event_tx: mpsc::Sender<DiscoveryEvent>,
-        lat: u16,
-        pid: Option<String>,
+        max_depacket_latency: u16,
+        peer_id: Option<String>,
     ) -> Task<Message> {
         Task::future(async move {
-            let res = WebRTC::init(frame_packet_tx, webrtc_event_tx, lat, pid).await;
-            if let Ok(ref w) = res {
+            let config =
+                CallServiceConfig { frame_packet_tx, call_event_tx, max_depacket_latency, peer_id };
+            let res = CallService::init(config).await;
+            if let Ok(ref service) = res {
                 if let Ok(d) = Discovery::new() {
-                    let _ = d.advertise(&w.get_local_id(), w.direct_signaling_port);
+                    let _ = d.advertise(service.local_id(), service.signaling_port());
                     let _ = d.browse(discovery_event_tx);
                 }
             }
-            Message::WebRTCInitialized(res.map_err(Arc::new))
+            Message::CallServiceInitialized(res.map(Arc::new).map_err(Arc::new))
         })
     }
 

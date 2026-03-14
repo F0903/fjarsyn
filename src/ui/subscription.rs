@@ -6,7 +6,8 @@ use iced::Subscription;
 use tokio::sync::{Mutex, mpsc};
 
 use crate::{
-    networking::{discovery::DiscoveryEvent, webrtc::WebRTCEvent},
+    networking::discovery::DiscoveryEvent,
+    services::call_service::CallEvent,
     ui::{app::Fjarsyn, message::Message},
 };
 
@@ -34,11 +35,11 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
 
     let frame_subscription = packet_subscription(app.ctx.frame_packet_rx.0.clone());
 
-    let event_subscription = app
+    let call_event_subscription = app
         .ctx
-        .webrtc_event_rx
+        .call_event_rx
         .as_ref()
-        .map(|rx| webrtc_event_subscription(rx.clone()))
+        .map(|rx| call_event_subscription(rx.clone()))
         .unwrap_or(Subscription::none());
 
     let discovery_subscription = app
@@ -60,7 +61,7 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
     Subscription::batch(vec![
         screen_subscriptions,
         frame_subscription,
-        event_subscription,
+        call_event_subscription,
         discovery_subscription,
         window_open_subscription,
         window_close_subscription,
@@ -69,18 +70,18 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
     ])
 }
 
-pub fn webrtc_event_subscription(
-    receiver: Arc<Mutex<mpsc::Receiver<WebRTCEvent>>>,
+pub fn call_event_subscription(
+    receiver: Arc<Mutex<mpsc::Receiver<CallEvent>>>,
 ) -> Subscription<Message> {
     Subscription::run_with(EventReceiverRef(receiver), |receiver_ref| {
         let receiver = receiver_ref.0.clone();
         Box::new(Box::pin(unfold(
             receiver,
-            |receiver: Arc<Mutex<mpsc::Receiver<WebRTCEvent>>>| async move {
+            |receiver: Arc<Mutex<mpsc::Receiver<CallEvent>>>| async move {
                 let mut lock = receiver.lock().await;
                 if let Some(event) = lock.recv().await {
                     drop(lock);
-                    Some((Message::WebRTCEvent(event), receiver))
+                    Some((Message::CallEvent(event), receiver))
                 } else {
                     drop(lock);
                     None

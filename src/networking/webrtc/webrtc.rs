@@ -41,7 +41,7 @@ pub enum WebRTCEvent {
 }
 
 /// Holds the state for the WebRTC connection manager
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct WebRTC {
     pub peer_connection: Arc<RwLock<Arc<RTCPeerConnection>>>,
     pub signaling_tx: Arc<RwLock<Option<mpsc::Sender<SignalingMessage>>>>,
@@ -55,6 +55,9 @@ pub struct WebRTC {
     packet_sink: mpsc::Sender<Bytes>,
     event_tx: mpsc::Sender<WebRTCEvent>,
     max_depacket_latency: u16,
+
+    // Tracked tasks for cleanup on drop
+    tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl WebRTC {
@@ -65,7 +68,7 @@ impl WebRTC {
         event_tx: mpsc::Sender<WebRTCEvent>,
         max_depacket_latency: u16,
         peer_id: Option<String>,
-    ) -> WebRTCResult<Self> {
+    ) -> WebRTCResult<Arc<Self>> {
         let (signal_tx, signal_rx) = mpsc::channel(100);
 
         // Allow environment variable to override for debugging multiple instances
@@ -96,7 +99,7 @@ impl WebRTC {
         let video_track_lock = Arc::new(RwLock::new(video_track));
         let remote_peer_id = Arc::new(RwLock::new(None));
 
-        let webrtc = Self {
+        let webrtc = Arc::new(Self {
             peer_connection: peer_connection_lock,
             signaling_tx,
             internal_signal_tx: signal_tx,
@@ -107,10 +110,10 @@ impl WebRTC {
             packet_sink,
             event_tx,
             max_depacket_latency,
-        };
+            tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+        });
 
-        // Setup Signaling Task
-        webrtc.spawn_signaling_reader(signal_rx);
+        webrtc.clone().spawn_signaling_reader(signal_rx);
 
         // Setup Callbacks for the initial PC
         webrtc.setup_pc_handlers(&peer_connection).await;
@@ -181,18 +184,24 @@ impl WebRTC {
             self.local_peer_id.clone(),
         );
         Self::setup_connection_state_handler(pc, self.event_tx.clone());
-        Self::setup_track_handler(pc, self.packet_sink.clone(), self.max_depacket_latency);
+        Self::setup_track_handler(
+            pc,
+            self.packet_sink.clone(),
+            self.max_depacket_latency,
+            self.tasks.clone(),
+        );
     }
 
-    fn spawn_signaling_reader(&self, mut signal_rx: mpsc::Receiver<SignalingMessage>) {
-        let this = self.clone();
-        tokio::spawn(async move {
+    fn spawn_signaling_reader(self: Arc<Self>, mut signal_rx: mpsc::Receiver<SignalingMessage>) {
+        let tasks = Arc::clone(&self.tasks);
+        let handle = tokio::spawn(async move {
             while let Some(msg) = signal_rx.recv().await {
-                if let Err(e) = this.handle_signaling_message(msg).await {
+                if let Err(e) = self.handle_signaling_message(msg).await {
                     tracing::error!("Error handling signaling message: {}", e);
                 }
             }
         });
+        tasks.lock().unwrap().push(handle);
     }
 
     async fn handle_signaling_message(&self, msg: SignalingMessage) -> WebRTCResult<()> {
@@ -295,12 +304,19 @@ impl WebRTC {
         pc: &Arc<RTCPeerConnection>,
         packet_sink: mpsc::Sender<Bytes>,
         max_depacket_latency: u16,
+        tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     ) {
         let pc_weak = Arc::downgrade(pc);
         pc.on_track(Box::new(move |track, _rtp_receiver, rtp_transceiver| {
             if track.kind() == RTPCodecType::Video {
-                Self::spawn_pli_loop(pc_weak.clone(), rtp_transceiver.clone(), track.ssrc());
-                Self::spawn_video_track_reader(track, packet_sink.clone(), max_depacket_latency);
+                let pli_handle =
+                    Self::spawn_pli_loop(pc_weak.clone(), rtp_transceiver.clone(), track.ssrc());
+                let reader_handle = Self::spawn_video_track_reader(
+                    track,
+                    packet_sink.clone(),
+                    max_depacket_latency,
+                );
+                tasks.lock().unwrap().extend([pli_handle, reader_handle]);
             }
             Box::pin(async {})
         }));
@@ -310,7 +326,7 @@ impl WebRTC {
         pc_weak: std::sync::Weak<RTCPeerConnection>,
         rtp_transceiver: Arc<RTCRtpTransceiver>,
         media_ssrc: u32,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let sender = rtp_transceiver.sender().await;
             let params = sender.get_parameters().await;
@@ -328,14 +344,14 @@ impl WebRTC {
                     break;
                 }
             }
-        });
+        })
     }
 
     fn spawn_video_track_reader(
         track: Arc<TrackRemote>,
         packet_sink: mpsc::Sender<Bytes>,
         max_depacket_latency: u16,
-    ) {
+    ) -> tokio::task::JoinHandle<()> {
         let clock_rate = track.codec().capability.clock_rate;
         tokio::spawn(async move {
             let depacketizer = webrtc::rtp::codecs::h264::H264Packet::default();
@@ -349,7 +365,7 @@ impl WebRTC {
                     }
                 }
             }
-        });
+        })
     }
 
     pub fn get_local_id(&self) -> String {
@@ -466,5 +482,15 @@ impl WebRTC {
         }
         *self.remote_peer_id.write().await = None;
         Ok(())
+    }
+}
+
+impl Drop for WebRTC {
+    fn drop(&mut self) {
+        tracing::debug!("Aborting WebRTC tasks");
+        let tasks = self.tasks.lock().unwrap();
+        for task in tasks.iter() {
+            task.abort();
+        }
     }
 }

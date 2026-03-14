@@ -121,7 +121,7 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
     }
 
     let my_id = if let Some(service) = &ctx.call_service {
-        let id = service.webrtc().get_local_id();
+        let id = service.local_id();
         let id_clone = id.clone();
         container(
             row![

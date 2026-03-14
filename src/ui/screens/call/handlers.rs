@@ -7,7 +7,7 @@ use super::{CallMessage, CallScreen};
 use crate::{
     capture_providers::{CaptureProvider, user_pick_platform_capture_item},
     media::ffmpeg::{FFmpegDecoder, FFmpegEncoder},
-    networking::webrtc::WebRTCEvent,
+    services::call_service::CallEvent,
     ui::{
         app::AppContext,
         message::{Message, Route},
@@ -50,8 +50,8 @@ impl CallScreen {
                     let disconnect_task = if let Some(service) = &ctx.call_service {
                         let service_clone = service.clone();
                         Task::future(async move {
-                            if let Err(e) = service_clone.disconnect().await {
-                                tracing::error!("Failed to disconnect CallService: {}", e);
+                            if let Err(e) = service_clone.end().await {
+                                tracing::error!("Failed to end call: {}", e);
                             }
                             Message::NoOp
                         })
@@ -161,7 +161,7 @@ impl CallScreen {
             },
 
             // End the call if the peer disconnects
-            Message::WebRTCEvent(WebRTCEvent::Disconnected) => {
+            Message::CallEvent(CallEvent::CallEnded) => {
                 Task::done(Message::Call(CallMessage::EndCall))
             }
 

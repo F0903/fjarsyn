@@ -3,10 +3,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 use crate::{
-    networking::{
-        discovery::DiscoveryEvent,
-        webrtc::{WebRTC, WebRTCError, WebRTCEvent},
-    },
+    networking::discovery::DiscoveryEvent,
+    services::call_service::{CallEvent, CallService},
     ui::screens::{
         call::CallMessage, contacts::ContactsMessage, home::HomeMessage, settings::SettingsMessage,
     },
@@ -20,7 +18,7 @@ pub enum Route {
     Settings,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CallTarget {
     PeerId(String),
     Address(String),
@@ -43,13 +41,12 @@ pub enum Message {
     Call(CallMessage),
     Settings(SettingsMessage),
 
-    WebRTCInitialized(Result<WebRTC, Arc<WebRTCError>>),
-    WebRTCReinit,
-    WebRTCReinitDone,
-    WebRTCEvent(WebRTCEvent),
+    // CallService messages
+    CallServiceInitialized(Result<Arc<CallService>, Arc<crate::networking::webrtc::WebRTCError>>),
+    CallEvent(CallEvent),
     DiscoveryEvent(DiscoveryEvent),
     PeerFound(crate::networking::discovery::PeerInfo),
-    PeerRemoved(String), // By Peer ID
+    PeerRemoved(String),
     PacketReceived(Bytes),
 
     WindowOpened(iced::window::Id),
