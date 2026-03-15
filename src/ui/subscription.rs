@@ -36,10 +36,11 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
 
     let screen_subscriptions = app.active_screen.subscription(&app.ctx);
 
-    let frame_subscription = packet_subscription(app.ctx.frame_packet_rx.0.clone());
+    let frame_subscription = packet_subscription(app.ctx.media.frame_packet_rx.0.clone());
 
     let call_event_subscription = app
         .ctx
+        .networking
         .call_event_rx
         .as_ref()
         .map(|rx| call_event_subscription(rx.clone()))
@@ -47,6 +48,7 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
 
     let discovery_subscription = app
         .ctx
+        .networking
         .discovery_event_rx
         .as_ref()
         .map(|rx| discovery_event_subscription(rx.clone()))

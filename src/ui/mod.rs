@@ -5,3 +5,4 @@ pub mod message;
 pub mod screens;
 pub mod subscription;
 pub mod theme;
+pub mod utils;

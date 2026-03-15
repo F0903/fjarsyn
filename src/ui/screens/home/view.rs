@@ -6,17 +6,20 @@ use iced_fonts::lucide;
 
 use super::{HomeMessage, HomeScreen};
 use crate::ui::{
-    app::AppContext,
+    app::{AppState, NetworkingState},
     fonts,
     message::{CallActionMessage, CallTarget, ContactsServiceMessage, Message, ScreenMessage},
     theme,
 };
 
 impl HomeScreen {
-    pub fn render_view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message> {
-        let content =
-            column![self.view_header(), self.view_manual_call(), self.view_nearby_peers(ctx)]
-                .spacing(30);
+    pub fn render_view<'a>(&'a self, ctx: &'a AppState) -> Element<'a, Message> {
+        let content = column![
+            self.view_header(),
+            self.view_manual_call(),
+            self.view_nearby_peers(&ctx.networking)
+        ]
+        .spacing(30);
 
         container(scrollable(content)).width(Length::Fill).height(Length::Fill).padding(20).into()
     }
@@ -55,7 +58,7 @@ impl HomeScreen {
         .into()
     }
 
-    fn view_nearby_peers(&self, ctx: &AppContext) -> Element<'_, Message> {
+    fn view_nearby_peers(&self, networking: &NetworkingState) -> Element<'_, Message> {
         let mut nearby_section = column![
             row![lucide::antenna().size(20), text("Nearby Peers").size(20)]
                 .spacing(10)
@@ -63,7 +66,7 @@ impl HomeScreen {
         ]
         .spacing(15);
 
-        if ctx.discovered_peers.is_empty() {
+        if networking.discovered_peers.is_empty() {
             nearby_section = nearby_section.push(
                 container(text("Searching for peers on your local network...").size(14))
                     .padding(20)
@@ -72,7 +75,7 @@ impl HomeScreen {
             );
         } else {
             let mut peers_list = column![].spacing(10);
-            for peer in &ctx.discovered_peers {
+            for peer in &networking.discovered_peers {
                 let peer_card = container(
                     row![
                         // Icon bubble

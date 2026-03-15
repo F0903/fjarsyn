@@ -1,6 +1,6 @@
 use iced::{Subscription, Task};
 
-use crate::ui::{app::AppContext, message::Message, screens::Screen};
+use crate::ui::{app::AppState, message::Message, screens::Screen};
 
 pub mod handlers;
 mod view;
@@ -23,7 +23,7 @@ pub struct ContactsScreen {
 }
 
 impl ContactsScreen {
-    pub fn new(_ctx: &mut AppContext) -> Self {
+    pub fn new(_ctx: &mut AppState) -> Self {
         Self {
             new_contact_name: String::new(),
             new_contact_peer_id: String::new(),
@@ -34,15 +34,15 @@ impl ContactsScreen {
 }
 
 impl Screen for ContactsScreen {
-    fn subscription(&self, _ctx: &AppContext) -> Subscription<Message> {
+    fn subscription(&self, _ctx: &AppState) -> Subscription<Message> {
         Subscription::none()
     }
 
-    fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
+    fn update(&mut self, ctx: &mut AppState, message: Message) -> Task<Message> {
         self.handle_message(ctx, message)
     }
 
-    fn view<'a>(&'a self, ctx: &'a AppContext) -> iced::Element<'a, Message> {
+    fn view<'a>(&'a self, ctx: &'a AppState) -> iced::Element<'a, Message> {
         self.render_view(ctx)
     }
 }

@@ -12,7 +12,7 @@ use crate::{
     },
     media::ffmpeg::FFmpegDecoder,
     ui::{
-        app::AppContext,
+        app::AppState,
         message::{Message, ScreenMessage},
         screens::Screen,
     },
@@ -95,7 +95,7 @@ impl CallScreen {
 }
 
 impl Screen for CallScreen {
-    fn subscription(&self, ctx: &AppContext) -> Subscription<Message> {
+    fn subscription(&self, ctx: &AppState) -> Subscription<Message> {
         let mut subscriptions = vec![];
 
         if self.is_capturing() {
@@ -117,11 +117,11 @@ impl Screen for CallScreen {
         Subscription::batch(subscriptions)
     }
 
-    fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
+    fn update(&mut self, ctx: &mut AppState, message: Message) -> Task<Message> {
         self.handle_update(ctx, message)
     }
 
-    fn view<'a>(&'a self, ctx: &'a AppContext) -> iced::Element<'a, Message> {
+    fn view<'a>(&'a self, ctx: &'a AppState) -> iced::Element<'a, Message> {
         self.render_view(ctx)
     }
 }

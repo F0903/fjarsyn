@@ -22,7 +22,7 @@ impl BufferPool {
     // Gets a buffer that has capacity at least as large as `size`.
     // The buffer WILL NOT be zeroed out before being returned.
     // This means the returned buffer may contain garbage data.
-    pub fn get_unzeroed(&self, size: usize) -> BufferRef {
+    pub fn get_unzeroed(&self, size: usize) -> Buffer {
         let mut pool = self.data.lock().unwrap();
         let default_capacity = pool.default_capacity;
 
@@ -37,7 +37,7 @@ impl BufferPool {
             buffer
         };
 
-        BufferRef::new(data, Arc::downgrade(&self.data))
+        Buffer::new(data, Arc::downgrade(&self.data))
     }
 }
 
@@ -63,14 +63,14 @@ impl BufferPoolData {
 /// A thin wrapper around a `BytesMut`.
 /// This allows the buffer to be returned to the pool when dropped.
 #[derive(Debug)]
-pub struct BufferRef {
+pub struct Buffer {
     data: BytesMut,
     parent_pool: Weak<Mutex<BufferPoolData>>,
 }
 
-impl BufferRef {
+impl Buffer {
     fn new(data: BytesMut, parent_pool: Weak<Mutex<BufferPoolData>>) -> Self {
-        BufferRef { data, parent_pool }
+        Buffer { data, parent_pool }
     }
 
     /// Freezes the underlying buffer into a `Bytes` object.
@@ -81,26 +81,26 @@ impl BufferRef {
     }
 }
 
-impl Deref for BufferRef {
+impl Deref for Buffer {
     type Target = BytesMut;
     fn deref(&self) -> &Self::Target {
         &self.data
     }
 }
 
-impl DerefMut for BufferRef {
+impl DerefMut for Buffer {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.data
     }
 }
 
-impl AsRef<[u8]> for BufferRef {
+impl AsRef<[u8]> for Buffer {
     fn as_ref(&self) -> &[u8] {
         &self.data
     }
 }
 
-impl Drop for BufferRef {
+impl Drop for Buffer {
     fn drop(&mut self) {
         if let Some(pool) = self.parent_pool.upgrade() {
             let buffer = std::mem::take(&mut self.data);
@@ -115,8 +115,8 @@ impl Drop for BufferRef {
 }
 
 // Allow direct conversion
-impl From<BufferRef> for bytes::Bytes {
-    fn from(val: BufferRef) -> Self {
+impl From<Buffer> for bytes::Bytes {
+    fn from(val: Buffer) -> Self {
         val.freeze()
     }
 }

@@ -9,18 +9,14 @@ use crate::{
     media::ffmpeg::{FFmpegDecoder, FFmpegEncoder},
     services::call_service::CallEvent,
     ui::{
-        app::AppContext,
+        app::AppState,
         message::{CallServiceMessage, Message, NavigationMessage, Route, ScreenMessage},
     },
     utils::frame::Frame,
 };
 
 impl CallScreen {
-    pub(crate) fn handle_update(
-        &mut self,
-        ctx: &mut AppContext,
-        message: Message,
-    ) -> Task<Message> {
+    pub(crate) fn handle_update(&mut self, ctx: &mut AppState, message: Message) -> Task<Message> {
         match message {
             Message::CallService(CallServiceMessage::PacketReceived(packet)) => {
                 self.handle_packet_received(ctx, packet)
@@ -49,7 +45,7 @@ impl CallScreen {
                         Message::Screen(ScreenMessage::Call(CallMessage::CaptureStopped))
                     });
 
-                    let disconnect_task = if let Some(service) = &ctx.call_service {
+                    let disconnect_task = if let Some(service) = &ctx.services.call_service {
                         let service_clone = service.clone();
                         Task::future(async move {
                             if let Err(e) = service_clone.end().await {
@@ -68,7 +64,7 @@ impl CallScreen {
                     ])
                 }
                 CallMessage::StartCapture => {
-                    let window_handle = match ctx.main_window.as_ref().map(|w| w.raw_id).flatten() {
+                    let window_handle = match ctx.ui.main_window.as_ref().and_then(|w| w.raw_id) {
                         Some(handle) => handle,
                         None => {
                             tracing::error!("No active window handle");
@@ -181,7 +177,7 @@ impl CallScreen {
         }
     }
 
-    fn handle_packet_received(&mut self, ctx: &AppContext, packet: bytes::Bytes) -> Task<Message> {
+    fn handle_packet_received(&mut self, ctx: &AppState, packet: bytes::Bytes) -> Task<Message> {
         if self.decoder.is_none() {
             match FFmpegDecoder::new(ctx.config.transcoding_type, ctx.config.pixel_format) {
                 Ok(decoder) => self.decoder = Some(Arc::new(Mutex::new(decoder))),
@@ -212,11 +208,11 @@ impl CallScreen {
         }
     }
 
-    fn handle_frame_captured(&mut self, ctx: &AppContext, frame: Arc<Frame>) -> Task<Message> {
+    fn handle_frame_captured(&mut self, ctx: &AppState, frame: Arc<Frame>) -> Task<Message> {
         self.local_frame = Some(frame.clone());
 
         if self.frame_sender.is_none() {
-            let Some(service) = &ctx.call_service else {
+            let Some(service) = &ctx.services.call_service else {
                 tracing::error!("CallService is not initialized yet");
                 return Task::none();
             };
@@ -237,12 +233,15 @@ impl CallScreen {
                 target_resolution,
                 target_bitrate
             );
+            let capture = self.capture.clone();
             tokio::spawn(async move {
+                let device_handle = capture.read().await.raw_device_handle();
                 let mut encoder = match FFmpegEncoder::new(
                     target_bitrate,
                     target_fps_hz,
                     target_resolution,
                     input_format,
+                    device_handle,
                 ) {
                     Ok(e) => e,
                     Err(e) => {
@@ -252,8 +251,7 @@ impl CallScreen {
                 };
 
                 while let Some(frame) = rx.recv().await {
-                    match encoder.encode(&frame.data, transcoding_type, frame.size.x, frame.size.y)
-                    {
+                    match encoder.encode(&frame, transcoding_type, frame.size.x, frame.size.y) {
                         Ok(nal_units) => {
                             let frame_duration = match frame.duration {
                                 Some(duration) => duration,

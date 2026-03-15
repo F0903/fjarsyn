@@ -8,7 +8,7 @@ use crate::{
     media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
     settings_tab,
     ui::{
-        app::AppContext,
+        app::AppState,
         message::Message,
         screens::{Screen, settings::tabs::SettingsTab},
     },
@@ -48,15 +48,15 @@ impl SettingsScreen {
 }
 
 impl Screen for SettingsScreen {
-    fn subscription(&self, _ctx: &AppContext) -> Subscription<Message> {
+    fn subscription(&self, _ctx: &AppState) -> Subscription<Message> {
         Subscription::none()
     }
 
-    fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
+    fn update(&mut self, ctx: &mut AppState, message: Message) -> Task<Message> {
         self.handle_message(ctx, message)
     }
 
-    fn view<'a>(&'a self, ctx: &'a AppContext) -> iced::Element<'a, Message> {
+    fn view<'a>(&'a self, ctx: &'a AppState) -> iced::Element<'a, Message> {
         self.render_view(ctx)
     }
 }

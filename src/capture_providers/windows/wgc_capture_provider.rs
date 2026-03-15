@@ -31,7 +31,7 @@ use crate::{
         },
     },
     utils::{
-        buffer_pool::{BufferPool, BufferRef},
+        buffer_pool::{Buffer, BufferPool},
         frame::Frame,
         pixel_format::PixelFormat,
         vector2::Vector2,
@@ -93,7 +93,7 @@ impl WgcCaptureProvider {
     }
 
     fn process_frame(
-        mut frame_buffer: BufferRef,
+        mut frame_buffer: Buffer,
         frame: Direct3D11CaptureFrame,
         staging_state_arc: Arc<RwLock<Staging>>,
         pixel_format: PixelFormat,
@@ -180,8 +180,10 @@ impl WgcCaptureProvider {
             .unwrap_or_default();
 
         let frame_duration = std::time::Duration::from_nanos((rel_time.Duration / 100) as u64);
-        let frame = Frame::new_ensure_rgba(
-            frame_buffer,
+
+        let frame = Frame::new_d3d11(
+            texture.clone(),
+            Some(frame_buffer), // We currently always map for simplicity, but could be None if preview is off
             pixel_format,
             Vector2 { x: size.Width, y: size.Height },
             Some(frame_duration),
@@ -299,7 +301,7 @@ impl CaptureProvider for WgcCaptureProvider {
 
         let buffer_pool = self.buffer_pool.clone();
         let staging_state_arc_inner = staging_state_arc.clone();
-        let pixel_format = self.pixel_format.clone();
+        let pixel_format = self.pixel_format;
 
         let token = frame_pool
             .FrameArrived(&TypedEventHandler::new(move |sender, _| {
@@ -438,6 +440,13 @@ impl CaptureProvider for WgcCaptureProvider {
 
     fn is_capturing(&self) -> bool {
         self.capturing
+    }
+
+    fn raw_device_handle(&self) -> Option<*mut std::ffi::c_void> {
+        // Convert the WinRT device to the native COM ID3D11Device
+        crate::capture_providers::windows::d3d11_utils::winrt_to_native_d3d11device(&self.device)
+            .ok()
+            .map(|d| d.as_raw() as *mut std::ffi::c_void)
     }
 }
 

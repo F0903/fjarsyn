@@ -27,7 +27,7 @@ pub(super) fn get_tab(tab_name: &str) -> Option<Arc<dyn SettingsTab>> {
 #[macro_export]
 macro_rules! settings_tab {
     ($($segment:ident)::+) => {
-        crate::ui::screens::settings::tabs::get_tab(crate::get_type_name!($($segment)::+)).unwrap()
+        $crate::ui::screens::settings::tabs::get_tab($crate::get_type_name!($($segment)::+)).unwrap()
     };
 }
 

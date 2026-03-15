@@ -6,7 +6,7 @@ use iced_fonts::lucide;
 
 use super::{SettingsMessage, SettingsScreen};
 use crate::ui::{
-    app::AppContext,
+    app::AppState,
     components::vertical_spacer,
     fonts,
     message::{Message, ScreenMessage},
@@ -15,7 +15,7 @@ use crate::ui::{
 };
 
 impl SettingsScreen {
-    pub fn render_view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message> {
+    pub fn render_view<'a>(&'a self, ctx: &'a AppState) -> Element<'a, Message> {
         let title = text("Settings").size(32).font(fonts::outfit::BOLD).style(text::primary);
 
         let tab_content = scrollable(self.active_tab.view(&self.working_config));
@@ -82,7 +82,7 @@ impl SettingsScreen {
     }
 
     fn view_sidebar(&self) -> Element<'_, Message> {
-        let tabs = tabs::TABS.iter().map(|(_name, tab)| {
+        let tabs = tabs::TABS.values().map(|tab| {
             let is_active = &self.active_tab == tab;
             button(
                 row![tab.icon().size(16), text(tab.label()).size(14)]

@@ -256,8 +256,8 @@ impl WebRTC {
             let signaling_tx = signaling_tx.clone();
             let local_id = local_id.clone();
             Box::pin(async move {
-                if let Some(candidate) = c {
-                    if let Ok(candidate_str) = serde_json::to_string(&candidate.to_json().unwrap())
+                if let Some(candidate) = c
+                    && let Ok(candidate_str) = serde_json::to_string(&candidate.to_json().unwrap())
                     {
                         let msg = SignalingMessage {
                             from: local_id,
@@ -272,7 +272,6 @@ impl WebRTC {
                             let _ = tx.send(msg).await;
                         }
                     }
-                }
             })
         }));
     }

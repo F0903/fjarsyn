@@ -23,39 +23,39 @@ macro_rules! define_model {
         }
 
         impl $name {
-            pub async fn list(pool: &sqlx::SqlitePool) -> Result<Vec<Self>, crate::Error> {
+            pub async fn list(pool: &sqlx::SqlitePool) -> Result<Vec<Self>, $crate::Error> {
                 sqlx::query_as::<_, Self>(concat!("SELECT * FROM ", $table, " ORDER BY id DESC"))
                     .fetch_all(pool)
                     .await
-                    .map_err(crate::Error::DatabaseError)
+                    .map_err($crate::Error::DatabaseError)
             }
 
-            pub async fn get_by_id(pool: &sqlx::SqlitePool, id: i64) -> Result<Option<Self>, crate::Error> {
+            pub async fn get_by_id(pool: &sqlx::SqlitePool, id: i64) -> Result<Option<Self>, $crate::Error> {
                 sqlx::query_as::<_, Self>(concat!("SELECT * FROM ", $table, " WHERE id = ?"))
                     .bind(id)
                     .fetch_optional(pool)
                     .await
-                    .map_err(crate::Error::DatabaseError)
+                    .map_err($crate::Error::DatabaseError)
             }
 
-            pub async fn delete(pool: &sqlx::SqlitePool, id: i64) -> Result<(), crate::Error> {
+            pub async fn delete(pool: &sqlx::SqlitePool, id: i64) -> Result<(), $crate::Error> {
                 sqlx::query(concat!("DELETE FROM ", $table, " WHERE id = ?"))
                     .bind(id)
                     .execute(pool)
                     .await
-                    .map_err(crate::Error::DatabaseError)?;
+                    .map_err($crate::Error::DatabaseError)?;
                 Ok(())
             }
 
             pub async fn create(
                 pool: &sqlx::SqlitePool,
                 $($c_param: impl Into<$type>),*
-            ) -> Result<i64, crate::Error> {
+            ) -> Result<i64, $crate::Error> {
                 let result = sqlx::query($create_sql)
                     $(.bind($c_param.into()))*
                     .execute(pool)
                     .await
-                    .map_err(crate::Error::DatabaseError)?;
+                    .map_err($crate::Error::DatabaseError)?;
 
                 Ok(result.last_insert_rowid())
             }
@@ -64,13 +64,13 @@ macro_rules! define_model {
                 pool: &sqlx::SqlitePool,
                 id: i64,
                 $($u_param: impl Into<$type>),*
-            ) -> Result<(), crate::Error> {
+            ) -> Result<(), $crate::Error> {
                 sqlx::query($update_sql)
                     $(.bind($u_param.into()))*
                     .bind(id)
                     .execute(pool)
                     .await
-                    .map_err(crate::Error::DatabaseError)?;
+                    .map_err($crate::Error::DatabaseError)?;
 
                 Ok(())
             }

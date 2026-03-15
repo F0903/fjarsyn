@@ -4,10 +4,13 @@ use iced::{
 };
 use iced_fonts::lucide;
 
-use crate::ui::{
-    app::AppContext,
-    message::{CallActionMessage, CallTarget, Message, NavigationMessage, Route},
-    theme,
+use crate::{
+    services::contacts_service::Contact,
+    ui::{
+        app::NetworkingState,
+        message::{CallActionMessage, CallTarget, Message, NavigationMessage, Route},
+        theme,
+    },
 };
 
 pub fn sidebar_button<'a>(
@@ -30,7 +33,12 @@ pub fn sidebar_button<'a>(
     .style(move |theme, status| theme::sidebar_button_style(theme, status, is_active))
 }
 
-pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Message> {
+pub fn sidebar<'a>(
+    contacts: &[Contact],
+    networking: &'a NetworkingState,
+    current_route: Route,
+    local_id: Option<String>,
+) -> Element<'a, Message> {
     let sidebar_nav = column![
         sidebar_button(
             current_route,
@@ -63,7 +71,7 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
     .align_y(Alignment::Center);
 
     let mut contacts_list = column![contacts_header].spacing(8);
-    if ctx.contacts.is_empty() {
+    if contacts.is_empty() {
         contacts_list = contacts_list.push(
             text("No contacts")
                 .size(12)
@@ -72,8 +80,8 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
                 .align_x(iced::alignment::Horizontal::Center),
         );
     } else {
-        for contact in &ctx.contacts {
-            let is_online = ctx.discovered_peers.iter().any(|p| p.id == contact.peer_id);
+        for contact in contacts {
+            let is_online = networking.discovered_peers.iter().any(|p| p.id == contact.peer_id);
 
             contacts_list = contacts_list.push(
                 button(
@@ -82,7 +90,7 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
                             .padding(8)
                             .style(theme::icon_bubble_container),
                         column![
-                            text(&contact.name).size(14),
+                            text(contact.name.to_owned()).size(14),
                             row![
                                 container(Space::new().width(6)).width(6).height(6).style(
                                     move |_| container::Style {
@@ -122,19 +130,20 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
         }
     }
 
-    let my_id = if let Some(service) = &ctx.call_service {
-        let id = service.local_id();
+    let my_id = {
+        let local_id_value = local_id
+            .map(|s| format!("{}...", crate::utils::string_utils::truncate(&s, 12)))
+            .unwrap_or("Initializing...".to_owned());
+
         container(
             row![
                 column![
                     text("YOUR ID").size(10).style(text::secondary),
-                    text(format!("{}...", crate::utils::string_utils::truncate(id, 12)))
-                        .size(12)
-                        .style(text::primary),
+                    text(local_id_value.clone()).size(12).style(text::primary),
                 ]
                 .width(Length::Fill),
                 button(lucide::copy().size(14))
-                    .on_press(Message::CopyId(id.to_owned()))
+                    .on_press(Message::CopyId(local_id_value))
                     .style(button::text)
             ]
             .align_y(Alignment::Center)
@@ -142,8 +151,6 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
         )
         .padding(10)
         .style(theme::id_card_container)
-    } else {
-        container(text("Initializing...").size(12).style(text::secondary))
     };
 
     container(

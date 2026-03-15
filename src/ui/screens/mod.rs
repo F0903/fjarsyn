@@ -6,7 +6,7 @@ pub mod settings;
 use iced::{Element, Subscription, Task};
 
 use crate::ui::{
-    app::AppContext,
+    app::AppState,
     message::{Message, Route},
 };
 
@@ -17,9 +17,9 @@ pub enum ScreenError {
 }
 
 pub trait Screen {
-    fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message>;
-    fn view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message>;
-    fn subscription(&self, ctx: &AppContext) -> Subscription<Message>;
+    fn update(&mut self, ctx: &mut AppState, message: Message) -> Task<Message>;
+    fn view<'a>(&'a self, ctx: &'a AppState) -> Element<'a, Message>;
+    fn subscription(&self, ctx: &AppState) -> Subscription<Message>;
 }
 
 macro_rules! define_active_screen {
@@ -32,19 +32,19 @@ macro_rules! define_active_screen {
         }
 
         impl Screen for ActiveScreen {
-            fn update(&mut self, ctx: &mut AppContext, message: Message) -> Task<Message> {
+            fn update(&mut self, ctx: &mut AppState, message: Message) -> Task<Message> {
                 match self {
                     $( Self::$Variant(screen) => screen.update(ctx, message), )*
                 }
             }
 
-            fn view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message> {
+            fn view<'a>(&'a self, ctx: &'a AppState) -> Element<'a, Message> {
                 match self {
                     $( Self::$Variant(screen) => screen.view(ctx), )*
                 }
             }
 
-            fn subscription(&self, ctx: &AppContext) -> Subscription<Message> {
+            fn subscription(&self, ctx: &AppState) -> Subscription<Message> {
                 match self {
                     $( Self::$Variant(screen) => screen.subscription(ctx), )*
                 }
@@ -58,7 +58,7 @@ macro_rules! define_active_screen {
                 }
             }
 
-            pub fn from_route(route: Route, ctx: &mut AppContext) -> Self {
+            pub fn from_route(route: Route, ctx: &mut AppState) -> Self {
                 match route {
                     $( Route::$Variant => Self::$Variant($ctor(ctx)), )*
                 }
@@ -68,8 +68,8 @@ macro_rules! define_active_screen {
 }
 
 define_active_screen! {
-    Home(home::HomeScreen) => |ctx: &mut AppContext| home::HomeScreen::new(ctx),
-    Contacts(contacts::ContactsScreen) => |ctx: &mut AppContext| contacts::ContactsScreen::new(ctx),
-    Call(call::CallScreen) => |ctx: &mut AppContext| call::CallScreen::new(ctx.capture.clone().expect("Capture provider must be initialized")),
-    Settings(settings::SettingsScreen) => |ctx: &mut AppContext| settings::SettingsScreen::new(&ctx.config),
+    Home(home::HomeScreen) => |ctx: &mut AppState| home::HomeScreen::new(ctx),
+    Contacts(contacts::ContactsScreen) => |ctx: &mut AppState| contacts::ContactsScreen::new(ctx),
+    Call(call::CallScreen) => |ctx: &mut AppState| call::CallScreen::new(ctx.media.capture.clone().expect("Capture provider must be initialized")),
+    Settings(settings::SettingsScreen) => |ctx: &mut AppState| settings::SettingsScreen::new(&ctx.config),
 }

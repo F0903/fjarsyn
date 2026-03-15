@@ -46,7 +46,6 @@ pub fn main_content_container(theme: &Theme) -> container::Style {
             color: Color { a: 0.25, ..Color::BLACK },
             offset: Vector::new(0.0, 0.0),
             blur_radius: 15.0,
-            ..Default::default()
         },
         ..Default::default()
     }
@@ -63,12 +62,7 @@ pub fn sidebar_container(_theme: &Theme) -> container::Style {
 pub fn card_container(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(CARD_BACKGROUND.into()),
-        border: Border {
-            color: BORDER_COLOR,
-            width: 1.0,
-            radius: REGULAR_RADIUS.into(),
-            ..Default::default()
-        },
+        border: Border { color: BORDER_COLOR, width: 1.0, radius: REGULAR_RADIUS.into() },
         shadow: Shadow {
             color: Color { a: 0.15, ..Color::BLACK },
             offset: Vector::new(0.0, 4.0),
@@ -81,12 +75,7 @@ pub fn card_container(_theme: &Theme) -> container::Style {
 pub fn id_card_container(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Color { a: 0.05, ..Color::WHITE }.into()),
-        border: Border {
-            color: BORDER_COLOR,
-            width: 1.0,
-            radius: LIGHT_RADIUS.into(),
-            ..Default::default()
-        },
+        border: Border { color: BORDER_COLOR, width: 1.0, radius: LIGHT_RADIUS.into() },
         ..Default::default()
     }
 }

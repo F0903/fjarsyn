@@ -5,22 +5,29 @@ use iced::{
 use iced_fonts::lucide;
 
 use super::{ContactsMessage, ContactsScreen};
-use crate::ui::{
-    app::AppContext,
-    fonts,
-    message::{CallActionMessage, CallTarget, ContactsServiceMessage, Message, ScreenMessage},
-    theme,
+use crate::{
+    services::contacts_service::Contact,
+    ui::{
+        app::AppState,
+        fonts,
+        message::{CallActionMessage, CallTarget, ContactsServiceMessage, Message, ScreenMessage},
+        theme,
+    },
 };
 
 impl ContactsScreen {
-    pub fn render_view<'a>(&'a self, ctx: &'a AppContext) -> Element<'a, Message> {
+    pub fn render_view<'a>(&'a self, ctx: &'a AppState) -> Element<'a, Message> {
         let mut content = column![self.view_header()].spacing(30);
 
         if self.show_add_form {
             content = content.push(self.view_add_contact_form());
         }
 
-        content = content.push(container(self.view_contacts_list(ctx)).width(Length::Fill));
+        if let Some(contacts_service) = &ctx.services.contacts_service {
+            let contacts = contacts_service.contacts();
+            content =
+                content.push(container(self.view_contacts_list(&contacts)).width(Length::Fill));
+        }
 
         container(scrollable(content)).width(Length::Fill).height(Length::Fill).padding(20).into()
     }
@@ -124,10 +131,10 @@ impl ContactsScreen {
         .into()
     }
 
-    fn view_contacts_list<'a>(&self, ctx: &'a AppContext) -> Element<'a, Message> {
+    fn view_contacts_list<'a>(&self, contacts: &[Contact]) -> Element<'a, Message> {
         let mut list = column![text("Saved Contacts").size(18)].spacing(15);
 
-        if ctx.contacts.is_empty() {
+        if contacts.is_empty() {
             list = list.push(
                 container(text("No contacts saved yet.").size(14).style(text::secondary))
                     .padding(20)
@@ -135,15 +142,19 @@ impl ContactsScreen {
                     .align_x(Alignment::Center),
             );
         } else {
-            for contact in &ctx.contacts {
+            for contact in contacts {
+                let contact_id = contact.id;
+                let contact_peer_id = contact.peer_id.clone();
+                let contact_name = contact.name.clone();
+
                 let contact_card = container(
                     row![
                         container(lucide::user().size(20).center())
                             .padding(8)
                             .style(crate::ui::theme::icon_bubble_container),
                         column![
-                            text(&contact.name).size(16),
-                            text(format!("ID: {}", &contact.peer_id))
+                            text(contact_name).size(16),
+                            text(format!("ID: {}", contact_peer_id))
                                 .size(12)
                                 .style(text::secondary),
                         ]
@@ -152,13 +163,13 @@ impl ContactsScreen {
                         row![
                             button(lucide::phone().size(16))
                                 .on_press(Message::CallAction(CallActionMessage::StartCall(
-                                    CallTarget::ContactId(contact.id),
+                                    CallTarget::ContactId(contact_id),
                                 )))
                                 .padding(8)
                                 .style(|theme, status| theme::button_style(theme, status, false)),
                             button(lucide::trash().size(16))
                                 .on_press(Message::ContactData(
-                                    ContactsServiceMessage::DeleteContact(contact.id,)
+                                    ContactsServiceMessage::DeleteContact(contact_id)
                                 ))
                                 .padding(8)
                                 .style(theme::danger_button_style),

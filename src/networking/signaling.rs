@@ -24,7 +24,7 @@ pub async fn dial(
 
     let (ws_stream, _) = connect_async(url).await.map_err(|e| {
         tracing::error!("Failed to connect to signaling at {}: {}", addr, e);
-        SignalingError::ConnectionFailed(e.into())
+        SignalingError::ConnectionFailed(e)
     })?;
     let (write, read) = ws_stream.split();
 

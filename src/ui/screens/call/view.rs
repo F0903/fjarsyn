@@ -6,13 +6,13 @@ use iced::{
 use super::{CallMessage, CallScreen};
 use crate::ui::{
     self,
-    app::AppContext,
+    app::AppState,
     components::frame_viewer::FrameViewer,
     message::{Message, NavigationMessage, Route, ScreenMessage},
 };
 
 impl CallScreen {
-    pub fn render_view<'a>(&'a self, _ctx: &'a AppContext) -> Element<'a, Message> {
+    pub fn render_view<'a>(&'a self, _ctx: &'a AppState) -> Element<'a, Message> {
         let content = stack![
             self.view_remote_video(),
             self.view_local_preview(),

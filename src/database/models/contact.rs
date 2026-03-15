@@ -1,7 +1,7 @@
 use crate::define_model;
 
 define_model!(
-    Contact,
+    ContactModel,
     "contacts",
     fields: {
         peer_id: String,

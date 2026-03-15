@@ -2,16 +2,12 @@ use iced::Task;
 
 use super::{SettingsMessage, SettingsScreen};
 use crate::ui::{
-    app::AppContext,
+    app::AppState,
     message::{Message, ScreenMessage},
 };
 
 impl SettingsScreen {
-    pub(crate) fn handle_message(
-        &mut self,
-        ctx: &mut AppContext,
-        message: Message,
-    ) -> Task<Message> {
+    pub(crate) fn handle_message(&mut self, ctx: &mut AppState, message: Message) -> Task<Message> {
         let msg = match message {
             Message::Screen(ScreenMessage::Settings(s)) => s,
             _ => return Task::none(),

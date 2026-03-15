@@ -10,4 +10,8 @@ pub trait CaptureProvider {
     fn start_capture(&mut self) -> Self::Result<()>;
     fn stop_capture(&mut self) -> Self::Result<()>;
     fn is_capturing(&self) -> bool;
+
+    fn raw_device_handle(&self) -> Option<*mut std::ffi::c_void> {
+        None
+    }
 }

@@ -2,14 +2,14 @@ use iced::Task;
 
 use super::{HomeMessage, HomeScreen};
 use crate::ui::{
-    app::AppContext,
+    app::AppState,
     message::{Message, ScreenMessage},
 };
 
 impl HomeScreen {
     pub(crate) fn handle_message(
         &mut self,
-        _ctx: &mut AppContext,
+        _ctx: &mut AppState,
         message: Message,
     ) -> Task<Message> {
         match message {

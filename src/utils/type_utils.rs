@@ -4,5 +4,5 @@ macro_rules! get_type_name {
     ($name:ident) => { stringify!($name) };
 
     // Recursive case: peel off one segment
-    ($first:ident :: $($rest:tt)+) => { crate::get_type_name!($($rest)+) };
+    ($first:ident :: $($rest:tt)+) => { $crate::get_type_name!($($rest)+) };
 }

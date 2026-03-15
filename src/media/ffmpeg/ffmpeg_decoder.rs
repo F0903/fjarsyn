@@ -16,13 +16,13 @@ type Result<T> = std::result::Result<T, FFmpegDecoderError>;
 #[derive(Debug, thiserror::Error)]
 pub enum FFmpegDecoderError {
     #[error("Failed to create decoder: {0}")]
-    CreateDecoderError(ffmpeg::Error),
+    Create(ffmpeg::Error),
     #[error("Failed to decode frame: {0}")]
-    DecodeError(ffmpeg::Error),
+    Decode(ffmpeg::Error),
     #[error("Failed to convert frame: {0}")]
-    ConversionError(ffmpeg::Error),
+    Conversion(ffmpeg::Error),
     #[error("Failed to initialize scaler: {0}")]
-    ScalerError(ffmpeg::Error),
+    Scaler(ffmpeg::Error),
 }
 
 pub struct FFmpegDecoder {
@@ -39,12 +39,12 @@ impl FFmpegDecoder {
     const SCALING_MODE: scaling::Flags = scaling::Flags::BILINEAR;
 
     pub fn new(transcoding_type: FFmpegTranscodeType, dst_format: PixelFormat) -> Result<Self> {
-        ffmpeg::init().map_err(FFmpegDecoderError::CreateDecoderError)?;
+        ffmpeg::init().map_err(FFmpegDecoderError::Create)?;
 
         let decoder_info = transcoding_type.get_decoder_info();
 
         let codec = codec::decoder::find_by_name(decoder_info.name)
-            .ok_or(FFmpegDecoderError::CreateDecoderError(ffmpeg::Error::DecoderNotFound))?;
+            .ok_or(FFmpegDecoderError::Create(ffmpeg::Error::DecoderNotFound))?;
 
         let mut context = codec::context::Context::new_with_codec(codec);
         context.set_flags(codec::Flags::LOW_DELAY);
@@ -53,7 +53,7 @@ impl FFmpegDecoder {
             .decoder()
             .open_as(codec)
             .and_then(|d| d.video())
-            .map_err(FFmpegDecoderError::CreateDecoderError)?;
+            .map_err(FFmpegDecoderError::Create)?;
 
         Ok(Self {
             dst_format,
@@ -66,7 +66,7 @@ impl FFmpegDecoder {
 
     pub fn decode(&mut self, packet_data: &[u8]) -> Result<Option<Arc<Frame>>> {
         let packet = Packet::borrow(packet_data);
-        self.decoder.send_packet(&packet).map_err(FFmpegDecoderError::DecodeError)?;
+        self.decoder.send_packet(&packet).map_err(FFmpegDecoderError::Decode)?;
 
         let mut decoded_frame = frame::Video::empty();
         match self.decoder.receive_frame(&mut decoded_frame) {
@@ -89,7 +89,7 @@ impl FFmpegDecoder {
                         height,
                         Self::SCALING_MODE,
                     )
-                    .map_err(FFmpegDecoderError::ScalerError)?;
+                    .map_err(FFmpegDecoderError::Scaler)?;
 
                     self.scaler = Some(scaler);
                     self.cached_dims = (width, height);
@@ -100,7 +100,7 @@ impl FFmpegDecoder {
 
                 scaler
                     .run(&decoded_frame, &mut rgb_frame)
-                    .map_err(FFmpegDecoderError::ConversionError)?;
+                    .map_err(FFmpegDecoderError::Conversion)?;
 
                 let dst_bytes_per_pixel = self.dst_format.bytes_per_pixel();
                 let dst_size = (width * height * dst_bytes_per_pixel) as usize;
@@ -121,7 +121,7 @@ impl FFmpegDecoder {
                     framebuf[dst_start..dst_end].copy_from_slice(&data[src_start..src_end]);
                 }
 
-                let frame = Arc::new(Frame::new_raw(
+                let frame = Arc::new(Frame::new_software(
                     framebuf,
                     self.dst_format,
                     Vector2::new(width as i32, height as i32),
@@ -135,7 +135,7 @@ impl FFmpegDecoder {
                 Ok(None)
             }
             Err(ffmpeg::Error::Eof) => Ok(None),
-            Err(e) => Err(FFmpegDecoderError::DecodeError(e)),
+            Err(e) => Err(FFmpegDecoderError::Decode(e)),
         }
     }
 }

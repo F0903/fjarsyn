@@ -50,6 +50,12 @@ pub struct NotificationService {
     notifications: HashMap<u64, Notification>,
 }
 
+impl Default for NotificationService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NotificationService {
     pub fn new() -> Self {
         Self { notifications: HashMap::new() }

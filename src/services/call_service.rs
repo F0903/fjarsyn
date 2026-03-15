@@ -7,11 +7,11 @@ use bytes::Bytes;
 use tokio::sync::mpsc;
 
 use crate::{
-    database::Contact,
     networking::{
         discovery::PeerInfo,
         webrtc::{WebRTC, WebRTCError, WebRTCEvent},
     },
+    services::contacts_service::Contact,
     ui::message::CallTarget,
 };
 
@@ -33,17 +33,47 @@ pub struct CallServiceConfig {
     pub peer_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum CallState {
+    #[default]
     Idle,
-    Dialing { target: CallTarget },
-    IncomingCall { peer_id: String },
-    InCall { peer_id: Option<String> },
+    Dialing {
+        target: CallTarget,
+    },
+    IncomingCall {
+        peer_id: String,
+    },
+    InCall {
+        peer_id: Option<String>,
+    },
 }
 
-impl Default for CallState {
-    fn default() -> Self {
-        Self::Idle
+impl CallState {
+    pub fn apply_event(&mut self, event: WebRTCEvent) -> Option<CallEvent> {
+        match event {
+            WebRTCEvent::IncomingCall(peer_id) => {
+                if matches!(*self, CallState::Idle) {
+                    *self = CallState::IncomingCall { peer_id: peer_id.clone() };
+                    Some(CallEvent::IncomingCall { peer_id })
+                } else {
+                    None
+                }
+            }
+            WebRTCEvent::Connected => {
+                let peer_id = match self {
+                    CallState::Dialing { .. } => None,
+                    CallState::IncomingCall { peer_id } => Some(peer_id.clone()),
+                    CallState::InCall { peer_id } => peer_id.clone(),
+                    _ => None,
+                };
+                *self = CallState::InCall { peer_id };
+                Some(CallEvent::CallConnected)
+            }
+            WebRTCEvent::Disconnected => {
+                *self = CallState::Idle;
+                Some(CallEvent::CallEnded)
+            }
+        }
     }
 }
 
@@ -85,41 +115,13 @@ impl CallService {
         // Spawn background task to process WebRTC events
         let event_task = tokio::spawn(async move {
             while let Some(event) = webrtc_event_rx.recv().await {
-                match event {
-                    WebRTCEvent::IncomingCall(peer_id) => {
-                        let should_notify = {
-                            let mut state = state_clone.write().unwrap();
-                            if matches!(*state, CallState::Idle) {
-                                *state = CallState::IncomingCall { peer_id: peer_id.clone() };
-                                true
-                            } else {
-                                false
-                            }
-                        };
-                        if should_notify {
-                            let event = CallEvent::IncomingCall { peer_id };
-                            let _ = event_tx_clone.send(event).await;
-                        }
-                    }
-                    WebRTCEvent::Connected => {
-                        {
-                            let mut state = state_clone.write().unwrap();
-                            let peer_id = match &*state {
-                                CallState::Dialing { .. } => None,
-                                CallState::IncomingCall { peer_id } => Some(peer_id.clone()),
-                                CallState::InCall { peer_id } => peer_id.clone(),
-                                _ => None,
-                            };
-                            *state = CallState::InCall { peer_id: peer_id.clone() };
-                        }
-                        let event = CallEvent::CallConnected;
-                        let _ = event_tx_clone.send(event).await;
-                    }
-                    WebRTCEvent::Disconnected => {
-                        *state_clone.write().unwrap() = CallState::Idle;
-                        let event = CallEvent::CallEnded;
-                        let _ = event_tx_clone.send(event).await;
-                    }
+                let ui_event = {
+                    let mut state = state_clone.write().unwrap();
+                    state.apply_event(event)
+                };
+
+                if let Some(event) = ui_event {
+                    let _ = event_tx_clone.send(event).await;
                 }
             }
         });
@@ -164,36 +166,34 @@ impl CallService {
     ) -> DialResult {
         *self.state.write().unwrap() = CallState::Dialing { target: target.clone() };
 
-        let (tid, taddr, tname) = self.resolve_target(&target, contacts)?;
+        let ResolvedTarget { peer_id: tid, address: taddr, name: tname } =
+            self.resolve_target(&target, contacts)?;
 
         // Try to connect via discovered peers
-        if let Some(id) = &tid {
-            if let Some(p) = discovered.iter().find(|p| p.id == *id) {
-                for addr in &p.addresses {
-                    let saddr = SocketAddr::new(*addr, p.port);
-                    if self.webrtc.dial_direct(saddr).await.is_ok() {
-                        let mut update_contact_address = None;
-                        if let CallTarget::ContactId(cid) = target {
-                            let s = saddr.to_string();
-                            if taddr.as_ref() != Some(&s) {
-                                update_contact_address = Some((cid, s));
-                            }
+        if let Some(id) = &tid
+            && let Some(p) = discovered.iter().find(|p| p.id == *id)
+        {
+            for addr in &p.addresses {
+                let saddr = SocketAddr::new(*addr, p.port);
+                if self.webrtc.dial_direct(saddr).await.is_ok() {
+                    let mut update_contact_address = None;
+                    if let CallTarget::ContactId(cid) = target {
+                        let s = saddr.to_string();
+                        if taddr.as_ref() != Some(&s) {
+                            update_contact_address = Some((cid, s));
                         }
-
-                        self.webrtc
-                            .create_offer()
-                            .await
-                            .map_err(|e| format!("Offer failed: {}", e))?;
-
-                        *self.state.write().unwrap() = CallState::InCall { peer_id: tid.clone() };
-
-                        return Ok(DialSuccess {
-                            peer_id: tid,
-                            name: tname,
-                            socket_addr: None,
-                            update_contact_address,
-                        });
                     }
+
+                    self.webrtc.create_offer().await.map_err(|e| format!("Offer failed: {}", e))?;
+
+                    *self.state.write().unwrap() = CallState::InCall { peer_id: tid.clone() };
+
+                    return Ok(DialSuccess {
+                        peer_id: tid,
+                        name: tname,
+                        socket_addr: None,
+                        update_contact_address,
+                    });
                 }
             }
         }
@@ -256,17 +256,31 @@ impl CallService {
         &self,
         target: &CallTarget,
         contacts: &[Contact],
-    ) -> Result<(Option<String>, Option<String>, Option<String>), String> {
+    ) -> Result<ResolvedTarget, String> {
         match target {
             CallTarget::ContactId(id) => contacts
                 .iter()
                 .find(|c| c.id == *id)
-                .map(|c| (Some(c.peer_id.clone()), c.address.clone(), Some(c.name.clone())))
+                .map(|c| ResolvedTarget {
+                    peer_id: Some(c.peer_id.clone()),
+                    address: c.address.clone(),
+                    name: Some(c.name.clone()),
+                })
                 .ok_or_else(|| "Contact not found".into()),
-            CallTarget::PeerId(id) => Ok((Some(id.clone()), None, None)),
-            CallTarget::Address(addr) => Ok((None, Some(addr.clone()), None)),
+            CallTarget::PeerId(id) => {
+                Ok(ResolvedTarget { peer_id: Some(id.clone()), address: None, name: None })
+            }
+            CallTarget::Address(addr) => {
+                Ok(ResolvedTarget { peer_id: None, address: Some(addr.clone()), name: None })
+            }
         }
     }
+}
+
+pub struct ResolvedTarget {
+    peer_id: Option<String>,
+    address: Option<String>,
+    name: Option<String>,
 }
 
 impl Drop for CallService {

@@ -68,10 +68,14 @@ where
         _cursor: mouse::Cursor,
         _viewport: &Rectangle,
     ) {
+        let Some(pixels) = self.frame.get_software_pixels() else {
+            return;
+        };
+
         let img_handle = advanced::image::Handle::from_rgba(
             self.frame.size.x as u32,
             self.frame.size.y as u32,
-            self.frame.data.clone(),
+            pixels,
         );
 
         let alloc = match renderer.load_image(&img_handle) {

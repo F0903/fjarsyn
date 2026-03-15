@@ -2,28 +2,31 @@ use iced::Task;
 
 use super::{ContactsMessage, ContactsScreen};
 use crate::ui::{
-    app::AppContext,
+    app::AppState,
     message::{ContactsServiceMessage, Message, NotificationMessage, ScreenMessage},
 };
 
-pub fn handle_load_contacts(ctx: &AppContext) -> Task<Message> {
-    let Some(service) = ctx.contacts_service.clone() else {
+pub fn handle_load_contacts(ctx: &AppState) -> Task<Message> {
+    let Some(service) = ctx.services.contacts_service.clone() else {
         return Task::none();
     };
+
     Task::future(async move {
-        Message::ContactData(ContactsServiceMessage::ContactsLoaded(service.list().await))
+        let _ = service.refresh().await;
+        Message::NoOp
     })
 }
 
 pub fn handle_save_contact(
-    ctx: &AppContext,
+    ctx: &AppState,
     peer_id: String,
     name: String,
     address: Option<String>,
 ) -> Task<Message> {
-    let Some(service) = ctx.contacts_service.clone() else {
+    let Some(service) = ctx.services.contacts_service.clone() else {
         return Task::none();
     };
+
     Task::future(async move {
         Message::ContactData(ContactsServiceMessage::ContactSaved(
             service.create(peer_id, name, address).await,
@@ -31,17 +34,26 @@ pub fn handle_save_contact(
     })
 }
 
-pub fn handle_delete_contact(ctx: &AppContext, id: i64) -> Task<Message> {
-    let Some(service) = ctx.contacts_service.clone() else {
+pub fn handle_delete_contact(ctx: &AppState, id: i64) -> Task<Message> {
+    let Some(service) = ctx.services.contacts_service.clone() else {
         return Task::none();
     };
+
     Task::future(async move {
         Message::ContactData(ContactsServiceMessage::ContactDeleted(service.delete(id).await))
     })
 }
 
-pub fn handle_update_address(ctx: &mut AppContext, id: i64, addr: String) -> Task<Message> {
-    if let Some(c) = ctx.contacts.iter().find(|c| c.id == id) {
+pub fn handle_update_address(ctx: &mut AppState, id: i64, addr: String) -> Task<Message> {
+    if let Some(c) = ctx
+        .services
+        .contacts_service
+        .as_ref()
+        .map(|s| s.contacts())
+        .unwrap_or_default()
+        .iter()
+        .find(|c| c.id == id)
+    {
         ctx.notify_info(format!("Updating address for {}...", c.name));
         return Task::done(Message::ContactData(
             ContactsServiceMessage::UpdateContactAddressConfirmed(id, addr),
@@ -50,12 +62,13 @@ pub fn handle_update_address(ctx: &mut AppContext, id: i64, addr: String) -> Tas
     Task::none()
 }
 
-pub fn handle_update_confirmed(ctx: &AppContext, id: i64, addr: String) -> Task<Message> {
-    let Some(service) = ctx.contacts_service.clone() else {
+pub fn handle_update_confirmed(ctx: &AppState, id: i64, addr: String) -> Task<Message> {
+    let Some(service) = ctx.services.contacts_service.clone() else {
         return Task::none();
     };
-    let c = match ctx.contacts.iter().find(|c| c.id == id) {
-        Some(c) => c.clone(),
+
+    let c = match service.contacts().iter().find(|c| c.id == id).cloned() {
+        Some(c) => c,
         None => return Task::none(),
     };
     Task::future(async move {
@@ -73,7 +86,7 @@ pub fn handle_update_confirmed(ctx: &AppContext, id: i64, addr: String) -> Task<
 impl ContactsScreen {
     pub(crate) fn handle_message(
         &mut self,
-        _ctx: &mut AppContext,
+        _ctx: &mut AppState,
         message: Message,
     ) -> Task<Message> {
         match message {
