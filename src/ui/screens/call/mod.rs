@@ -11,7 +11,11 @@ use crate::{
         CaptureFramerate, CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream,
     },
     media::ffmpeg::FFmpegDecoder,
-    ui::{app::AppContext, message::Message, screens::Screen},
+    ui::{
+        app::AppContext,
+        message::{Message, ScreenMessage},
+        screens::Screen,
+    },
     utils::frame::Frame,
 };
 
@@ -104,7 +108,9 @@ impl Screen for CallScreen {
                     },
                     Self::create_frame_receiver_subscription,
                 )
-                .map(|f| Message::Call(CallMessage::FrameCaptured(Arc::new(f)))),
+                .map(|f| {
+                    Message::Screen(ScreenMessage::Call(CallMessage::FrameCaptured(Arc::new(f))))
+                }),
             );
         }
 

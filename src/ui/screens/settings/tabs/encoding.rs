@@ -10,7 +10,7 @@ use crate::{
     define_tab,
     media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
     ui::{
-        message::Message,
+        message::{Message, ScreenMessage},
         screens::settings::{
             SettingsMessage,
             components::{setting_row, settings_section},
@@ -33,7 +33,9 @@ define_tab! {
                         "Codec",
                         "Video compression standard and hardware acceleration",
                         pick_list(FFmpegTranscodeType::ALL, Some(config.transcoding_type), |val| {
-                            Message::Settings(SettingsMessage::TranscodingTypeChanged(val))
+                            Message::Screen(ScreenMessage::Settings(
+                                SettingsMessage::TranscodingTypeChanged(val),
+                            ))
                         },)
                         .padding(8)
                         .width(Length::Fixed(200.0)),
@@ -42,7 +44,9 @@ define_tab! {
                         "Resolution",
                         "Maximum streaming resolution",
                         pick_list(TargetResolution::ALL, Some(config.target_resolution), |val| {
-                            Message::Settings(SettingsMessage::TargetResolutionChanged(val))
+                            Message::Screen(ScreenMessage::Settings(
+                                SettingsMessage::TargetResolutionChanged(val),
+                            ))
                         },)
                         .padding(8)
                         .width(Length::Fixed(200.0)),
@@ -51,7 +55,9 @@ define_tab! {
                         "Framerate",
                         "Target frames per second",
                         pick_list(CaptureFramerate::ALL, Some(config.target_framerate), |val| {
-                            Message::Settings(SettingsMessage::TargetFramerateChanged(val))
+                            Message::Screen(ScreenMessage::Settings(
+                                SettingsMessage::TargetFramerateChanged(val),
+                            ))
                         },)
                         .padding(8)
                         .width(Length::Fixed(200.0)),
@@ -61,13 +67,17 @@ define_tab! {
                         "Target bitrate for the video stream",
                         row![
                             slider(100_000..=10_000_000, config.target_bitrate, |val| {
-                                Message::Settings(SettingsMessage::TargetBitrateChanged(val))
+                                Message::Screen(ScreenMessage::Settings(
+                                    SettingsMessage::TargetBitrateChanged(val),
+                                ))
                             })
                             .width(Length::Fill),
                             text_input("Bitrate", &format!("{}", config.target_bitrate / 1000))
-                                .on_input(|val| Message::Settings(
-                                    SettingsMessage::TargetBitrateInputChanged(val)
-                                ))
+                                .on_input(|val| {
+                                    Message::Screen(ScreenMessage::Settings(
+                                        SettingsMessage::TargetBitrateInputChanged(val),
+                                    ))
+                                })
                                 .padding(8)
                                 .width(Length::Fixed(80.0))
                                 .style(theme::text_input_style),

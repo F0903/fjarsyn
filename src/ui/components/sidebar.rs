@@ -6,7 +6,7 @@ use iced_fonts::lucide;
 
 use crate::ui::{
     app::AppContext,
-    message::{Message, Route},
+    message::{CallActionMessage, CallTarget, Message, NavigationMessage, Route},
     theme,
 };
 
@@ -37,14 +37,14 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
             Route::Home,
             lucide::house(),
             "Home",
-            Message::Navigate(Route::Home)
+            Message::Navigation(NavigationMessage::Navigate(Route::Home))
         ),
         sidebar_button(
             current_route,
             Route::Contacts,
             lucide::users(),
             "Contacts",
-            Message::Navigate(Route::Contacts)
+            Message::Navigation(NavigationMessage::Navigate(Route::Contacts))
         ),
     ]
     .spacing(5);
@@ -56,7 +56,7 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
             .font(crate::ui::fonts::outfit::BOLD)
             .width(Length::Fill),
         button(lucide::user_plus().size(14))
-            .on_press(Message::Navigate(Route::Contacts))
+            .on_press(Message::Navigation(NavigationMessage::Navigate(Route::Contacts)))
             .style(button::text)
     ]
     .spacing(10)
@@ -114,7 +114,9 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
                     .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
-                .on_press(Message::StartCall(crate::ui::message::CallTarget::ContactId(contact.id)))
+                .on_press(Message::CallAction(CallActionMessage::StartCall(CallTarget::ContactId(
+                    contact.id,
+                ))))
                 .style(button::text),
             );
         }
@@ -154,7 +156,7 @@ pub fn sidebar<'a>(ctx: &'a AppContext, current_route: Route) -> Element<'a, Mes
                 Route::Settings,
                 lucide::settings(),
                 "Settings",
-                Message::Navigate(Route::Settings),
+                Message::Navigation(NavigationMessage::Navigate(Route::Settings)),
             ),
         ]
         .padding(10)

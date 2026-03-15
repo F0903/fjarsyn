@@ -8,7 +8,7 @@ use crate::ui::{
     self,
     app::AppContext,
     components::frame_viewer::FrameViewer,
-    message::{Message, Route},
+    message::{Message, NavigationMessage, Route, ScreenMessage},
 };
 
 impl CallScreen {
@@ -56,29 +56,33 @@ impl CallScreen {
 
     fn view_controls(&self) -> Element<'_, Message> {
         let mut controls_row = Row::new()
-            .push(button("Settings").on_press(Message::NavigateWithBack(Route::Settings)))
+            .push(button("Settings").on_press(Message::Navigation(
+                NavigationMessage::NavigateWithBack(Route::Settings),
+            )))
             .spacing(10);
 
         controls_row = if self.is_capturing() {
             controls_row.extend([
-                button("Change Screen").on_press(Message::Call(CallMessage::StartCapture)).into(),
+                button("Change Screen")
+                    .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StartCapture)))
+                    .into(),
                 button(if self.show_local_preview { "Hide Preview" } else { "Show Preview" })
-                    .on_press(Message::Call(CallMessage::ToggleLocalPreview))
+                    .on_press(Message::Screen(ScreenMessage::Call(CallMessage::ToggleLocalPreview)))
                     .into(),
                 button("Stop Sharing")
                     .style(iced::widget::button::danger)
-                    .on_press(Message::Call(CallMessage::StopCapture))
+                    .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StopCapture)))
                     .into(),
             ])
         } else {
             controls_row.extend([button("Share Screen")
-                .on_press(Message::Call(CallMessage::StartCapture))
+                .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StartCapture)))
                 .into()])
         };
 
         controls_row = controls_row.extend([button("End Call")
             .style(iced::widget::button::danger)
-            .on_press(Message::Call(CallMessage::EndCall))
+            .on_press(Message::Screen(ScreenMessage::Call(CallMessage::EndCall)))
             .into()]);
 
         container(controls_row)

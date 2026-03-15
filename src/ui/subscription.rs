@@ -8,7 +8,10 @@ use tokio::sync::{Mutex, mpsc};
 use crate::{
     networking::discovery::DiscoveryEvent,
     services::call_service::CallEvent,
-    ui::{app::Fjarsyn, message::Message},
+    ui::{
+        app::Fjarsyn,
+        message::{CallServiceMessage, Message, WindowEventMessage},
+    },
 };
 
 // Wrapper to implement Hash which is needed by iced subscriptions.
@@ -49,10 +52,14 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
         .map(|rx| discovery_event_subscription(rx.clone()))
         .unwrap_or(Subscription::none());
 
-    let window_open_subscription = iced::window::open_events().map(Message::WindowOpened);
-    let window_close_subscription = iced::window::close_events().map(Message::WindowClosed);
+    let window_open_subscription = iced::window::open_events()
+        .map(|id| Message::WindowEvent(WindowEventMessage::WindowOpened(id)));
+    let window_close_subscription = iced::window::close_events()
+        .map(|id| Message::WindowEvent(WindowEventMessage::WindowClosed(id)));
     let window_event_subscription = iced::event::listen().filter_map(|event| match event {
-        iced::Event::Window(iced::window::Event::Resized(_)) => Some(Message::SyncMaximized),
+        iced::Event::Window(iced::window::Event::Resized(_)) => {
+            Some(Message::WindowEvent(WindowEventMessage::SyncMaximized))
+        }
         _ => None,
     });
     let tick_subscription =
@@ -81,7 +88,7 @@ pub fn call_event_subscription(
                 let mut lock = receiver.lock().await;
                 if let Some(event) = lock.recv().await {
                     drop(lock);
-                    Some((Message::CallEvent(event), receiver))
+                    Some((Message::CallService(CallServiceMessage::CallEvent(event)), receiver))
                 } else {
                     drop(lock);
                     None
@@ -102,7 +109,10 @@ pub fn discovery_event_subscription(
                 let mut lock = receiver.lock().await;
                 if let Some(event) = lock.recv().await {
                     drop(lock);
-                    Some((Message::DiscoveryEvent(event), receiver))
+                    Some((
+                        Message::CallService(CallServiceMessage::DiscoveryEvent(event)),
+                        receiver,
+                    ))
                 } else {
                     drop(lock);
                     None
@@ -119,7 +129,7 @@ pub fn packet_subscription(receiver: Arc<Mutex<mpsc::Receiver<Bytes>>>) -> Subsc
             let mut lock = receiver.lock().await;
             if let Some(packet) = lock.recv().await {
                 drop(lock);
-                Some((Message::PacketReceived(packet), receiver))
+                Some((Message::CallService(CallServiceMessage::PacketReceived(packet)), receiver))
             } else {
                 drop(lock);
                 None

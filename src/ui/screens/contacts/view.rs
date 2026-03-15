@@ -8,7 +8,7 @@ use super::{ContactsMessage, ContactsScreen};
 use crate::ui::{
     app::AppContext,
     fonts,
-    message::{CallTarget, Message},
+    message::{CallActionMessage, CallTarget, ContactsServiceMessage, Message, ScreenMessage},
     theme,
 };
 
@@ -41,7 +41,7 @@ impl ContactsScreen {
                     .spacing(8)
                     .align_y(Alignment::Center)
                 )
-                .on_press(Message::Contacts(ContactsMessage::ToggleAddForm))
+                .on_press(Message::Screen(ScreenMessage::Contacts(ContactsMessage::ToggleAddForm)))
                 .padding(10)
                 .style(|theme, status| theme::button_style(
                     theme,
@@ -66,7 +66,11 @@ impl ContactsScreen {
                     column![
                         text("Name").size(12).style(text::secondary),
                         text_input("John Doe", &self.new_contact_name)
-                            .on_input(|val| Message::Contacts(ContactsMessage::NameChanged(val)))
+                            .on_input(|val| {
+                                Message::Screen(ScreenMessage::Contacts(
+                                    ContactsMessage::NameChanged(val),
+                                ))
+                            })
                             .padding(10)
                             .style(theme::text_input_style),
                     ]
@@ -75,7 +79,11 @@ impl ContactsScreen {
                     column![
                         text("Peer ID").size(12).style(text::secondary),
                         text_input("Enter Peer ID...", &self.new_contact_peer_id)
-                            .on_input(|val| Message::Contacts(ContactsMessage::PeerIdChanged(val)))
+                            .on_input(|val| {
+                                Message::Screen(ScreenMessage::Contacts(
+                                    ContactsMessage::PeerIdChanged(val),
+                                ))
+                            })
                             .padding(10)
                             .style(theme::text_input_style),
                     ]
@@ -84,7 +92,11 @@ impl ContactsScreen {
                     column![
                         text("Address (Optional)").size(12).style(text::secondary),
                         text_input("192.168.1.50:8080", &self.new_contact_address)
-                            .on_input(|val| Message::Contacts(ContactsMessage::AddressChanged(val)))
+                            .on_input(|val| {
+                                Message::Screen(ScreenMessage::Contacts(
+                                    ContactsMessage::AddressChanged(val),
+                                ))
+                            })
                             .padding(10)
                             .style(theme::text_input_style),
                     ]
@@ -92,7 +104,9 @@ impl ContactsScreen {
                     .width(Length::FillPortion(1)),
                     container(
                         button(row![lucide::user_plus().size(16), text("Save")].spacing(10))
-                            .on_press(Message::Contacts(ContactsMessage::AddNewContact))
+                            .on_press(Message::Screen(ScreenMessage::Contacts(
+                                ContactsMessage::AddNewContact,
+                            )))
                             .padding(10)
                             .width(Length::Fixed(120.0))
                             .style(|theme, status| theme::button_style(theme, status, true))
@@ -137,11 +151,15 @@ impl ContactsScreen {
                         .width(Length::Fill),
                         row![
                             button(lucide::phone().size(16))
-                                .on_press(Message::StartCall(CallTarget::ContactId(contact.id)))
+                                .on_press(Message::CallAction(CallActionMessage::StartCall(
+                                    CallTarget::ContactId(contact.id),
+                                )))
                                 .padding(8)
                                 .style(|theme, status| theme::button_style(theme, status, false)),
                             button(lucide::trash().size(16))
-                                .on_press(Message::DeleteContact(contact.id))
+                                .on_press(Message::ContactData(
+                                    ContactsServiceMessage::DeleteContact(contact.id,)
+                                ))
                                 .padding(8)
                                 .style(theme::danger_button_style),
                         ]

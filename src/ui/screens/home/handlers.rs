@@ -1,7 +1,10 @@
 use iced::Task;
 
 use super::{HomeMessage, HomeScreen};
-use crate::ui::{app::AppContext, message::Message};
+use crate::ui::{
+    app::AppContext,
+    message::{Message, ScreenMessage},
+};
 
 impl HomeScreen {
     pub(crate) fn handle_message(
@@ -10,7 +13,7 @@ impl HomeScreen {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::Home(msg) => match msg {
+            Message::Screen(ScreenMessage::Home(msg)) => match msg {
                 HomeMessage::TargetAddressChanged(val) => {
                     self.manual_target_address = val;
                     Task::none()

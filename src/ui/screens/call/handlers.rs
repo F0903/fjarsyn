@@ -10,7 +10,7 @@ use crate::{
     services::call_service::CallEvent,
     ui::{
         app::AppContext,
-        message::{Message, Route},
+        message::{CallServiceMessage, Message, NavigationMessage, Route, ScreenMessage},
     },
     utils::frame::Frame,
 };
@@ -22,9 +22,11 @@ impl CallScreen {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::PacketReceived(packet) => self.handle_packet_received(ctx, packet),
+            Message::CallService(CallServiceMessage::PacketReceived(packet)) => {
+                self.handle_packet_received(ctx, packet)
+            }
 
-            Message::Call(msg) => match msg {
+            Message::Screen(ScreenMessage::Call(msg)) => match msg {
                 CallMessage::DecodedFrameReady(frame) => {
                     self.remote_frame = Some(frame);
                     Task::none()
@@ -44,7 +46,7 @@ impl CallScreen {
                         if let Err(e) = capture.stop_capture() {
                             tracing::error!("Failed to stop capture: {}", e);
                         }
-                        Message::Call(CallMessage::CaptureStopped)
+                        Message::Screen(ScreenMessage::Call(CallMessage::CaptureStopped))
                     });
 
                     let disconnect_task = if let Some(service) = &ctx.call_service {
@@ -62,7 +64,7 @@ impl CallScreen {
                     Task::batch(vec![
                         stop_capture_task,
                         disconnect_task,
-                        Task::done(Message::Navigate(Route::Home)),
+                        Task::done(Message::Navigation(NavigationMessage::Navigate(Route::Home))),
                     ])
                 }
                 CallMessage::StartCapture => {
@@ -77,12 +79,12 @@ impl CallScreen {
                     match user_pick_platform_capture_item(window_handle) {
                         Ok(future) => Task::future(async move {
                             match future.await {
-                                Ok(item) => Message::Call(
+                                Ok(item) => Message::Screen(ScreenMessage::Call(
                                     CallMessage::PlatformUserPickedCaptureItem(Ok(item)),
-                                ),
-                                Err(e) => Message::Call(
+                                )),
+                                Err(e) => Message::Screen(ScreenMessage::Call(
                                     CallMessage::PlatformUserPickedCaptureItem(Err(e.to_string())),
-                                ),
+                                )),
                             }
                         }),
                         Err(err) => {
@@ -100,7 +102,9 @@ impl CallScreen {
                             return Task::none();
                         }
                     };
-                    Task::done(Message::Call(CallMessage::TryStartCapture(capture_item)))
+                    Task::done(Message::Screen(ScreenMessage::Call(CallMessage::TryStartCapture(
+                        capture_item,
+                    ))))
                 }
 
                 CallMessage::TryStartCapture(capture_item) => match self.capture.try_write() {
@@ -115,7 +119,9 @@ impl CallScreen {
                             return Task::none();
                         }
 
-                        Task::done(Message::Call(CallMessage::CaptureStarted))
+                        Task::done(Message::Screen(ScreenMessage::Call(
+                            CallMessage::CaptureStarted,
+                        )))
                     }
                     Err(_) => {
                         let capture_arc = self.capture.clone();
@@ -123,21 +129,27 @@ impl CallScreen {
                             let _lock = capture_arc.write().await;
                         })
                         .map(move |_| {
-                            Message::Call(CallMessage::TryStartCapture(capture_item.clone()))
+                            Message::Screen(ScreenMessage::Call(CallMessage::TryStartCapture(
+                                capture_item.clone(),
+                            )))
                         })
                     }
                 },
 
                 CallMessage::CaptureStarted => Task::none(),
 
-                CallMessage::StopCapture => Task::done(Message::Call(CallMessage::TryStopCapture)),
+                CallMessage::StopCapture => {
+                    Task::done(Message::Screen(ScreenMessage::Call(CallMessage::TryStopCapture)))
+                }
 
                 CallMessage::TryStopCapture => match self.capture.try_write() {
                     Ok(mut capture) => {
                         if let Err(err) = capture.stop_capture() {
                             tracing::error!("Failed to stop capture: {}", err);
                         }
-                        Task::done(Message::Call(CallMessage::CaptureStopped))
+                        Task::done(Message::Screen(ScreenMessage::Call(
+                            CallMessage::CaptureStopped,
+                        )))
                     }
                     Err(_) => {
                         tracing::debug!(
@@ -146,7 +158,7 @@ impl CallScreen {
                         let capture_arc = self.capture.clone();
                         Task::future(async move {
                             let _lock = capture_arc.write().await;
-                            Message::Call(CallMessage::TryStopCapture)
+                            Message::Screen(ScreenMessage::Call(CallMessage::TryStopCapture))
                         })
                     }
                 },
@@ -161,8 +173,8 @@ impl CallScreen {
             },
 
             // End the call if the peer disconnects
-            Message::CallEvent(CallEvent::CallEnded) => {
-                Task::done(Message::Call(CallMessage::EndCall))
+            Message::CallService(CallServiceMessage::CallEvent(CallEvent::CallEnded)) => {
+                Task::done(Message::Screen(ScreenMessage::Call(CallMessage::EndCall)))
             }
 
             _ => Task::none(),
@@ -185,7 +197,9 @@ impl CallScreen {
             Task::future(async move {
                 let mut lock = decoder.lock().await;
                 match lock.decode(&packet) {
-                    Ok(Some(frame)) => Message::Call(CallMessage::DecodedFrameReady(frame)),
+                    Ok(Some(frame)) => {
+                        Message::Screen(ScreenMessage::Call(CallMessage::DecodedFrameReady(frame)))
+                    }
                     Ok(None) => Message::NoOp,
                     Err(e) => {
                         tracing::error!("Failed to decode frame: {}", e);

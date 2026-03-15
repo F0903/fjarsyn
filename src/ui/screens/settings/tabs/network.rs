@@ -8,7 +8,7 @@ use crate::{
     config::Config,
     define_tab,
     ui::{
-        message::Message,
+        message::{Message, ScreenMessage},
         screens::settings::{
             SettingsMessage,
             components::{setting_row, settings_section},
@@ -32,13 +32,17 @@ define_tab! {
                         "Maximum latency for the depacketizer",
                         row![
                             slider(0..=5000, config.max_depacket_latency, |val| {
-                                Message::Settings(SettingsMessage::MaxDepacketLatencyChanged(val))
+                                Message::Screen(ScreenMessage::Settings(
+                                    SettingsMessage::MaxDepacketLatencyChanged(val),
+                                ))
                             })
                             .width(Length::Fill),
                             text_input("Latency", &format!("{}", config.max_depacket_latency))
-                                .on_input(|val| Message::Settings(
-                                    SettingsMessage::MaxDepacketLatencyInputChanged(val)
-                                ))
+                                .on_input(|val| {
+                                    Message::Screen(ScreenMessage::Settings(
+                                        SettingsMessage::MaxDepacketLatencyInputChanged(val),
+                                    ))
+                                })
                                 .padding(8)
                                 .width(Length::Fixed(60.0))
                                 .style(theme::text_input_style),

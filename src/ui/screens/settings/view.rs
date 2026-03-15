@@ -6,7 +6,11 @@ use iced_fonts::lucide;
 
 use super::{SettingsMessage, SettingsScreen};
 use crate::ui::{
-    app::AppContext, components::vertical_spacer, fonts, message::Message, screens::settings::tabs,
+    app::AppContext,
+    components::vertical_spacer,
+    fonts,
+    message::{Message, ScreenMessage},
+    screens::settings::tabs,
     theme,
 };
 
@@ -23,7 +27,7 @@ impl SettingsScreen {
                 .align_y(Alignment::Center),
         )
         .padding(5)
-        .on_press(Message::Settings(SettingsMessage::SaveSettings))
+        .on_press(Message::Screen(ScreenMessage::Settings(SettingsMessage::SaveSettings)))
         .style(|theme, status| theme::button_style(theme, status, true));
 
         let discard_button = button(
@@ -33,7 +37,7 @@ impl SettingsScreen {
                 .align_y(Alignment::Center),
         )
         .padding(5)
-        .on_press(Message::Settings(SettingsMessage::DiscardSettings))
+        .on_press(Message::Screen(ScreenMessage::Settings(SettingsMessage::DiscardSettings)))
         .style(|theme, status| theme::button_style(theme, status, false));
 
         let unsaved_changes_card = container(
@@ -87,7 +91,9 @@ impl SettingsScreen {
             )
             .width(Length::Fill)
             .padding(12)
-            .on_press(Message::Settings(SettingsMessage::TabChanged(tab.clone())))
+            .on_press(Message::Screen(ScreenMessage::Settings(SettingsMessage::TabChanged(
+                tab.clone(),
+            ))))
             .style(move |theme, status| theme::sidebar_button_style(theme, status, is_active))
             .into()
         });

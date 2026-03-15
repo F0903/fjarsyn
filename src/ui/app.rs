@@ -15,12 +15,16 @@ use crate::{
     networking::discovery::{Discovery, DiscoveryEvent, PeerInfo},
     services::{
         call_service::{CallEvent, CallService, CallServiceConfig, DialSuccess},
-        contact_service::ContactService,
+        contacts_service::ContactsService,
         notification_service::NotificationService,
     },
     ui::{
         components,
-        message::{Message, Route},
+        message::{
+            CallActionMessage, CallServiceMessage, CaptureMessage, ContactsServiceMessage,
+            DatabaseMessage, Message, NavigationMessage, NotificationMessage, Route,
+            WindowControlMessage, WindowEventMessage,
+        },
         screens::{ActiveScreen, Screen},
         subscription::{self, EventReceiverRef},
         theme,
@@ -52,6 +56,7 @@ pub struct AppContext {
     pub main_window: Option<WindowInfo>,
 
     pub call_service: Option<Arc<CallService>>,
+    pub contacts_service: Option<Arc<ContactsService>>,
     pub target_id: Option<String>,
     pub incoming_call_id: Option<String>,
     pub incoming_call_timeout: Option<std::time::Instant>,
@@ -103,6 +108,7 @@ impl Fjarsyn {
             discovery_event_rx: Some(Arc::new(Mutex::new(discovery_event_rx))),
             call_event_rx: Some(Arc::new(Mutex::new(call_event_rx))),
             call_service: None,
+            contacts_service: None,
             target_id: None,
             incoming_call_id: None,
             incoming_call_timeout: None,
@@ -118,7 +124,9 @@ impl Fjarsyn {
             Fjarsyn { ctx, active_screen },
             Task::batch([
                 Task::future(async {
-                    Message::DatabaseInitialized(crate::database::init().await.map_err(Arc::new))
+                    Message::Database(DatabaseMessage::DatabaseInitialized(
+                        crate::database::init().await.map_err(Arc::new),
+                    ))
                 }),
                 Self::init_capture_task(&config),
                 Self::init_call_service_task(
@@ -135,120 +143,146 @@ impl Fjarsyn {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        // 1. Immediate Delegation (Tunnel Down)
         let screen_task = self.active_screen.update(&mut self.ctx, message.clone());
 
-        // 2. Global Orchestration & State Sync (Bubble Up)
         let global_task = match &message {
-            Message::Navigate(route) => {
+            Message::Navigation(NavigationMessage::Navigate(route)) => {
                 self.active_screen = ActiveScreen::from_route(*route, &mut self.ctx);
                 self.ctx.back_queue.clear();
                 Task::none()
             }
-
-            Message::NavigateWithBack(route) => {
+            Message::Navigation(NavigationMessage::NavigateWithBack(route)) => {
                 let mut screen = ActiveScreen::from_route(*route, &mut self.ctx);
                 std::mem::swap(&mut self.active_screen, &mut screen);
                 self.ctx.back_queue.push_front(screen);
                 Task::none()
             }
-
-            Message::Back => {
+            Message::Navigation(NavigationMessage::Back) => {
                 if let Some(screen) = self.ctx.back_queue.pop_front() {
                     self.active_screen = screen;
                 }
                 Task::none()
             }
 
-            Message::Tick(now) => self.handle_tick(*now),
-            Message::DismissNotification(id) => {
+            Message::Notification(NotificationMessage::DismissNotification(id)) => {
                 self.ctx.notifications.dismiss(*id);
                 Task::none()
             }
-
-            Message::NotifyError(msg) => {
+            Message::Notification(NotificationMessage::NotifyError(msg)) => {
                 self.ctx.notify_error(msg);
                 Task::none()
             }
-
-            Message::NotifyInfo(msg) => {
+            Message::Notification(NotificationMessage::NotifyInfo(msg)) => {
                 self.ctx.notify_info(msg);
                 Task::none()
             }
-
-            Message::NotifySuccess(msg) => {
+            Message::Notification(NotificationMessage::NotifySuccess(msg)) => {
                 self.ctx.notify_success(msg);
                 Task::none()
             }
 
-            Message::CopyId(id) => {
-                let id_clone = id.clone();
-                Task::batch([
-                    iced::clipboard::write(id_clone.clone()),
-                    Task::done(Message::NotifyInfo(format!("Copied ID: {}", id_clone))),
-                ])
+            Message::WindowEvent(WindowEventMessage::WindowOpened(id)) => {
+                self.handle_window_opened(*id)
             }
-
-            // Window management
-            Message::WindowOpened(id) => self.handle_window_opened(*id),
-            Message::WindowClosed(id) => self.handle_window_closed(*id),
-            Message::WindowMaximized(max) => {
+            Message::WindowEvent(WindowEventMessage::WindowClosed(id)) => {
+                self.handle_window_closed(*id)
+            }
+            Message::WindowEvent(WindowEventMessage::WindowMaximized(max)) => {
                 if let Some(w) = self.ctx.main_window.as_mut() {
                     w.maximized = *max;
                 }
                 Task::none()
             }
-
-            Message::SyncMaximized => self
+            Message::WindowEvent(WindowEventMessage::SyncMaximized) => self
                 .ctx
                 .main_window
                 .as_ref()
-                .map(|w| iced_window::is_maximized(w.iced_id).map(Message::WindowMaximized))
+                .map(|w| {
+                    iced_window::is_maximized(w.iced_id)
+                        .map(|m| Message::WindowEvent(WindowEventMessage::WindowMaximized(m)))
+                })
                 .unwrap_or(Task::none()),
-            Message::WindowRawIdFetched((id, rid)) => self.handle_window_raw_id(*id, *rid),
-            Message::Minimize => self.window_action(|id| iced_window::minimize(id, true)),
-            Message::Maximize => self.window_action(iced_window::toggle_maximize),
-            Message::Close => self.window_action(iced_window::close),
-            Message::Drag => self.window_action(iced_window::drag),
-            Message::Resize(dir) => self.window_action(|id| iced_window::drag_resize(id, *dir)),
-
-            // Global Action Triggers (Using services directly to maintain isolation)
-            Message::LoadContacts => {
-                let Some(db) = self.ctx.db.clone() else { return Task::none() };
-                Task::future(
-                    async move { Message::ContactsLoaded(ContactService::list(&db).await) },
-                )
+            Message::WindowEvent(WindowEventMessage::WindowRawIdFetched((id, rid))) => {
+                self.handle_window_raw_id(*id, *rid)
             }
 
-            Message::SaveContact { peer_id, name, address } => {
-                let Some(db) = self.ctx.db.clone() else { return Task::none() };
+            Message::WindowControl(WindowControlMessage::Minimize) => {
+                self.window_action(|id| iced_window::minimize(id, true))
+            }
+            Message::WindowControl(WindowControlMessage::Maximize) => {
+                self.window_action(iced_window::toggle_maximize)
+            }
+            Message::WindowControl(WindowControlMessage::Close) => {
+                self.window_action(iced_window::close)
+            }
+            Message::WindowControl(WindowControlMessage::Drag) => {
+                self.window_action(iced_window::drag)
+            }
+            Message::WindowControl(WindowControlMessage::Resize(dir)) => {
+                self.window_action(|id| iced_window::drag_resize(id, *dir))
+            }
+
+            Message::ContactData(ContactsServiceMessage::LoadContacts) => {
+                let Some(service) = self.ctx.contacts_service.clone() else {
+                    return Task::none();
+                };
+                Task::future(async move {
+                    Message::ContactData(ContactsServiceMessage::ContactsLoaded(
+                        service.list().await,
+                    ))
+                })
+            }
+            Message::ContactData(ContactsServiceMessage::SaveContact {
+                peer_id,
+                name,
+                address,
+            }) => {
+                let Some(service) = self.ctx.contacts_service.clone() else {
+                    return Task::none();
+                };
                 let peer_id = peer_id.clone();
                 let name = name.clone();
                 let address = address.clone();
                 Task::future(async move {
-                    Message::ContactSaved(ContactService::create(&db, peer_id, name, address).await)
+                    Message::ContactData(ContactsServiceMessage::ContactSaved(
+                        service.create(peer_id, name, address).await,
+                    ))
                 })
             }
-
-            Message::DeleteContact(id) => {
-                let Some(db) = self.ctx.db.clone() else { return Task::none() };
+            Message::ContactData(ContactsServiceMessage::DeleteContact(id)) => {
+                let Some(service) = self.ctx.contacts_service.clone() else {
+                    return Task::none();
+                };
                 let id = *id;
                 Task::future(async move {
-                    Message::ContactDeleted(ContactService::delete(&db, id).await)
+                    Message::ContactData(ContactsServiceMessage::ContactDeleted(
+                        service.delete(id).await,
+                    ))
                 })
             }
-
-            Message::UpdateContactAddress { id, new_address } => {
+            Message::ContactData(ContactsServiceMessage::UpdateContactAddress {
+                id,
+                new_address,
+            }) => {
                 if let Some(c) = self.ctx.contacts.iter().find(|c| c.id == *id) {
                     self.ctx.notify_info(format!("Updating address for {}...", c.name));
-                    Task::done(Message::UpdateContactAddressConfirmed(*id, new_address.clone()))
+                    Task::done(Message::ContactData(
+                        ContactsServiceMessage::UpdateContactAddressConfirmed(
+                            *id,
+                            new_address.clone(),
+                        ),
+                    ))
                 } else {
                     Task::none()
                 }
             }
-
-            Message::UpdateContactAddressConfirmed(id, addr) => {
-                let Some(db) = self.ctx.db.clone() else { return Task::none() };
+            Message::ContactData(ContactsServiceMessage::UpdateContactAddressConfirmed(
+                id,
+                addr,
+            )) => {
+                let Some(service) = self.ctx.contacts_service.clone() else {
+                    return Task::none();
+                };
                 let id = *id;
                 let addr = addr.clone();
                 let c = match self.ctx.contacts.iter().find(|c| c.id == id) {
@@ -256,27 +290,51 @@ impl Fjarsyn {
                     None => return Task::none(),
                 };
                 Task::future(async move {
-                    let res = ContactService::update(&db, id, c.peer_id, c.name, Some(addr)).await;
+                    let res = service.update(id, c.peer_id, c.name, Some(addr)).await;
                     match res {
-                        Ok(_) => Message::LoadContacts,
-                        Err(e) => Message::NotifyError(format!("Update Failed: {}", e)),
+                        Ok(_) => Message::ContactData(ContactsServiceMessage::LoadContacts),
+                        Err(e) => Message::Notification(NotificationMessage::NotifyError(format!(
+                            "Update Failed: {}",
+                            e
+                        ))),
                     }
                 })
             }
+            Message::ContactData(ContactsServiceMessage::ContactSaved(res)) => {
+                if res.is_ok() {
+                    self.ctx.notify_success("Contact saved.");
+                    Task::done(Message::ContactData(ContactsServiceMessage::LoadContacts))
+                } else {
+                    Task::none()
+                }
+            }
+            Message::ContactData(ContactsServiceMessage::ContactDeleted(res)) => {
+                if res.is_ok() {
+                    self.ctx.notify_success("Contact deleted.");
+                    Task::done(Message::ContactData(ContactsServiceMessage::LoadContacts))
+                } else {
+                    Task::none()
+                }
+            }
+            Message::ContactData(ContactsServiceMessage::ContactsLoaded(res)) => {
+                if let Ok(c) = res {
+                    self.ctx.contacts = c.clone();
+                }
+                Task::none()
+            }
 
-            Message::AcceptCall => {
+            Message::CallAction(CallActionMessage::AcceptCall) => {
                 self.ctx.incoming_call_id = None;
                 self.ctx.incoming_call_timeout = None;
                 let Some(service) = self.ctx.call_service.clone() else { return Task::none() };
                 Task::future(async move {
                     match service.accept().await {
-                        Ok(_) => Message::Navigate(Route::Call),
+                        Ok(_) => Message::Navigation(NavigationMessage::Navigate(Route::Call)),
                         Err(_) => Message::NoOp,
                     }
                 })
             }
-
-            Message::DeclineCall => {
+            Message::CallAction(CallActionMessage::DeclineCall) => {
                 self.ctx.incoming_call_id = None;
                 self.ctx.incoming_call_timeout = None;
                 let Some(service) = self.ctx.call_service.clone() else { return Task::none() };
@@ -285,8 +343,7 @@ impl Fjarsyn {
                     Message::NoOp
                 })
             }
-
-            Message::StartCall(target) => {
+            Message::CallAction(CallActionMessage::StartCall(target)) => {
                 let Some(service) = self.ctx.call_service.clone() else { return Task::none() };
                 let target = target.clone();
                 let discovered = self.ctx.discovered_peers.clone();
@@ -296,57 +353,37 @@ impl Fjarsyn {
                         Ok(DialSuccess { peer_id, name, socket_addr, update_contact_address }) => {
                             let mut batch = Vec::new();
                             if let Some((id, addr)) = update_contact_address {
-                                batch.push(Message::UpdateContactAddress { id, new_address: addr });
+                                batch.push(Message::ContactData(
+                                    ContactsServiceMessage::UpdateContactAddress {
+                                        id,
+                                        new_address: addr,
+                                    },
+                                ));
                             }
                             if let (Some(id), Some(name), Some(addr)) = (peer_id, name, socket_addr)
                             {
-                                batch.push(Message::PeerFound(PeerInfo {
-                                    id,
-                                    instance_name: name,
-                                    host_name: "direct".into(),
-                                    addresses: vec![addr.ip()],
-                                    port: addr.port(),
-                                }));
+                                batch.push(Message::CallService(CallServiceMessage::PeerFound(
+                                    PeerInfo {
+                                        id,
+                                        instance_name: name,
+                                        host_name: "direct".into(),
+                                        addresses: vec![addr.ip()],
+                                        port: addr.port(),
+                                    },
+                                )));
                             }
-                            batch.push(Message::Navigate(Route::Call));
+                            batch.push(Message::Navigation(NavigationMessage::Navigate(
+                                Route::Call,
+                            )));
                             Message::Batch(batch)
                         }
-                        Err(e_msg) => Message::NotifyError(e_msg),
+                        Err(e_msg) => {
+                            Message::Notification(NotificationMessage::NotifyError(e_msg))
+                        }
                     }
                 })
             }
-
-            // Global State Synchronization & Orchestration
-            Message::DatabaseInitialized(res) => match res {
-                Ok(pool) => {
-                    self.ctx.db = Some(pool.clone());
-                    Task::done(Message::LoadContacts)
-                }
-                Err(e) => {
-                    self.ctx.notify_error(format!("DB Failed: {}", e));
-                    Task::none()
-                }
-            },
-
-            Message::ContactSaved(res) => {
-                if res.is_ok() {
-                    self.ctx.notify_success("Contact saved.");
-                    Task::done(Message::LoadContacts)
-                } else {
-                    Task::none()
-                }
-            }
-
-            Message::ContactDeleted(res) => {
-                if res.is_ok() {
-                    self.ctx.notify_success("Contact deleted.");
-                    Task::done(Message::LoadContacts)
-                } else {
-                    Task::none()
-                }
-            }
-
-            Message::CallServiceInitialized(res) => {
+            Message::CallService(CallServiceMessage::CallServiceInitialized(res)) => {
                 if let Ok(service) = res {
                     if self.ctx.config.peer_id.is_none() {
                         self.ctx.config.peer_id = Some(service.local_id().to_string());
@@ -356,8 +393,7 @@ impl Fjarsyn {
                 }
                 Task::none()
             }
-
-            Message::CallEvent(event) => {
+            Message::CallService(CallServiceMessage::CallEvent(event)) => {
                 match event {
                     CallEvent::IncomingCall { peer_id } => {
                         self.ctx.target_id = Some(peer_id.clone());
@@ -376,7 +412,9 @@ impl Fjarsyn {
                                 self.ctx.recent_peers.insert(0, p);
                             }
                         }
-                        return Task::done(Message::Navigate(Route::Call));
+                        return Task::done(Message::Navigation(NavigationMessage::Navigate(
+                            Route::Call,
+                        )));
                     }
                     CallEvent::CallEnded => {
                         if self.ctx.target_id.is_some() {
@@ -389,17 +427,7 @@ impl Fjarsyn {
                 }
                 Task::none()
             }
-
-            Message::CaptureInitialized(res) => self.handle_capture_init(res.clone()),
-
-            Message::ContactsLoaded(res) => {
-                if let Ok(c) = res {
-                    self.ctx.contacts = c.clone();
-                }
-                Task::none()
-            }
-
-            Message::DiscoveryEvent(event) => {
+            Message::CallService(CallServiceMessage::DiscoveryEvent(event)) => {
                 match event {
                     DiscoveryEvent::PeerFound(peer) => {
                         // Don't add ourselves
@@ -427,8 +455,7 @@ impl Fjarsyn {
                 }
                 Task::none()
             }
-
-            Message::PeerFound(peer) => {
+            Message::CallService(CallServiceMessage::PeerFound(peer)) => {
                 // Return if the peer is us
                 if self.ctx.call_service.as_ref().map(|s| s.local_id() == peer.id).unwrap_or(false)
                 {
@@ -444,15 +471,41 @@ impl Fjarsyn {
                 }
                 Task::none()
             }
-
-            Message::PeerRemoved(id) => {
+            Message::CallService(CallServiceMessage::PeerRemoved(id)) => {
                 self.ctx.discovered_peers.retain(|p| p.id != *id);
                 Task::none()
             }
 
+            Message::Database(DatabaseMessage::DatabaseInitialized(res)) => match res {
+                Ok(pool) => {
+                    self.ctx.db = Some(pool.clone());
+                    self.ctx.contacts_service = Some(Arc::new(ContactsService::new(pool.clone())));
+                    Task::done(Message::ContactData(ContactsServiceMessage::LoadContacts))
+                }
+                Err(e) => {
+                    self.ctx.notify_error(format!("DB Failed: {}", e));
+                    Task::none()
+                }
+            },
+
+            Message::Capture(CaptureMessage::CaptureInitialized(res)) => {
+                self.handle_capture_init(res.clone())
+            }
+
+            Message::CopyId(id) => {
+                let id_clone = id.clone();
+                Task::batch([
+                    iced::clipboard::write(id_clone.clone()),
+                    Task::done(Message::Notification(NotificationMessage::NotifyInfo(format!(
+                        "Copied ID: {}",
+                        id_clone
+                    )))),
+                ])
+            }
             Message::Batch(messages) => {
                 Task::batch(messages.clone().into_iter().map(|msg| self.update(msg)))
             }
+            Message::Tick(now) => self.handle_tick(*now),
 
             _ => Task::none(),
         };
@@ -464,7 +517,7 @@ impl Fjarsyn {
         self.ctx.notifications.dismiss_expired(now);
         if self.ctx.incoming_call_timeout.map_or(false, |t| now > t) {
             self.ctx.notify_info("Missed call.");
-            return Task::done(Message::DeclineCall);
+            return Task::done(Message::CallAction(CallActionMessage::DeclineCall));
         }
         Task::none()
     }
@@ -489,7 +542,8 @@ impl Fjarsyn {
         if self.ctx.main_window.is_none() {
             self.ctx.main_window = Some(WindowInfo { iced_id: id, raw_id: None, maximized: false });
         }
-        iced_window::raw_id::<Message>(id).map(move |rid| Message::WindowRawIdFetched((id, rid)))
+        iced_window::raw_id::<Message>(id)
+            .map(move |rid| Message::WindowEvent(WindowEventMessage::WindowRawIdFetched((id, rid))))
     }
 
     fn handle_window_closed(&mut self, id: iced_window::Id) -> Task<Message> {
@@ -528,7 +582,9 @@ impl Fjarsyn {
                     let _ = d.browse(discovery_event_tx);
                 }
             }
-            Message::CallServiceInitialized(res.map(Arc::new).map_err(Arc::new))
+            Message::CallService(CallServiceMessage::CallServiceInitialized(
+                res.map(Arc::new).map_err(Arc::new),
+            ))
         })
     }
 
@@ -544,7 +600,9 @@ impl Fjarsyn {
             .and_then(|b| b.with_default_capture_item())
             .and_then(|b| b.build())
             .map(|p| Arc::new(RwLock::new(p)));
-            Message::CaptureInitialized(res.map_err(|e| Arc::new(crate::Error::from(e))))
+            Message::Capture(CaptureMessage::CaptureInitialized(
+                res.map_err(|e| Arc::new(crate::Error::from(e))),
+            ))
         })
     }
 
@@ -559,7 +617,7 @@ impl Fjarsyn {
             ..Default::default()
         })
         .1
-        .map(Message::WindowOpened)
+        .map(|id| Message::WindowEvent(WindowEventMessage::WindowOpened(id)))
     }
 
     fn load_fonts_task() -> Task<Message> {
@@ -612,11 +670,11 @@ impl Fjarsyn {
                     text(sender_name).size(20).style(text::primary),
                     row![
                         button(row![lucide::phone_incoming().size(16), text("Accept")].spacing(10))
-                            .on_press(Message::AcceptCall)
+                            .on_press(Message::CallAction(CallActionMessage::AcceptCall))
                             .style(button::success)
                             .padding(10),
                         button(row![lucide::phone_off().size(16), text("Decline")].spacing(10))
-                            .on_press(Message::DeclineCall)
+                            .on_press(Message::CallAction(CallActionMessage::DeclineCall))
                             .style(button::danger)
                             .padding(10),
                     ]

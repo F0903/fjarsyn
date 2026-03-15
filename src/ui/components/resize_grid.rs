@@ -4,7 +4,7 @@ use iced::{
     window,
 };
 
-use crate::ui::message::Message;
+use crate::ui::message::{Message, WindowControlMessage};
 
 pub fn resize_grid<'a>() -> Element<'a, Message> {
     let handle_size = 5.0;
@@ -13,7 +13,7 @@ pub fn resize_grid<'a>() -> Element<'a, Message> {
     let resize_handle =
         |direction: window::Direction, width: Length, height: Length| -> Element<'a, Message> {
             mouse_area(container(Space::new()).width(width).height(height))
-                .on_press(Message::Resize(direction))
+                .on_press(Message::WindowControl(WindowControlMessage::Resize(direction)))
                 .interaction(match direction {
                     window::Direction::North | window::Direction::South => {
                         mouse::Interaction::ResizingVertically

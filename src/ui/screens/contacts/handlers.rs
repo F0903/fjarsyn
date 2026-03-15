@@ -1,16 +1,18 @@
 use iced::Task;
 
 use super::{ContactsMessage, ContactsScreen};
-use crate::{
-    services::contact_service::ContactService,
-    ui::{app::AppContext, message::Message},
+use crate::ui::{
+    app::AppContext,
+    message::{ContactsServiceMessage, Message, NotificationMessage, ScreenMessage},
 };
 
 pub fn handle_load_contacts(ctx: &AppContext) -> Task<Message> {
-    let Some(db) = ctx.db.clone() else {
+    let Some(service) = ctx.contacts_service.clone() else {
         return Task::none();
     };
-    Task::future(async move { Message::ContactsLoaded(ContactService::list(&db).await) })
+    Task::future(async move {
+        Message::ContactData(ContactsServiceMessage::ContactsLoaded(service.list().await))
+    })
 }
 
 pub fn handle_save_contact(
@@ -19,31 +21,37 @@ pub fn handle_save_contact(
     name: String,
     address: Option<String>,
 ) -> Task<Message> {
-    let Some(db) = ctx.db.clone() else {
+    let Some(service) = ctx.contacts_service.clone() else {
         return Task::none();
     };
     Task::future(async move {
-        Message::ContactSaved(ContactService::create(&db, peer_id, name, address).await)
+        Message::ContactData(ContactsServiceMessage::ContactSaved(
+            service.create(peer_id, name, address).await,
+        ))
     })
 }
 
 pub fn handle_delete_contact(ctx: &AppContext, id: i64) -> Task<Message> {
-    let Some(db) = ctx.db.clone() else {
+    let Some(service) = ctx.contacts_service.clone() else {
         return Task::none();
     };
-    Task::future(async move { Message::ContactDeleted(ContactService::delete(&db, id).await) })
+    Task::future(async move {
+        Message::ContactData(ContactsServiceMessage::ContactDeleted(service.delete(id).await))
+    })
 }
 
 pub fn handle_update_address(ctx: &mut AppContext, id: i64, addr: String) -> Task<Message> {
     if let Some(c) = ctx.contacts.iter().find(|c| c.id == id) {
         ctx.notify_info(format!("Updating address for {}...", c.name));
-        return Task::done(Message::UpdateContactAddressConfirmed(id, addr));
+        return Task::done(Message::ContactData(
+            ContactsServiceMessage::UpdateContactAddressConfirmed(id, addr),
+        ));
     }
     Task::none()
 }
 
 pub fn handle_update_confirmed(ctx: &AppContext, id: i64, addr: String) -> Task<Message> {
-    let Some(db) = ctx.db.clone() else {
+    let Some(service) = ctx.contacts_service.clone() else {
         return Task::none();
     };
     let c = match ctx.contacts.iter().find(|c| c.id == id) {
@@ -51,10 +59,13 @@ pub fn handle_update_confirmed(ctx: &AppContext, id: i64, addr: String) -> Task<
         None => return Task::none(),
     };
     Task::future(async move {
-        let res = ContactService::update(&db, id, c.peer_id, c.name, Some(addr)).await;
+        let res = service.update(id, c.peer_id, c.name, Some(addr)).await;
         match res {
-            Ok(_) => Message::LoadContacts,
-            Err(e) => Message::NotifyError(format!("Update Failed: {}", e)),
+            Ok(_) => Message::ContactData(ContactsServiceMessage::LoadContacts),
+            Err(e) => Message::Notification(NotificationMessage::NotifyError(format!(
+                "Update Failed: {}",
+                e
+            ))),
         }
     })
 }
@@ -66,7 +77,7 @@ impl ContactsScreen {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::Contacts(msg) => match msg {
+            Message::Screen(ScreenMessage::Contacts(msg)) => match msg {
                 ContactsMessage::NameChanged(val) => {
                     self.new_contact_name = val;
                     Task::none()
@@ -101,7 +112,11 @@ impl ContactsScreen {
                     self.new_contact_address.clear();
                     self.show_add_form = false;
 
-                    Task::done(Message::SaveContact { peer_id, name, address })
+                    Task::done(Message::ContactData(ContactsServiceMessage::SaveContact {
+                        peer_id,
+                        name,
+                        address,
+                    }))
                 }
             },
             _ => Task::none(),

@@ -8,7 +8,7 @@ use super::{HomeMessage, HomeScreen};
 use crate::ui::{
     app::AppContext,
     fonts,
-    message::{CallTarget, Message},
+    message::{CallActionMessage, CallTarget, ContactsServiceMessage, Message, ScreenMessage},
     theme,
 };
 
@@ -34,12 +34,14 @@ impl HomeScreen {
                         "Enter IP:Port (e.g. 192.168.1.50:8080)...",
                         &self.manual_target_address
                     )
-                    .on_input(|val| Message::Home(HomeMessage::TargetAddressChanged(val)))
+                    .on_input(|val| Message::Screen(ScreenMessage::Home(
+                        HomeMessage::TargetAddressChanged(val),
+                    )))
                     .padding(10)
                     .style(theme::text_input_style),
                     button(row![lucide::phone().size(16), text("Call")].spacing(10))
-                        .on_press(Message::StartCall(CallTarget::Address(
-                            self.manual_target_address.clone()
+                        .on_press(Message::CallAction(CallActionMessage::StartCall(
+                            CallTarget::Address(self.manual_target_address.clone()),
                         )))
                         .padding(10)
                         .style(|theme, status| theme::button_style(theme, status, true)),
@@ -98,19 +100,21 @@ impl HomeScreen {
                                     ),
                                     self.action_button(
                                         lucide::phone(),
-                                        Message::StartCall(CallTarget::PeerId(peer.id.clone())),
+                                        Message::CallAction(CallActionMessage::StartCall(
+                                            CallTarget::PeerId(peer.id.clone()),
+                                        )),
                                         false
                                     ),
                                     self.action_button(
                                         lucide::user_plus(),
-                                        Message::SaveContact {
+                                        Message::ContactData(ContactsServiceMessage::SaveContact {
                                             peer_id: peer.id.clone(),
                                             name: peer.instance_name.clone(),
                                             address: peer
                                                 .addresses
                                                 .first()
                                                 .map(|ip| format!("{}:{}", ip, peer.port)),
-                                        },
+                                        }),
                                         true
                                     ),
                                 ]

@@ -8,7 +8,7 @@ use crate::{
     config::Config,
     define_tab,
     ui::{
-        message::Message,
+        message::{Message, ScreenMessage},
         screens::settings::{
             SettingsMessage,
             components::{setting_row, settings_section},
@@ -30,14 +30,18 @@ define_tab! {
                         "Record Cursor",
                         "Show the mouse cursor in the recording",
                         checkbox(config.record_cursor).on_toggle(|val| {
-                            Message::Settings(SettingsMessage::RecordCursorChanged(val))
+                            Message::Screen(ScreenMessage::Settings(
+                                SettingsMessage::RecordCursorChanged(val),
+                            ))
                         }),
                     ),
                      setting_row(
                         "Border Indicator",
                         "Show a yellow border around the recorded area",
                         checkbox(config.recording_border_indicator).on_toggle(|val| {
-                            Message::Settings(SettingsMessage::RecordingBorderIndicatorChanged(val))
+                            Message::Screen(ScreenMessage::Settings(
+                                SettingsMessage::RecordingBorderIndicatorChanged(val),
+                            ))
                         }),
                     ),
                 ]

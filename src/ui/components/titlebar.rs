@@ -4,7 +4,12 @@ use iced::{
 };
 use iced_fonts::lucide;
 
-use crate::ui::{app::APP_TITLE, fonts, message::Message, theme};
+use crate::ui::{
+    app::APP_TITLE,
+    fonts,
+    message::{Message, WindowControlMessage},
+    theme,
+};
 
 pub fn window_controls<'a>(is_maximized: bool) -> Element<'a, Message> {
     let control_button = |icon: iced::widget::Text<'a>, msg: Message, hover: Option<Color>| {
@@ -23,13 +28,21 @@ pub fn window_controls<'a>(is_maximized: bool) -> Element<'a, Message> {
     };
 
     row![
-        control_button(lucide::minus(), Message::Minimize, None),
         control_button(
-            if is_maximized { lucide::copy() } else { lucide::maximize() },
-            Message::Maximize,
+            lucide::minus(),
+            Message::WindowControl(WindowControlMessage::Minimize),
             None
         ),
-        control_button(lucide::x(), Message::Close, Some(theme::CONTROL_CLOSE_HOVER)),
+        control_button(
+            if is_maximized { lucide::copy() } else { lucide::maximize() },
+            Message::WindowControl(WindowControlMessage::Maximize),
+            None
+        ),
+        control_button(
+            lucide::x(),
+            Message::WindowControl(WindowControlMessage::Close),
+            Some(theme::CONTROL_CLOSE_HOVER)
+        ),
     ]
     .spacing(10)
     .align_y(Alignment::Center)
@@ -49,7 +62,7 @@ pub fn titlebar<'a>() -> Element<'a, Message> {
             .padding(Padding::from([0, 15]))
             .style(theme::titlebar_container),
     )
-    .on_press(Message::Drag)
-    .on_double_click(Message::Maximize)
+    .on_press(Message::WindowControl(WindowControlMessage::Drag))
+    .on_double_click(Message::WindowControl(WindowControlMessage::Maximize))
     .into()
 }

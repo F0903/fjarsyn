@@ -4,7 +4,10 @@ use iced::{
 };
 use iced_fonts::lucide;
 
-use crate::{services::notification_service::Notification, ui::message::Message};
+use crate::{
+    services::notification_service::Notification,
+    ui::message::{Message, NotificationMessage},
+};
 
 pub fn notifications_view<'a>(
     notifications: impl IntoIterator<Item = &'a Notification>,
@@ -23,7 +26,9 @@ pub fn notifications_view<'a>(
                     row![
                         text(&n.message).size(14).width(Length::Fill),
                         button(lucide::x().size(12))
-                            .on_press(Message::DismissNotification(n.id))
+                            .on_press(Message::Notification(
+                                NotificationMessage::DismissNotification(n.id,)
+                            ))
                             .style(button::text)
                             .padding(5),
                     ]
