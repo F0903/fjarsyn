@@ -11,7 +11,7 @@ use iced::{
 };
 use iced_core;
 
-use crate::utils::frame::Frame;
+use crate::media::frame::Frame;
 
 pub struct FrameViewer {
     frame: Arc<Frame>,
@@ -72,11 +72,25 @@ where
             return;
         };
 
-        let img_handle = advanced::image::Handle::from_rgba(
-            self.frame.size.x as u32,
-            self.frame.size.y as u32,
-            pixels,
-        );
+        // Iced image handles currently only support packed RGBA/BGRA.
+        // Planar formats like NV12 will need conversion before previewing.
+        if !self.frame.format.is_iced_compatible() {
+            return;
+        }
+
+        let img_handle = if self.frame.format == crate::media::pixel_format::PixelFormat::BGRA8 {
+            advanced::image::Handle::from_rgba(
+                self.frame.size.x as u32,
+                self.frame.size.y as u32,
+                pixels,
+            )
+        } else {
+            advanced::image::Handle::from_rgba(
+                self.frame.size.x as u32,
+                self.frame.size.y as u32,
+                pixels,
+            )
+        };
 
         let alloc = match renderer.load_image(&img_handle) {
             Ok(alloc) => alloc,

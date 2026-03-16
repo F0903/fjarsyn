@@ -5,8 +5,8 @@ use thiserror::Error;
 
 use crate::{
     capture_providers::CaptureFramerate,
-    media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
-    utils::{paths::CONFIG_DIR, pixel_format::PixelFormat},
+    media::{TargetResolution, ffmpeg::FFmpegTranscodeType, pixel_format::PixelFormat},
+    utils::paths::CONFIG_DIR,
 };
 
 #[derive(Debug, Error)]
@@ -39,7 +39,7 @@ impl Default for Config {
             target_bitrate: 8_000_000,
             target_framerate: CaptureFramerate::FPS60,
             target_resolution: TargetResolution::Source,
-            pixel_format: PixelFormat::RGBA8,
+            pixel_format: PixelFormat::BGRA8,
             max_depacket_latency: 1000,
             transcoding_type: FFmpegTranscodeType::default(),
             record_cursor: true,

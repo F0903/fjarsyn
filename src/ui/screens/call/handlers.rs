@@ -6,13 +6,15 @@ use tokio::sync::{Mutex, mpsc};
 use super::{CallMessage, CallScreen};
 use crate::{
     capture_providers::{CaptureProvider, user_pick_platform_capture_item},
-    media::ffmpeg::{FFmpegDecoder, FFmpegEncoder},
+    media::{
+        ffmpeg::{FFmpegDecoder, FFmpegEncoder},
+        frame::Frame,
+    },
     services::call_service::CallEvent,
     ui::{
         app::AppState,
         message::{CallServiceMessage, Message, NavigationMessage, Route, ScreenMessage},
     },
-    utils::frame::Frame,
 };
 
 impl CallScreen {

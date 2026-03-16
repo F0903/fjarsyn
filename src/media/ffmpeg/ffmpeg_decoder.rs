@@ -7,8 +7,8 @@ use ffmpeg::{
 use ffmpeg_next as ffmpeg;
 
 use crate::{
-    media::ffmpeg::FFmpegTranscodeType,
-    utils::{buffer_pool::BufferPool, frame::Frame, pixel_format::PixelFormat, vector2::Vector2},
+    media::{ffmpeg::FFmpegTranscodeType, frame::Frame, pixel_format::PixelFormat},
+    utils::{buffer_pool::BufferPool, vector2::Vector2},
 };
 
 type Result<T> = std::result::Result<T, FFmpegDecoderError>;

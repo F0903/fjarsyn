@@ -1,6 +1,6 @@
 use futures::Stream;
 
-use crate::utils::frame::Frame;
+use crate::media::frame::Frame;
 
 #[derive(Debug)]
 pub struct WindowsCaptureStream {

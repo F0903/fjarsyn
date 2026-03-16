@@ -3,14 +3,15 @@ use ffmpeg::{
     software::scaling::{self, Context as Scaler},
 };
 use ffmpeg_next as ffmpeg;
+use windows_core::Interface;
 
+#[cfg(target_os = "windows")]
+use crate::media::frame::FrameData;
 use crate::{
-    media::{TargetResolution, ffmpeg::FFmpegTranscodeType},
-    utils::{
-        frame::{Frame, FrameData},
-        num_utils::align_to_rounded,
-        pixel_format::PixelFormat,
+    media::{
+        TargetResolution, ffmpeg::FFmpegTranscodeType, frame::Frame, pixel_format::PixelFormat,
     },
+    utils::num_utils::align_to_rounded,
 };
 
 #[repr(C)]
@@ -48,6 +49,7 @@ pub struct FFmpegEncoder {
     frame_count: i64,
     current_src_width: i32,
     current_src_height: i32,
+    current_input_format: Option<PixelFormat>,
     hw_device_ctx: Option<*mut ffmpeg_next::ffi::AVBufferRef>,
 }
 
@@ -78,7 +80,16 @@ impl FFmpegEncoder {
                     let hw_ctx = (*ctx).data as *mut ffmpeg_next::ffi::AVHWDeviceContext;
                     let d3d11_ctx = (*hw_ctx).hwctx as *mut AVD3D11VADeviceContext;
 
+                    let device: windows::Win32::Graphics::Direct3D11::ID3D11Device =
+                        std::mem::transmute_copy(&handle);
+                    let device_context = device.GetImmediateContext().ok();
+
                     (*d3d11_ctx).device = handle as *mut _;
+                    if let Some(context) = device_context {
+                        // Transfer ownership to FFmpeg
+                        (*d3d11_ctx).device_context =
+                            std::mem::ManuallyDrop::new(context).as_raw() as *mut _;
+                    }
 
                     let ret = ffmpeg_next::ffi::av_hwdevice_ctx_init(ctx);
                     if ret < 0 {
@@ -105,6 +116,7 @@ impl FFmpegEncoder {
             frame_count: 0,
             current_src_width: 0,
             current_src_height: 0,
+            current_input_format: None,
             hw_device_ctx,
         })
     }
@@ -127,6 +139,7 @@ impl FFmpegEncoder {
         transcoding_type: FFmpegTranscodeType,
         src_width: i32,
         src_height: i32,
+        input_format: PixelFormat,
         dst_format: format::Pixel,
     ) -> Result<()> {
         let encoder_info = transcoding_type.get_encoder_info();
@@ -139,14 +152,14 @@ impl FFmpegEncoder {
             .video()
             .map_err(FFmpegEncoderError::Create)?;
 
-        let (aligned_src_width, aligned_src_height) =
-            (align_to_rounded(src_width, 2), align_to_rounded(src_height, 2));
         let (aligned_dst_width, aligned_dst_height) =
             self.compute_dst_resolution(src_width, src_height);
 
         codec_context.set_width(aligned_dst_width);
         codec_context.set_height(aligned_dst_height);
-        codec_context.set_format(encoder_info.input_format);
+
+        let ffmpeg_input_format = input_format.to_ffmpeg_pixel_format();
+        codec_context.set_format(ffmpeg_input_format);
         codec_context.set_bit_rate(self.bitrate as usize);
 
         let time_base = Rational(1, self.target_framerate_hz as i32);
@@ -164,14 +177,17 @@ impl FFmpegEncoder {
                     let frames_ctx =
                         (*frames_ctx_ref).data as *mut ffmpeg_next::ffi::AVHWFramesContext;
                     (*frames_ctx).format = ffmpeg_next::ffi::AVPixelFormat::AV_PIX_FMT_D3D11;
-                    (*frames_ctx).sw_format = ffmpeg_next::ffi::AVPixelFormat::AV_PIX_FMT_NV12;
+                    (*frames_ctx).sw_format = ffmpeg_input_format.into();
                     (*frames_ctx).width = aligned_dst_width as i32;
                     (*frames_ctx).height = aligned_dst_height as i32;
                     (*frames_ctx).initial_pool_size = 0;
 
                     let ret = ffmpeg_next::ffi::av_hwframe_ctx_init(frames_ctx_ref);
                     if ret >= 0 {
-                        tracing::info!("Initialized D3D11 hardware frames context");
+                        tracing::info!(
+                            "Initialized D3D11 hardware frames context ({:?})",
+                            ffmpeg_input_format
+                        );
                         (*codec_context.as_mut_ptr()).hw_frames_ctx =
                             ffmpeg_next::ffi::av_buffer_ref(frames_ctx_ref);
                         // Force the encoder to use the hardware format
@@ -188,22 +204,22 @@ impl FFmpegEncoder {
         transcoding_type.set_encoder_options(&mut opts);
 
         tracing::info!(
-            "Opening encoder with: width={}, height={}, bitrate={}, time_base={:?}, frame_rate={:?}, gop={}, max_b_frames={}, format={:?}",
-            aligned_src_width,
-            aligned_src_height,
+            "Opening encoder with: width={}, height={}, bitrate={}, time_base={:?}, frame_rate={:?}, gop={}, max_b_frames={}, input_format={:?}",
+            aligned_dst_width,
+            aligned_dst_height,
             self.bitrate,
             time_base,
             codec_context.frame_rate(),
             Self::GOP_VALUE,
             Self::B_FRAMES_VALUE,
-            encoder_info.input_format
+            ffmpeg_input_format
         );
 
         let encoder = codec_context.open_with(opts).map_err(FFmpegEncoderError::Create)?;
         self.encoder = Some(encoder);
 
         let scaler = scaling::Context::get(
-            self.input_format.to_ffmpeg_pixel_format(),
+            ffmpeg_input_format,
             src_width as u32,
             src_height as u32,
             dst_format,
@@ -216,11 +232,11 @@ impl FFmpegEncoder {
 
         self.current_src_width = src_width;
         self.current_src_height = src_height;
+        self.current_input_format = Some(input_format);
 
         Ok(())
     }
 
-    /// Encodes a frame into a list of NAL units (as packets).
     pub fn encode(
         &mut self,
         frame: &Frame,
@@ -233,35 +249,113 @@ impl FFmpegEncoder {
         if self.encoder.is_none()
             || self.current_src_width != width
             || self.current_src_height != height
+            || self.current_input_format != Some(frame.format)
         {
-            self.init_encoder(transcoding_type, width, height, dst_format)?;
+            self.init_encoder(transcoding_type, width, height, frame.format, dst_format)?;
         }
 
         let (dst_w, dst_h) = self.compute_dst_resolution(width, height);
         let encoder = self.encoder.as_mut().unwrap();
         let mut input_frame = ffmpeg::frame::Video::empty();
 
+        //TODO: refactor
         match &frame.data {
             #[cfg(target_os = "windows")]
             FrameData::D3D11 { texture, .. } if self.hw_device_ctx.is_some() => {
-                input_frame.set_format(format::Pixel::D3D11);
-                input_frame.set_width(width as u32);
-                input_frame.set_height(height as u32);
+                let hw_device_ctx = self.hw_device_ctx.unwrap();
                 unsafe {
-                    let ptr = input_frame.as_mut_ptr();
-                    (*ptr).data[0] = windows_core::Interface::as_raw(texture) as *mut u8;
+                    let hw_ctx = (*hw_device_ctx).data as *mut ffmpeg_next::ffi::AVHWDeviceContext;
+                    let d3d11_ctx = (*hw_ctx).hwctx as *mut AVD3D11VADeviceContext;
+                    let device_context_ptr = (*d3d11_ctx).device_context;
+
+                    if device_context_ptr.is_null() {
+                        tracing::error!("D3D11DeviceContext is null in AVHWDeviceContext");
+                        return Err(FFmpegEncoderError::Encode(ffmpeg::Error::InvalidData));
+                    }
+
+                    let device_context: &windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext =
+                        std::mem::transmute(&device_context_ptr);
+
+                    let codec_context = encoder.as_mut_ptr();
+                    let hw_frames_ctx = (*codec_context).hw_frames_ctx;
+
+                    if hw_frames_ctx.is_null() {
+                        tracing::error!("hw_frames_ctx is null on encoder context");
+                        return Err(FFmpegEncoderError::Encode(ffmpeg::Error::InvalidData));
+                    }
+
+                    // Request a new hardware frame from FFmpeg's pool
+                    let ret = ffmpeg_next::ffi::av_hwframe_get_buffer(
+                        hw_frames_ctx,
+                        input_frame.as_mut_ptr(),
+                        0,
+                    );
+                    if ret < 0 {
+                        tracing::error!("av_hwframe_get_buffer failed: {}", ret);
+                        return Err(FFmpegEncoderError::Encode(ffmpeg::Error::InvalidData));
+                    }
+
+                    // Extract FFmpeg's destination texture
+                    let dst_texture_ptr =
+                        (*input_frame.as_mut_ptr()).data[0] as *mut std::ffi::c_void;
+                    let dst_subresource = (*input_frame.as_mut_ptr()).data[1] as usize as u32;
+
+                    if dst_texture_ptr.is_null() {
+                        tracing::error!("Allocated hardware frame has null texture pointer");
+                        return Err(FFmpegEncoderError::Encode(ffmpeg::Error::InvalidData));
+                    }
+
+                    let dst_texture: &windows::Win32::Graphics::Direct3D11::ID3D11Texture2D =
+                        std::mem::transmute(&dst_texture_ptr);
+
+                    // We might need an exclusive lock if the context is shared?
+                    if let Some(lock) = (*d3d11_ctx).lock {
+                        lock((*d3d11_ctx).lock_ctx);
+                    }
+
+                    let mut src_desc = std::mem::zeroed();
+                    texture.GetDesc(&mut src_desc);
+                    let mut dst_desc = std::mem::zeroed();
+                    dst_texture.GetDesc(&mut dst_desc);
+
+                    if src_desc.Format != dst_desc.Format {
+                        tracing::error!(
+                            "GPU Copy aborted! Format mismatch: {:?} vs {:?}",
+                            src_desc.Format,
+                            dst_desc.Format
+                        );
+                    } else {
+                        let src_box = windows::Win32::Graphics::Direct3D11::D3D11_BOX {
+                            left: 0,
+                            top: 0,
+                            front: 0,
+                            right: std::cmp::min(width as u32, dst_w),
+                            bottom: std::cmp::min(height as u32, dst_h),
+                            back: 1,
+                        };
+
+                        // Perform GPU-to-GPU copy from WGC texture to FFmpeg texture
+                        device_context.CopySubresourceRegion(
+                            dst_texture,
+                            dst_subresource,
+                            0,
+                            0,
+                            0,
+                            texture,
+                            0,
+                            Some(&src_box),
+                        );
+                    }
+
+                    if let Some(unlock) = (*d3d11_ctx).unlock {
+                        unlock((*d3d11_ctx).lock_ctx);
+                    }
                 }
 
                 input_frame.set_pts(Some(self.frame_count));
                 self.frame_count += 1;
 
                 encoder.send_frame(&input_frame).map_err(FFmpegEncoderError::Encode)?;
-
-                // CLEANUP: Nullify the pointers so `input_frame`'s Drop doesn't free our borrowed handle.
-                unsafe {
-                    let ptr = input_frame.as_mut_ptr();
-                    (*ptr).data[0] = std::ptr::null_mut();
-                }
             }
             _ => {
                 // Software path (or D3D11 fallback if no hw_device_ctx)

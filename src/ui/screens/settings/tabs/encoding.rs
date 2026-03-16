@@ -66,7 +66,7 @@ define_tab! {
                         "Bitrate",
                         "Target bitrate for the video stream",
                         row![
-                            slider(100_000..=10_000_000, config.target_bitrate, |val| {
+                            slider(100_000..=100_000_000, config.target_bitrate, |val| {
                                 Message::Screen(ScreenMessage::Settings(
                                     SettingsMessage::TargetBitrateChanged(val),
                                 ))

@@ -1,11 +1,13 @@
-use crate::utils::pixel_format::PixelFormat;
+use crate::media::pixel_format::PixelFormat;
 
 #[inline]
-pub fn ensure_rgba(bitmap: &mut [u8], src_format: &mut PixelFormat) {
+pub fn ensure_rgba8(bitmap: &mut [u8], src_format: &mut PixelFormat) {
     match src_format {
-        PixelFormat::RGBA16 => (),
+        PixelFormat::RGBA16 => (), // TODO: Support RGBA16 conversion
+        PixelFormat::RGBA10 => (), // TODO: Support RGBA10 conversion
         PixelFormat::RGBA8 => (),
         PixelFormat::BGRA8 => bgra8_to_rgba8(bitmap),
+        PixelFormat::NV12 => (), // TODO: Support NV12 conversion
     };
     *src_format = PixelFormat::RGBA8;
 }

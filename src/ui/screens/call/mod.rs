@@ -10,13 +10,12 @@ use crate::{
     capture_providers::{
         CaptureFramerate, CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream,
     },
-    media::ffmpeg::FFmpegDecoder,
+    media::{ffmpeg::FFmpegDecoder, frame::Frame},
     ui::{
         app::AppState,
         message::{Message, ScreenMessage},
         screens::Screen,
     },
-    utils::frame::Frame,
 };
 
 mod handlers;

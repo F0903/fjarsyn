@@ -8,7 +8,7 @@ use crate::{
             d3d11_utils::{create_d3d_device, native_to_winrt_d3d11device},
         },
     },
-    utils::pixel_format::PixelFormat,
+    media::pixel_format::PixelFormat,
 };
 
 type Result<T> = std::result::Result<T, WgcCaptureProviderBuilderError>;

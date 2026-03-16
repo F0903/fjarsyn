@@ -42,11 +42,23 @@ macro_rules! define_pixel_formats {
                     )*
                 }
             }
+
+            pub const fn is_iced_compatible(&self) -> bool {
+                match self {
+                    PixelFormat::RGBA8 | PixelFormat::BGRA8 => true,
+                    _ => false,
+                }
+            }
         }
     };
 }
 
 define_pixel_formats! {
+    RGBA10 {
+        bytes: 4,
+        directx: DirectXPixelFormat::R10G10B10A2UIntNormalized,
+        ffmpeg: ffmpeg_next::format::Pixel::X2RGB10LE,
+    },
     RGBA16 {
         bytes: 8,
         directx: DirectXPixelFormat::R16G16B16A16Float,
@@ -61,5 +73,10 @@ define_pixel_formats! {
         bytes: 4,
         directx: DirectXPixelFormat::B8G8R8A8UIntNormalized,
         ffmpeg: ffmpeg_next::format::Pixel::BGRA,
+    },
+    NV12 {
+        bytes: 2, // Average bytes per pixel
+        directx: DirectXPixelFormat::NV12,
+        ffmpeg: ffmpeg_next::format::Pixel::NV12,
     }
 }

@@ -3,6 +3,8 @@ use std::fmt::Display;
 use crate::utils::vector2::Vector2;
 
 pub mod ffmpeg;
+pub mod frame;
+pub mod pixel_format;
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
 pub enum TargetResolution {

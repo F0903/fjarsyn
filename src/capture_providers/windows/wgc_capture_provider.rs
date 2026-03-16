@@ -27,13 +27,12 @@ use crate::{
         CaptureFramerate, CaptureProvider,
         windows::{
             WindowsCaptureError, WindowsCaptureStream,
-            d3d11_utils::{copy_texture, map_read_texture},
+            d3d11_utils::{copy_texture, map_read_texture, winrt_to_native_d3d11device},
         },
     },
+    media::{frame::Frame, pixel_format::PixelFormat},
     utils::{
         buffer_pool::{Buffer, BufferPool},
-        frame::Frame,
-        pixel_format::PixelFormat,
         vector2::Vector2,
     },
 };
@@ -65,11 +64,11 @@ pub struct WgcCaptureProvider {
 }
 
 impl WgcCaptureProvider {
-    const WGC_FRAME_BUFFERS: i32 = 2;
+    const WGC_FRAME_BUFFERS: i32 = 5;
     const PIPELINE_DEPTH: usize = 2;
     const TX_QUEUE_SIZE: usize = 2;
-    const BUFFER_SIZE: usize = 128000;
-    const BUFFER_MAX_COUNT: usize = 4;
+    const BUFFER_SIZE: usize = 16 * 1024 * 1024;
+    const BUFFER_MAX_COUNT: usize = 8;
 
     pub fn new(
         device: IDirect3DDevice,
@@ -181,9 +180,13 @@ impl WgcCaptureProvider {
 
         let frame_duration = std::time::Duration::from_nanos((rel_time.Duration / 100) as u64);
 
+        let keep_alive: std::sync::Arc<dyn std::any::Any + Send + Sync> =
+            std::sync::Arc::new(frame);
+
         let frame = Frame::new_d3d11(
             texture.clone(),
             Some(frame_buffer), // We currently always map for simplicity, but could be None if preview is off
+            Some(keep_alive),
             pixel_format,
             Vector2 { x: size.Width, y: size.Height },
             Some(frame_duration),
@@ -444,9 +447,12 @@ impl CaptureProvider for WgcCaptureProvider {
 
     fn raw_device_handle(&self) -> Option<*mut std::ffi::c_void> {
         // Convert the WinRT device to the native COM ID3D11Device
-        crate::capture_providers::windows::d3d11_utils::winrt_to_native_d3d11device(&self.device)
-            .ok()
-            .map(|d| d.as_raw() as *mut std::ffi::c_void)
+        winrt_to_native_d3d11device(&self.device).ok().map(|d| {
+            // We wrap it in ManuallyDrop because FFmpeg's AVHWDeviceContext takes ownership
+            // of this device pointer and will call Release() on it when destroyed.
+            let d = std::mem::ManuallyDrop::new(d);
+            windows_core::Interface::as_raw(&*d) as *mut std::ffi::c_void
+        })
     }
 }
 

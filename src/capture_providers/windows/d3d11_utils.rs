@@ -58,6 +58,19 @@ pub(super) fn create_d3d_device() -> Result<ID3D11Device> {
 
     let device = device.expect("ID3D11Device");
     let dxgi_device: IDXGIDevice = device.cast()?;
+
+    // Make the immediate context thread-safe
+    if let Ok(multithread) =
+        device.cast::<windows::Win32::Graphics::Direct3D11::ID3D11Multithread>()
+    {
+        unsafe {
+            let _ = multithread.SetMultithreadProtected(true);
+        }
+        tracing::info!("Enabled D3D11 multithread protection.");
+    } else {
+        tracing::warn!("Failed to get ID3D11Multithread, context may not be thread-safe!");
+    }
+
     let adapter = unsafe { dxgi_device.GetAdapter()? };
 
     let desc = unsafe { adapter.GetDesc()? };
@@ -169,16 +182,42 @@ pub(super) fn map_read_texture(
         let map_duration = map_start.elapsed();
 
         let height = tex_desc.Height as usize;
-        let bytes_per_row = tex_desc.Width as usize * bytes_per_pixel as usize;
+        let bytes_per_row = match tex_desc.Format {
+            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12 => tex_desc.Width as usize,
+            _ => tex_desc.Width as usize * bytes_per_pixel as usize,
+        };
         let row_pitch = mapped.RowPitch as usize;
-        let total_bytes = bytes_per_row * height;
+        let total_bytes = match tex_desc.Format {
+            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12 => {
+                (tex_desc.Width as usize * tex_desc.Height as usize * 3) / 2
+            }
+            _ => bytes_per_row * height,
+        };
 
         let copy_start = std::time::Instant::now();
-        if row_pitch == bytes_per_row {
-            // Optimization: If the pitch matches the width, we can copy the entire buffer in one go.
+        if row_pitch == bytes_per_row
+            && tex_desc.Format != windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12
+        {
+            // If the pitch matches the width and it's a simple packed format, we can copy the entire buffer in one go.
             std::ptr::copy_nonoverlapping(mapped.pData.cast(), memory.as_mut_ptr(), total_bytes);
+        } else if tex_desc.Format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12 {
+            // NV12 Copy
+            // Y Plane
+            for y in 0..height {
+                let src_row = mapped.pData.add(y * row_pitch);
+                let dst_row = memory.as_mut_ptr().add(y * bytes_per_row);
+                std::ptr::copy_nonoverlapping(src_row.cast(), dst_row, bytes_per_row);
+            }
+            // UV Plane
+            let uv_src_base = mapped.pData.add(height * row_pitch);
+            let uv_dst_base = memory.as_mut_ptr().add(height * bytes_per_row);
+            for y in 0..height / 2 {
+                let src_row = uv_src_base.add(y * row_pitch);
+                let dst_row = uv_dst_base.add(y * bytes_per_row);
+                std::ptr::copy_nonoverlapping(src_row.cast(), dst_row, bytes_per_row);
+            }
         } else {
-            // Strided copy (handling padding bytes)
+            // Strided copy (handling padding bytes) for packed formats
             for y in 0..height {
                 let src_row = mapped.pData.add(y * row_pitch);
                 let dst_row = memory.as_mut_ptr().add(y * bytes_per_row);
