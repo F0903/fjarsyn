@@ -9,17 +9,20 @@ use crate::{
     ui::{
         self,
         app::AppState,
-        components::{FrameViewer, WgpuFrameViewer},
+        components::{CpuFrameViewer, GpuFrameViewer},
         message::{Message, NavigationMessage, Route, ScreenMessage},
     },
 };
 
 impl CallScreen {
-    pub fn render_view<'a>(&'a self, _ctx: &'a AppState) -> Element<'a, Message> {
+    pub fn render_view<'a>(&'a self, ctx: &'a AppState) -> Element<'a, Message> {
         let content = stack![
             self.view_remote_video(),
-            self.view_local_preview(),
-            container(self.view_controls()).width(Length::Fill).align_y(Alignment::End).padding(20)
+            self.view_local_preview(ctx),
+            container(self.view_controls(ctx))
+                .width(Length::Fill)
+                .align_y(Alignment::End)
+                .padding(20)
         ];
 
         container(content)
@@ -31,20 +34,40 @@ impl CallScreen {
 
     fn view_remote_video(&self) -> Element<'_, Message> {
         match self.remote_frame.clone() {
-            Some(frame) => container(FrameViewer::new(frame)).center(Length::Fill).into(),
+            Some(frame) => container(CpuFrameViewer::new(frame)).center(Length::Fill).into(),
             None => container(text("Waiting for video...").size(30)).center(Length::Fill).into(),
         }
     }
 
-    fn view_local_preview(&self) -> Element<'_, Message> {
+    fn view_local_preview(&self, ctx: &AppState) -> Element<'_, Message> {
         if let Some(local_frame) = self.local_frame.clone()
             && self.show_local_preview
+            && ctx.config.enable_ui_preview
         {
             let viewer: Element<'_, Message> = match &local_frame.data {
-                FrameData::D3D11 { shared_handle: Some(_), .. } => {
-                    WgpuFrameViewer::new(local_frame).into()
+                FrameData::D3D11 { shared_handle: Some(_), .. }
+                    if crate::utils::gpu_preview::can_zero_copy_preview(local_frame.format) =>
+                {
+                    GpuFrameViewer::new(local_frame).into()
                 }
-                _ => FrameViewer::new(local_frame).into(),
+                _ if local_frame.format.supports_software_preview() => {
+                    CpuFrameViewer::new(local_frame).into()
+                }
+                _ => {
+                    return container(
+                        container(text("Preview unavailable for this format.").size(12))
+                            .width(Length::Fixed(320.0))
+                            .height(Length::Fixed(180.0))
+                            .center(Length::Fill)
+                            .style(container::bordered_box),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::End)
+                    .align_y(Alignment::End)
+                    .padding(20)
+                    .into();
+                }
             };
 
             container(
@@ -64,7 +87,7 @@ impl CallScreen {
         }
     }
 
-    fn view_controls(&self) -> Element<'_, Message> {
+    fn view_controls(&self, ctx: &AppState) -> Element<'_, Message> {
         let mut controls_row = Row::new()
             .push(button("Settings").on_press(Message::Navigation(
                 NavigationMessage::NavigateWithBack(Route::Settings),
@@ -74,18 +97,27 @@ impl CallScreen {
         controls_row = if self.capture.is_none() {
             controls_row.push(text("Screen sharing unavailable").size(14).style(text::secondary))
         } else if self.is_capturing() {
-            controls_row.extend([
+            let mut buttons = vec![
                 button("Change Screen")
                     .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StartCapture)))
                     .into(),
-                button(if self.show_local_preview { "Hide Preview" } else { "Show Preview" })
-                    .on_press(Message::Screen(ScreenMessage::Call(CallMessage::ToggleLocalPreview)))
-                    .into(),
+            ];
+            if ctx.config.enable_ui_preview {
+                buttons.push(
+                    button(if self.show_local_preview { "Hide Preview" } else { "Show Preview" })
+                        .on_press(Message::Screen(ScreenMessage::Call(
+                            CallMessage::ToggleLocalPreview,
+                        )))
+                        .into(),
+                );
+            }
+            buttons.push(
                 button("Stop Sharing")
                     .style(iced::widget::button::danger)
                     .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StopCapture)))
                     .into(),
-            ])
+            );
+            controls_row.extend(buttons)
         } else {
             controls_row.extend([button("Share Screen")
                 .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StartCapture)))

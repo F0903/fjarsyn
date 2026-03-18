@@ -29,7 +29,7 @@ pub struct WgcCaptureProviderBuilder {
     pixel_format: PixelFormat,
     record_cursor: bool,
     border_indicator: bool,
-    enable_ui_preview: bool,
+    cpu_readback_enabled: bool,
 }
 
 impl WgcCaptureProviderBuilder {
@@ -37,7 +37,7 @@ impl WgcCaptureProviderBuilder {
         pixel_format: PixelFormat,
         record_cursor: bool,
         border_indicator: bool,
-        enable_ui_preview: bool,
+        cpu_readback_enabled: bool,
     ) -> Self {
         WgcCaptureProviderBuilder {
             device: None,
@@ -45,7 +45,7 @@ impl WgcCaptureProviderBuilder {
             pixel_format,
             record_cursor,
             border_indicator,
-            enable_ui_preview,
+            cpu_readback_enabled,
         }
     }
 
@@ -76,7 +76,7 @@ impl WgcCaptureProviderBuilder {
             self.pixel_format,
             self.record_cursor,
             self.border_indicator,
-            self.enable_ui_preview,
+            self.cpu_readback_enabled,
         );
         if let Some(capture_item) = self.capture_item {
             capture.set_capture_item(capture_item)?;

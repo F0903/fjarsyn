@@ -77,9 +77,7 @@ impl FFmpegEncoder {
 
         let hw_accel = transcoding_type.get_encoder_info().hw_accel;
         let hw_device_ctx = match hw_accel {
-            HWAccelType::D3D11VA => {
-                device_handle.and_then(|handle| Self::init_hw_device_ctx(handle))
-            }
+            HWAccelType::D3D11VA => device_handle.and_then(Self::init_hw_device_ctx),
             HWAccelType::None => None,
         };
 
@@ -291,13 +289,12 @@ impl FFmpegEncoder {
         let (dst_w, dst_h) = self.compute_dst_resolution(width, height);
 
         #[cfg(target_os = "windows")]
-        if transcoding_type.get_encoder_info().hw_accel == HWAccelType::D3D11VA {
-            if let FrameData::D3D11 { texture, .. } = &frame.data {
-                if self.hw_device_ctx.is_some() {
-                    self.encode_d3d11(texture, width, height, dst_w, dst_h)?;
-                    return self.collect_nal_units();
-                }
-            }
+        if transcoding_type.get_encoder_info().hw_accel == HWAccelType::D3D11VA
+            && let FrameData::D3D11 { texture, .. } = &frame.data
+            && self.hw_device_ctx.is_some()
+        {
+            self.encode_d3d11(texture, width, height, dst_w, dst_h)?;
+            return self.collect_nal_units();
         }
 
         self.encode_software(frame, width, height, dst_w, dst_h, dst_format)?;
@@ -422,7 +419,7 @@ impl FFmpegEncoder {
 
         let pixels = frame
             .get_software_pixels()
-            .ok_or_else(|| FFmpegEncoderError::Conversion(ffmpeg::Error::InvalidData))?;
+            .ok_or(FFmpegEncoderError::Conversion(ffmpeg::Error::InvalidData))?;
 
         input_frame.set_format(self.input_format.to_ffmpeg_pixel_format());
         input_frame.set_width(width as u32);

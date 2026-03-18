@@ -13,17 +13,17 @@ use iced_core;
 
 use crate::media::frame::Frame;
 
-pub struct FrameViewer {
+pub struct CpuFrameViewer {
     frame: Arc<Frame>,
 }
 
-impl FrameViewer {
+impl CpuFrameViewer {
     pub fn new(frame: Arc<Frame>) -> Self {
         Self { frame }
     }
 }
 
-impl<Theme, Message, Renderer> Widget<Message, Theme, Renderer> for FrameViewer
+impl<Theme, Message, Renderer> Widget<Message, Theme, Renderer> for CpuFrameViewer
 where
     Renderer: iced::advanced::image::Renderer<Handle = iced::advanced::image::Handle>,
 {
@@ -97,12 +97,12 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<FrameViewer> for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> From<CpuFrameViewer> for Element<'a, Message, Theme, Renderer>
 where
     Renderer: iced::advanced::image::Renderer<Handle = iced::advanced::image::Handle>,
     Message: 'a,
 {
-    fn from(widget: FrameViewer) -> Self {
+    fn from(widget: CpuFrameViewer) -> Self {
         Self::new(widget)
     }
 }

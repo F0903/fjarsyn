@@ -50,6 +50,11 @@ struct ResourcePool {
     height: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CaptureOptions {
+    cpu_readback_enabled: bool,
+}
+
 // Windows Graphics Capture (WGC) Provider
 #[derive(Debug)]
 pub struct WgcCaptureProvider {
@@ -57,6 +62,7 @@ pub struct WgcCaptureProvider {
     capture_item: Option<GraphicsCaptureItem>,
     pixel_format: PixelFormat,
     resource_state: Arc<RwLock<ResourcePool>>,
+    capture_options: Arc<RwLock<CaptureOptions>>,
     buffer_pool: BufferPool,
 
     frame_pool: Option<Direct3D11CaptureFramePool>,
@@ -66,7 +72,6 @@ pub struct WgcCaptureProvider {
 
     record_cursor: bool,
     border_indicator: bool,
-    enable_ui_preview: bool,
 }
 
 impl WgcCaptureProvider {
@@ -80,13 +85,14 @@ impl WgcCaptureProvider {
         pixel_format: PixelFormat,
         record_cursor: bool,
         border_indicator: bool,
-        enable_ui_preview: bool,
+        cpu_readback_enabled: bool,
     ) -> Self {
         Self {
             device,
             capture_item: None,
             pixel_format,
             resource_state: Arc::new(RwLock::new(ResourcePool::default())),
+            capture_options: Arc::new(RwLock::new(CaptureOptions { cpu_readback_enabled })),
             buffer_pool: BufferPool::init(Self::BUFFER_SIZE, Self::BUFFER_MAX_COUNT),
             frame_pool: None,
             session: None,
@@ -94,8 +100,11 @@ impl WgcCaptureProvider {
             capturing: false,
             record_cursor,
             border_indicator,
-            enable_ui_preview,
         }
+    }
+
+    pub fn set_cpu_readback_enabled(&mut self, enabled: bool) {
+        self.capture_options.write().unwrap().cpu_readback_enabled = enabled;
     }
 
     fn process_frame(
@@ -294,9 +303,8 @@ impl WgcCaptureProvider {
                     dxgi_res
                         .CreateSharedHandle(
                             None,
-                            (windows::Win32::Graphics::Dxgi::DXGI_SHARED_RESOURCE_READ.0
-                                | windows::Win32::Graphics::Dxgi::DXGI_SHARED_RESOURCE_WRITE.0)
-                                as u32,
+                            windows::Win32::Graphics::Dxgi::DXGI_SHARED_RESOURCE_READ.0
+                                | windows::Win32::Graphics::Dxgi::DXGI_SHARED_RESOURCE_WRITE.0,
                             None,
                         )
                         .map_err(|e| {
@@ -383,8 +391,8 @@ impl CaptureProvider for WgcCaptureProvider {
 
         let buffer_pool = self.buffer_pool.clone();
         let resource_state_arc_inner = resource_state_arc.clone();
+        let capture_options = self.capture_options.clone();
         let pixel_format = self.pixel_format;
-        let enable_ui_preview = self.enable_ui_preview;
 
         let token = frame_pool
             .FrameArrived(&TypedEventHandler::new(move |sender, _| {
@@ -393,7 +401,7 @@ impl CaptureProvider for WgcCaptureProvider {
                     return Ok(());
                 }
 
-                let sender: &Direct3D11CaptureFramePool = match &*sender {
+                let sender: &Direct3D11CaptureFramePool = match sender {
                     Some(s) => s,
                     None => return Ok(()),
                 };
@@ -402,10 +410,10 @@ impl CaptureProvider for WgcCaptureProvider {
                     Ok(frame) => {
                         let content_size = frame.ContentSize().unwrap_or(size);
                         let mut buffer = None;
+                        let capture_options = *capture_options.read().unwrap();
 
-                        // We only allocate CPU memory if the UI preview is enabled and zero-copy failed
-                        // Or if we specifically want a software fallback.
-                        if enable_ui_preview {
+                        // Only allocate CPU memory when downstream consumers genuinely need it.
+                        if capture_options.cpu_readback_enabled {
                             let buffer_size = content_size.Width as usize
                                 * content_size.Height as usize
                                 * pixel_format.bytes_per_pixel() as usize;
@@ -537,7 +545,7 @@ impl CaptureProvider for WgcCaptureProvider {
             // We wrap it in ManuallyDrop because FFmpeg's AVHWDeviceContext takes ownership
             // of this device pointer and will call Release() on it when destroyed.
             let d = std::mem::ManuallyDrop::new(d);
-            windows_core::Interface::as_raw(&*d) as *mut std::ffi::c_void
+            windows_core::Interface::as_raw(&*d)
         })
     }
 }

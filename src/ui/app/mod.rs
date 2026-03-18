@@ -97,6 +97,14 @@ pub struct Fjarsyn {
 }
 
 impl Fjarsyn {
+    fn capture_cpu_readback_enabled(config: &Config) -> bool {
+        crate::utils::gpu_preview::requires_cpu_readback(
+            config.enable_ui_preview,
+            config.pixel_format,
+            config.transcoding_type.get_encoder_info().hw_accel,
+        )
+    }
+
     pub fn init() -> (Self, Task<Message>) {
         let (frame_packet_tx, frame_packet_rx) = mpsc::channel(100);
         let (discovery_event_tx, discovery_event_rx) = mpsc::channel(100);
@@ -255,10 +263,13 @@ impl Fjarsyn {
         let fmt = config.pixel_format;
         let cursor = config.record_cursor;
         let border = config.recording_border_indicator;
-        let preview = config.enable_ui_preview;
+        let cpu_readback_enabled = Self::capture_cpu_readback_enabled(config);
         Task::future(async move {
             let res = crate::capture_providers::windows::WgcCaptureProviderBuilder::new(
-                fmt, cursor, border, preview,
+                fmt,
+                cursor,
+                border,
+                cpu_readback_enabled,
             )
             .with_default_device()
             .and_then(|b| b.with_default_capture_item())

@@ -13,10 +13,10 @@ struct Uniforms {
 @vertex
 fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var pos = array<vec2<f32>, 4>(
-        vec2<f32>(uniforms.ndc_min.x, uniforms.ndc_min.y), // Top-left
-        vec2<f32>(uniforms.ndc_max.x, uniforms.ndc_min.y), // Top-right
-        vec2<f32>(uniforms.ndc_min.x, uniforms.ndc_max.y), // Bottom-left
-        vec2<f32>(uniforms.ndc_max.x, uniforms.ndc_max.y)  // Bottom-right
+        vec2<f32>(uniforms.ndc_min.x, uniforms.ndc_min.y),
+        vec2<f32>(uniforms.ndc_max.x, uniforms.ndc_min.y),
+        vec2<f32>(uniforms.ndc_min.x, uniforms.ndc_max.y),
+        vec2<f32>(uniforms.ndc_max.x, uniforms.ndc_max.y)
     );
     var uv = array<vec2<f32>, 4>(
         vec2<f32>(0.0, 0.0),

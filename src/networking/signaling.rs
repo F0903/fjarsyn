@@ -112,10 +112,11 @@ async fn manage_dialer_connection<S>(
             msg = ws_stream.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(signaling_message) = serde_json::from_str::<SignalingMessage>(&text) {
-                            if to_webrtc_tx.send(signaling_message).await.is_err() {
-                                break;
-                            }
+                        if let Ok(signaling_message) =
+                            serde_json::from_str::<SignalingMessage>(&text)
+                            && to_webrtc_tx.send(signaling_message).await.is_err()
+                        {
+                            break;
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => {
@@ -162,10 +163,11 @@ async fn manage_listener_connection<S>(
             msg = ws_stream.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(signaling_message) = serde_json::from_str::<SignalingMessage>(&text) {
-                            if to_webrtc_tx.send(signaling_message).await.is_err() {
-                                break;
-                            }
+                        if let Ok(signaling_message) =
+                            serde_json::from_str::<SignalingMessage>(&text)
+                            && to_webrtc_tx.send(signaling_message).await.is_err()
+                        {
+                            break;
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => {

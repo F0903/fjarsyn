@@ -14,23 +14,23 @@ use crate::media::{
     pixel_format::PixelFormat,
 };
 
-pub struct WgpuFrameViewer {
+pub struct GpuFrameViewer {
     frame: Arc<Frame>,
 }
 
-impl WgpuFrameViewer {
+impl GpuFrameViewer {
     pub fn new(frame: Arc<Frame>) -> Self {
         Self { frame }
     }
 }
 
-impl<'a, Message: 'a> From<WgpuFrameViewer> for Element<'a, Message, iced::Theme, iced::Renderer> {
-    fn from(viewer: WgpuFrameViewer) -> Self {
+impl<'a, Message: 'a> From<GpuFrameViewer> for Element<'a, Message, iced::Theme, iced::Renderer> {
+    fn from(viewer: GpuFrameViewer) -> Self {
         shader::Shader::new(viewer).width(Length::Fill).height(Length::Fill).into()
     }
 }
 
-impl<Message> shader::Program<Message> for WgpuFrameViewer {
+impl<Message> shader::Program<Message> for GpuFrameViewer {
     type State = ();
     type Primitive = Primitive;
 
@@ -70,14 +70,11 @@ impl shader::Primitive for Primitive {
     fn prepare(
         &self,
         pipeline: &mut Self::Pipeline,
-        _device: &wgpu::Device,
+        device: &wgpu::Device,
         queue: &wgpu::Queue,
         bounds: &Rectangle,
         _viewport: &Viewport,
     ) {
-        // 1. Calculate the transformation using Normalized Device Coordinates (NDC) relative to the widget
-        // Iced's `shader` widget automatically sets the wgpu viewport to match the widget's physical bounds.
-        // Therefore, NDC [-1.0, 1.0] maps perfectly to the bounds of the widget itself.
         let bounds_w = bounds.width;
         let bounds_h = bounds.height;
 
@@ -95,11 +92,6 @@ impl shader::Primitive for Primitive {
             (aspect_image / aspect_widget, 1.0)
         };
 
-        // Note: wgpu NDC Y points up.
-        // pos[0] is Top-Left (-scale_x, scale_y)
-        // pos[1] is Top-Right (scale_x, scale_y)
-        // pos[2] is Bottom-Left (-scale_x, -scale_y)
-        // pos[3] is Bottom-Right (scale_x, -scale_y)
         let ndc_x = -scale_x;
         let ndc_x_max = scale_x;
         let ndc_y = scale_y; // Top
@@ -108,7 +100,6 @@ impl shader::Primitive for Primitive {
         let uniforms = Uniforms { ndc_min: [ndc_x, ndc_y], ndc_max: [ndc_x_max, ndc_y_max] };
         queue.write_buffer(&pipeline.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        // 2. Resource Caching
         let FrameData::D3D11 { shared_handle, .. } = &self.frame.data else {
             return;
         };
@@ -135,11 +126,11 @@ impl shader::Primitive for Primitive {
             PixelFormat::RGBA8 => wgpu::TextureFormat::Rgba8Unorm,
             PixelFormat::RGBA16 => wgpu::TextureFormat::Rgba16Float,
             PixelFormat::RGBA10 => wgpu::TextureFormat::Rgb10a2Unorm,
-            _ => wgpu::TextureFormat::Bgra8Unorm, // Fallback
+            _ => wgpu::TextureFormat::Bgra8Unorm,
         };
 
         unsafe {
-            let Some(hal_device) = _device.as_hal::<Dx12>() else {
+            let Some(hal_device) = device.as_hal::<Dx12>() else {
                 return;
             };
 
@@ -172,10 +163,10 @@ impl shader::Primitive for Primitive {
                 view_formats: &[],
             };
 
-            let texture = _device.create_texture_from_hal::<Dx12>(hal_texture, &texture_desc);
+            let texture = device.create_texture_from_hal::<Dx12>(hal_texture, &texture_desc);
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-            let bind_group = _device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Frame Viewer Bind Group"),
                 layout: &pipeline.bind_group_layout,
                 entries: &[
@@ -220,7 +211,7 @@ impl shader::Primitive for Primitive {
 }
 
 impl shader::Pipeline for Pipeline {
-    fn new(device: &wgpu::Device, _queue: &wgpu::Queue, _format: wgpu::TextureFormat) -> Self {
+    fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Frame Viewer Shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
@@ -279,7 +270,7 @@ impl shader::Pipeline for Pipeline {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: _format, // MUST match the render pass target (the window surface format)
+                    format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],

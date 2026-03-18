@@ -43,6 +43,20 @@ macro_rules! define_pixel_formats {
                 }
             }
 
+            pub const fn supports_zero_copy_preview(&self) -> bool {
+                match self {
+                    PixelFormat::RGBA10
+                    | PixelFormat::RGBA16
+                    | PixelFormat::RGBA8
+                    | PixelFormat::BGRA8 => true,
+                    PixelFormat::NV12 => false,
+                }
+            }
+
+            pub const fn supports_software_preview(&self) -> bool {
+                self.is_iced_compatible()
+            }
+
             pub const fn is_iced_compatible(&self) -> bool {
                 match self {
                     PixelFormat::RGBA8 | PixelFormat::BGRA8 => true,

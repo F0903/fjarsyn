@@ -82,7 +82,21 @@ impl SettingsScreen {
                 if let Err(e) = ctx.config.save() {
                     ctx.notify_error(format!("Unable to save settings: {}", e));
                 }
-                Task::none()
+
+                let Some(capture) = ctx.media.capture.clone() else {
+                    return Task::none();
+                };
+
+                let cpu_readback_enabled = crate::utils::gpu_preview::requires_cpu_readback(
+                    ctx.config.enable_ui_preview,
+                    ctx.config.pixel_format,
+                    ctx.config.transcoding_type.get_encoder_info().hw_accel,
+                );
+
+                Task::future(async move {
+                    capture.write().await.set_cpu_readback_enabled(cpu_readback_enabled);
+                    Message::NoOp
+                })
             }
 
             SettingsMessage::DiscardSettings => {
