@@ -196,7 +196,7 @@ impl WgcCaptureProvider {
             })
             .unwrap_or_default();
 
-        let frame_duration = std::time::Duration::from_nanos((rel_time.Duration / 100) as u64);
+        let frame_duration = std::time::Duration::from_nanos((rel_time.Duration * 100) as u64);
 
         let keep_alive: std::sync::Arc<dyn std::any::Any + Send + Sync> =
             std::sync::Arc::new(frame);

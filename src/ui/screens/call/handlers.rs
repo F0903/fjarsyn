@@ -37,6 +37,8 @@ impl CallScreen {
 
                 CallMessage::EndCall => {
                     self.frame_sender = None;
+                    self.decoder = None;
+                    self.remote_frame = None;
                     let capture_arc = self.capture.clone();
 
                     let stop_capture_task = Task::future(async move {
@@ -164,6 +166,8 @@ impl CallScreen {
                 CallMessage::CaptureStopped => {
                     self.frame_sender = None;
                     self.local_frame = None;
+                    self.decoder = None;
+                    self.remote_frame = None;
                     Task::none()
                 }
 
@@ -237,13 +241,21 @@ impl CallScreen {
             );
             let capture = self.capture.clone();
             tokio::spawn(async move {
-                let device_handle = capture.read().await.raw_device_handle();
+                let device_handle = if transcoding_type.get_encoder_info().hw_accel
+                    == crate::media::ffmpeg::HWAccelType::D3D11VA
+                {
+                    capture.read().await.raw_device_handle()
+                } else {
+                    None
+                };
+
                 let mut encoder = match FFmpegEncoder::new(
                     target_bitrate,
                     target_fps_hz,
                     target_resolution,
                     input_format,
                     device_handle,
+                    transcoding_type,
                 ) {
                     Ok(e) => e,
                     Err(e) => {

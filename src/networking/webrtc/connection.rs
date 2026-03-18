@@ -45,6 +45,7 @@ pub enum WebRTCEvent {
 pub struct WebRTC {
     pub peer_connection: Arc<RwLock<Arc<RTCPeerConnection>>>,
     pub signaling_tx: Arc<RwLock<Option<mpsc::Sender<SignalingMessage>>>>,
+    pub base_signaling_tx: mpsc::Sender<SignalingMessage>,
     pub internal_signal_tx: mpsc::Sender<SignalingMessage>,
     pub video_track: Arc<RwLock<Arc<TrackLocalStaticSample>>>,
     pub remote_peer_id: Arc<RwLock<Option<String>>>,
@@ -79,7 +80,7 @@ impl WebRTC {
         };
 
         let (listener_tx, direct_port) = signaling::listen(0, signal_tx.clone()).await?;
-        let signaling_tx = Arc::new(RwLock::new(Some(listener_tx)));
+        let signaling_tx = Arc::new(RwLock::new(Some(listener_tx.clone())));
 
         let peer_connection = Arc::new(Self::create_pc().await?);
         let peer_connection_lock = Arc::new(RwLock::new(peer_connection.clone()));
@@ -102,6 +103,7 @@ impl WebRTC {
         let webrtc = Arc::new(Self {
             peer_connection: peer_connection_lock,
             signaling_tx,
+            base_signaling_tx: listener_tx,
             internal_signal_tx: signal_tx,
             video_track: video_track_lock,
             remote_peer_id,
@@ -258,20 +260,20 @@ impl WebRTC {
             Box::pin(async move {
                 if let Some(candidate) = c
                     && let Ok(candidate_str) = serde_json::to_string(&candidate.to_json().unwrap())
-                    {
-                        let msg = SignalingMessage {
-                            from: local_id,
-                            sig_type: SignalingType::Candidate,
-                            data: candidate_str,
-                        };
-                        let tx = {
-                            let lock = signaling_tx.read().await;
-                            lock.clone()
-                        };
-                        if let Some(tx) = tx {
-                            let _ = tx.send(msg).await;
-                        }
+                {
+                    let msg = SignalingMessage {
+                        from: local_id,
+                        sig_type: SignalingType::Candidate,
+                        data: candidate_str,
+                    };
+                    let tx = {
+                        let lock = signaling_tx.read().await;
+                        lock.clone()
+                    };
+                    if let Some(tx) = tx {
+                        let _ = tx.send(msg).await;
                     }
+                }
             })
         }));
     }
@@ -441,12 +443,11 @@ impl WebRTC {
             data: "".to_string(),
         };
 
-        let tx = {
+        {
             let lock = self.signaling_tx.read().await;
-            lock.clone()
-        };
-        if let Some(tx) = tx {
-            tx.send(msg).await.map_err(WebRTCError::SendError)?;
+            if let Some(tx) = lock.as_ref() {
+                tx.send(msg).await.map_err(WebRTCError::SendError)?;
+            }
         }
 
         // Close peer connection
@@ -455,6 +456,9 @@ impl WebRTC {
             pc.close().await.map_err(WebRTCError::PeerConnectionError)?;
         }
         *self.remote_peer_id.write().await = None;
+
+        // Restore base signaling (dropping any ephemeral dialer sender)
+        *self.signaling_tx.write().await = Some(self.base_signaling_tx.clone());
 
         Ok(())
     }
@@ -467,12 +471,11 @@ impl WebRTC {
             data: "".to_string(),
         };
 
-        let tx = {
+        {
             let lock = self.signaling_tx.read().await;
-            lock.clone()
-        };
-        if let Some(tx) = tx {
-            let _ = tx.send(msg).await;
+            if let Some(tx) = lock.as_ref() {
+                let _ = tx.send(msg).await;
+            }
         }
 
         {
@@ -480,6 +483,10 @@ impl WebRTC {
             pc.close().await.map_err(WebRTCError::PeerConnectionError)?;
         }
         *self.remote_peer_id.write().await = None;
+
+        // Restore base signaling (dropping any ephemeral dialer sender)
+        *self.signaling_tx.write().await = Some(self.base_signaling_tx.clone());
+
         Ok(())
     }
 }

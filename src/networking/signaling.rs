@@ -1,9 +1,9 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use futures_util::{SinkExt, StreamExt, stream::SplitSink};
+use futures_util::{SinkExt, StreamExt};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     sync::{broadcast, mpsc},
 };
 use tokio_tungstenite::{
@@ -26,12 +26,10 @@ pub async fn dial(
         tracing::error!("Failed to connect to signaling at {}: {}", addr, e);
         SignalingError::ConnectionFailed(e)
     })?;
-    let (write, read) = ws_stream.split();
 
     let (to_peer_tx, to_peer_rx) = mpsc::channel::<SignalingMessage>(100);
 
-    spawn_writer_task(to_peer_rx, write);
-    spawn_reader_task(to_webrtc_tx, read);
+    tokio::spawn(manage_dialer_connection(ws_stream, to_peer_rx, to_webrtc_tx));
 
     Ok(to_peer_tx)
 }
@@ -67,12 +65,15 @@ pub async fn listen(
                 Ok((stream, peer_addr)) => {
                     let to_webrtc_tx = to_webrtc_tx.clone();
                     let to_peer_rx = broadcast_tx.subscribe();
-                    tokio::spawn(handle_incoming_connection(
-                        stream,
-                        peer_addr,
-                        to_webrtc_tx,
-                        to_peer_rx,
-                    ));
+
+                    tokio::spawn(async move {
+                        tracing::info!("New signaling connection from {}", peer_addr);
+                        if let Ok(ws_stream) = accept_async(stream).await {
+                            manage_listener_connection(ws_stream, to_peer_rx, to_webrtc_tx).await;
+                        } else {
+                            tracing::error!("Failed to accept WebSocket from {}", peer_addr);
+                        }
+                    });
                 }
                 Err(e) => {
                     tracing::error!("TCP accept error: {}", e);
@@ -85,61 +86,105 @@ pub async fn listen(
     Ok((to_peer_tx, bound_port))
 }
 
-async fn handle_incoming_connection(
-    stream: TcpStream,
-    peer_addr: SocketAddr,
-    to_webrtc_tx: mpsc::Sender<SignalingMessage>,
-    to_peer_rx: broadcast::Receiver<SignalingMessage>,
-) {
-    tracing::info!("New signaling connection from {}", peer_addr);
-
-    let ws_stream = match accept_async(stream).await {
-        Ok(ws) => ws,
-        Err(e) => {
-            tracing::error!("Failed to accept WebSocket from {}: {}", peer_addr, e);
-            return;
-        }
-    };
-
-    let (write, read) = ws_stream.split();
-    spawn_reader_task(to_webrtc_tx, read);
-    spawn_broadcast_writer_task(to_peer_rx, write);
-}
-
-fn spawn_writer_task<S>(
+async fn manage_dialer_connection<S>(
+    mut ws_stream: WebSocketStream<S>,
     mut to_peer_rx: mpsc::Receiver<SignalingMessage>,
-    write: SplitSink<WebSocketStream<S>, Message>,
+    to_webrtc_tx: mpsc::Sender<SignalingMessage>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    tokio::spawn(async move {
-        let mut write = write;
-        while let Some(message) = to_peer_rx.recv().await {
-            if send_signaling_message(&mut write, &message).await.is_err() {
-                break;
+    loop {
+        tokio::select! {
+            msg = to_peer_rx.recv() => {
+                match msg {
+                    Some(message) => {
+                        if send_signaling_message(&mut ws_stream, &message).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => {
+                        tracing::debug!("Signaling channel dropped. Closing WebSocket dialer.");
+                        let _ = ws_stream.close(None).await;
+                        break;
+                    }
+                }
+            }
+            msg = ws_stream.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(signaling_message) = serde_json::from_str::<SignalingMessage>(&text) {
+                            if to_webrtc_tx.send(signaling_message).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        tracing::debug!("WebSocket dialer closed by remote.");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        tracing::debug!("WebSocket dialer read error: {}", e);
+                        break;
+                    }
+                    _ => {} // Ignore ping/pong/binary
+                }
             }
         }
-    });
+    }
 }
 
-fn spawn_broadcast_writer_task<S>(
+async fn manage_listener_connection<S>(
+    mut ws_stream: WebSocketStream<S>,
     mut to_peer_rx: broadcast::Receiver<SignalingMessage>,
-    write: SplitSink<WebSocketStream<S>, Message>,
+    to_webrtc_tx: mpsc::Sender<SignalingMessage>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    tokio::spawn(async move {
-        let mut write = write;
-        while let Ok(message) = to_peer_rx.recv().await {
-            if send_signaling_message(&mut write, &message).await.is_err() {
-                break;
+    loop {
+        tokio::select! {
+            msg = to_peer_rx.recv() => {
+                match msg {
+                    Ok(message) => {
+                        if send_signaling_message(&mut ws_stream, &message).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        tracing::debug!("Broadcast channel closed. Closing WebSocket listener.");
+                        let _ = ws_stream.close(None).await;
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        tracing::warn!("Signaling listener lagged behind broadcast channel.");
+                    }
+                }
+            }
+            msg = ws_stream.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(signaling_message) = serde_json::from_str::<SignalingMessage>(&text) {
+                            if to_webrtc_tx.send(signaling_message).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        tracing::debug!("WebSocket listener closed by remote.");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        tracing::debug!("WebSocket listener read error: {}", e);
+                        break;
+                    }
+                    _ => {} // Ignore ping/pong/binary
+                }
             }
         }
-    });
+    }
 }
 
 async fn send_signaling_message<S>(
-    write: &mut SplitSink<WebSocketStream<S>, Message>,
+    ws_stream: &mut WebSocketStream<S>,
     msg: &SignalingMessage,
 ) -> std::result::Result<(), ()>
 where
@@ -147,7 +192,7 @@ where
 {
     match serde_json::to_string(msg) {
         Ok(json) => {
-            if write.send(Message::Text(json.into())).await.is_err() {
+            if ws_stream.send(Message::Text(json.into())).await.is_err() {
                 return Err(());
             }
             Ok(())
@@ -157,29 +202,4 @@ where
             Err(())
         }
     }
-}
-
-fn spawn_reader_task<S>(
-    to_webrtc_tx: mpsc::Sender<SignalingMessage>,
-    mut read: futures_util::stream::SplitStream<WebSocketStream<S>>,
-) where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    tokio::spawn(async move {
-        while let Some(msg) = read.next().await {
-            match msg {
-                Ok(Message::Text(text)) => {
-                    if let Ok(signaling_message) = serde_json::from_str::<SignalingMessage>(&text) {
-                        let _ = to_webrtc_tx.send(signaling_message).await;
-                    }
-                }
-                Ok(Message::Close(_)) => break,
-                Err(e) => {
-                    tracing::error!("WebSocket read error: {}", e);
-                    break;
-                }
-                _ => {}
-            }
-        }
-    });
 }

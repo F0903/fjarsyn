@@ -1,10 +1,17 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum HWAccelType {
+    None,
+    D3D11VA,
+}
+
 #[derive(Clone, Copy)]
 pub struct EncoderInfo {
     pub name: &'static str,
     pub input_format: ffmpeg_next::format::Pixel,
     pub scaler_format: ffmpeg_next::format::Pixel,
+    pub hw_accel: HWAccelType,
 }
 
 #[derive(Clone, Copy)]
@@ -21,6 +28,7 @@ macro_rules! define_ffmpeg_transcode_types {
                     set_options: $set_encoder_options:expr,
                     input_format: $input_format:expr,
                     scaler_format: $scaler_format:expr,
+                    hw_accel: $hw_accel:expr,
                 },
                 decoder: {
                     name: $decoder_name:expr,
@@ -67,6 +75,7 @@ macro_rules! define_ffmpeg_transcode_types {
                             name: $encoder_name,
                             input_format: $input_format,
                             scaler_format: $scaler_format,
+                            hw_accel: $hw_accel,
                         },
                     )*
                 }
@@ -111,6 +120,7 @@ define_ffmpeg_transcode_types! {
             },
             input_format: ffmpeg_next::format::Pixel::YUV420P,
             scaler_format: ffmpeg_next::format::Pixel::YUV420P,
+            hw_accel: HWAccelType::None,
         },
         decoder: {
             name: "h264",
@@ -125,6 +135,7 @@ define_ffmpeg_transcode_types! {
             },
             input_format: ffmpeg_next::format::Pixel::BGRA,
             scaler_format: ffmpeg_next::format::Pixel::BGRA,
+            hw_accel: HWAccelType::D3D11VA,
         },
         decoder: {
             name: "h264",
