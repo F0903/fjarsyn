@@ -57,9 +57,7 @@ struct Uniforms {
 }
 
 pub struct Pipeline {
-    pipeline_bgra8: wgpu::RenderPipeline,
-    pipeline_rgba8: wgpu::RenderPipeline,
-    pipeline_rgba16f: wgpu::RenderPipeline,
+    pipeline: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     bind_group_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
@@ -109,20 +107,6 @@ impl shader::Primitive for Primitive {
 
         let uniforms = Uniforms { ndc_min: [ndc_x, ndc_y], ndc_max: [ndc_x_max, ndc_y_max] };
         queue.write_buffer(&pipeline.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-        // Diagnostics
-        static mut LAST_LOG: Option<Instant> = None;
-        unsafe {
-            if LAST_LOG.map_or(true, |l| l.elapsed() > Duration::from_secs(5)) {
-                tracing::info!(
-                    "Preview Layout: Widget={:?}, ScaleX={}, ScaleY={}",
-                    bounds,
-                    scale_x,
-                    scale_y
-                );
-                LAST_LOG = Some(Instant::now());
-            }
-        }
 
         // 2. Resource Caching
         let FrameData::D3D11 { shared_handle, .. } = &self.frame.data else {
@@ -223,16 +207,9 @@ impl shader::Primitive for Primitive {
             return false;
         };
 
-        let render_pipeline = match self.frame.format {
-            PixelFormat::BGRA8 => &pipeline.pipeline_bgra8,
-            PixelFormat::RGBA8 => &pipeline.pipeline_rgba8,
-            PixelFormat::RGBA16 => &pipeline.pipeline_rgba16f,
-            _ => &pipeline.pipeline_bgra8,
-        };
-
         let cache = pipeline.cache.lock().unwrap();
         if let Some((bind_group, _)) = cache.get(&sync_handle) {
-            render_pass.set_pipeline(render_pipeline);
+            render_pass.set_pipeline(&pipeline.pipeline);
             render_pass.set_bind_group(0, bind_group, &[]);
             render_pass.draw(0..4, 0..1);
             true
@@ -289,40 +266,34 @@ impl shader::Pipeline for Pipeline {
             push_constant_ranges: &[],
         });
 
-        // We must create a pipeline for the specific surface format Iced is using (usually Bgra8Unorm or Rgba8Unorm)
-        // Iced passes the swapchain format in `_format`!
-        let create_pipeline = || {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("Frame Viewer Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: _format, // MUST match the render pass target (the window surface format)
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview: None,
-                cache: None,
-            })
-        };
-
-        let pipeline = create_pipeline();
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Frame Viewer Pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: _format, // MUST match the render pass target (the window surface format)
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -340,9 +311,7 @@ impl shader::Pipeline for Pipeline {
         });
 
         Self {
-            pipeline_bgra8: pipeline.clone(),
-            pipeline_rgba8: pipeline.clone(),
-            pipeline_rgba16f: pipeline,
+            pipeline,
             sampler,
             bind_group_layout,
             uniform_buffer,
