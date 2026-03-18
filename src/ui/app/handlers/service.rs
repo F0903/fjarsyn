@@ -130,22 +130,45 @@ pub fn handle_call_service_msg(app: &mut Fjarsyn, msg: CallServiceMessage) -> Ta
 
 pub fn handle_capture_msg(app: &mut Fjarsyn, msg: CaptureMessage) -> Task<Message> {
     match msg {
-        CaptureMessage::CaptureInitialized(res) => match res {
-            Ok(provider) => {
-                app.ctx.media.capture = Some(provider);
-                if let Some(capture) = app.ctx.media.capture.clone()
-                    && let ActiveScreen::Call(screen) = &mut app.active_screen
-                {
-                    screen.capture = Some(capture);
+        CaptureMessage::CaptureInitialized(res) => {
+            app.ctx.media.capture_initializing = false;
+
+            match res {
+                Ok(provider) => {
+                    let provider_for_screen = provider.clone();
+                    let retry_start_capture =
+                        if let ActiveScreen::Call(screen) = &mut app.active_screen {
+                            screen.capture = Some(provider_for_screen);
+                            if screen.pending_capture_start {
+                                screen.pending_capture_start = false;
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                    app.ctx.media.capture = Some(provider);
+                    tracing::info!("Capture ready.");
+
+                    if retry_start_capture {
+                        use crate::ui::message::{Message, ScreenMessage};
+                        return Task::done(Message::Screen(ScreenMessage::Call(
+                            crate::ui::screens::call::CallMessage::StartCapture,
+                        )));
+                    }
                 }
-                tracing::info!("Capture ready.");
+                Err(e) => {
+                    if let ActiveScreen::Call(screen) = &mut app.active_screen {
+                        screen.pending_capture_start = false;
+                    }
+                    app.ctx.notify_error(format!("Capture Failed: {}", e));
+                }
             }
-            Err(e) => {
-                app.ctx.notify_error(format!("Capture Failed: {}", e));
-            }
-        },
+            Task::none()
+        }
     }
-    Task::none()
 }
 
 pub fn handle_database_msg(app: &mut Fjarsyn, msg: DatabaseMessage) -> Task<Message> {

@@ -7,8 +7,10 @@ use std::{
 use iced::{Element, Length, Rectangle, mouse, widget::shader};
 use iced_wgpu::graphics::Viewport;
 
-use super::gpu_texture_import::{self, ImportedFrameTexture};
-use crate::media::frame::{Frame, GpuImportHandle};
+use crate::media::{
+    frame::{Frame, GpuImportHandle},
+    gpu_interop::{self, ImportedFrameTexture},
+};
 
 pub struct GpuFrameViewer {
     frame: Arc<Frame>,
@@ -115,7 +117,7 @@ impl shader::Primitive for Primitive {
         let now = Instant::now();
         cache.retain(|_, entry| now.duration_since(entry.last_used) < Duration::from_secs(1));
 
-        let Some(texture) = gpu_texture_import::import_frame_texture(device, &self.frame) else {
+        let Some(texture) = gpu_interop::import_frame_texture(device, &self.frame) else {
             return;
         };
 

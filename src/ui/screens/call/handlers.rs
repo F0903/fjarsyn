@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use iced::Task;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 
-use super::{CallMessage, CallScreen};
+use super::{CallMessage, CallScreen, DecodedFrameReceiverRef};
 use crate::{
     capture_providers::{CaptureProvider, user_pick_platform_capture_item},
     media::{
@@ -37,9 +37,11 @@ impl CallScreen {
 
                 CallMessage::EndCall => {
                     self.frame_sender = None;
-                    self.decoder = None;
+                    self.decoder_sender = None;
+                    self.decoded_frame_rx = None;
                     self.local_frame = None;
                     self.remote_frame = None;
+                    self.pending_capture_start = false;
                     self.show_local_preview = false;
                     let stop_capture_task = self
                         .capture
@@ -75,8 +77,15 @@ impl CallScreen {
                 }
                 CallMessage::StartCapture => {
                     if self.capture.is_none() {
-                        ctx.notify_error("Screen capture is not available.");
-                        return Task::none();
+                        self.pending_capture_start = true;
+
+                        if ctx.media.capture_initializing {
+                            return Task::none();
+                        }
+
+                        ctx.media.capture_initializing = true;
+                        ctx.notify_info("Initializing screen capture...");
+                        return crate::ui::app::Fjarsyn::init_capture_task(&ctx.config);
                     }
 
                     let window_handle = match ctx.ui.main_window.as_ref().and_then(|w| w.raw_id) {
@@ -160,7 +169,11 @@ impl CallScreen {
                     },
                 },
 
-                CallMessage::CaptureStarted => Task::none(),
+                CallMessage::CaptureStarted => {
+                    self.capture_subscription_revision =
+                        self.capture_subscription_revision.wrapping_add(1);
+                    Task::none()
+                }
 
                 CallMessage::StopCapture => {
                     Task::done(Message::Screen(ScreenMessage::Call(CallMessage::TryStopCapture)))
@@ -197,8 +210,10 @@ impl CallScreen {
                 CallMessage::CaptureStopped => {
                     self.frame_sender = None;
                     self.local_frame = None;
-                    self.decoder = None;
+                    self.decoder_sender = None;
+                    self.decoded_frame_rx = None;
                     self.remote_frame = None;
+                    self.pending_capture_start = false;
                     self.show_local_preview = false;
                     Task::none()
                 }
@@ -216,34 +231,52 @@ impl CallScreen {
     }
 
     fn handle_packet_received(&mut self, ctx: &AppState, packet: bytes::Bytes) -> Task<Message> {
-        if self.decoder.is_none() {
-            match FFmpegDecoder::new(ctx.config.transcoding_type, ctx.config.pixel_format) {
-                Ok(decoder) => self.decoder = Some(Arc::new(Mutex::new(decoder))),
-                Err(e) => {
-                    tracing::error!("Failed to create H264 Decoder: {}", e);
-                    return Task::none();
+        if self.decoder_sender.is_none() {
+            let (packet_tx, mut packet_rx) = mpsc::unbounded_channel::<bytes::Bytes>();
+            let (decoded_tx, decoded_rx) = mpsc::unbounded_channel::<Arc<Frame>>();
+            self.decoder_sender = Some(packet_tx.clone());
+            self.decoded_frame_rx =
+                Some(DecodedFrameReceiverRef(Arc::new(tokio::sync::Mutex::new(decoded_rx))));
+
+            let transcoding_type = ctx.config.transcoding_type;
+            let pixel_format = ctx.config.pixel_format;
+
+            tokio::spawn(async move {
+                let mut decoder = match FFmpegDecoder::new(transcoding_type, pixel_format) {
+                    Ok(decoder) => decoder,
+                    Err(e) => {
+                        tracing::error!("Failed to create H264 Decoder: {}", e);
+                        return;
+                    }
+                };
+
+                while let Some(packet) = packet_rx.recv().await {
+                    match decoder.decode(&packet) {
+                        Ok(Some(frame)) => {
+                            if decoded_tx.send(frame).is_err() {
+                                break;
+                            }
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::error!("Failed to decode frame: {}", e);
+                        }
+                    }
                 }
-            }
+
+                tracing::info!("Decoder worker finished.");
+            });
         }
 
-        if let Some(decoder) = &self.decoder {
-            let decoder = decoder.clone();
-            Task::future(async move {
-                let mut lock = decoder.lock().await;
-                match lock.decode(&packet) {
-                    Ok(Some(frame)) => {
-                        Message::Screen(ScreenMessage::Call(CallMessage::DecodedFrameReady(frame)))
-                    }
-                    Ok(None) => Message::NoOp,
-                    Err(e) => {
-                        tracing::error!("Failed to decode frame: {}", e);
-                        Message::NoOp
-                    }
-                }
-            })
-        } else {
-            Task::none()
+        if let Some(sender) = &self.decoder_sender
+            && let Err(err) = sender.send(packet)
+        {
+            tracing::warn!("Failed to queue packet for decoder: {}", err);
+            self.decoder_sender = None;
+            self.decoded_frame_rx = None;
         }
+
+        Task::none()
     }
 
     fn handle_frame_captured(&mut self, ctx: &mut AppState, frame: Arc<Frame>) -> Task<Message> {

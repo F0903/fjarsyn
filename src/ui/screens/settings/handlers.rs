@@ -87,7 +87,7 @@ impl SettingsScreen {
                     return Task::none();
                 };
 
-                let cpu_readback_enabled = crate::utils::gpu_preview::requires_cpu_readback(
+                let cpu_readback_enabled = crate::media::gpu_interop::requires_cpu_readback(
                     ctx.config.enable_ui_preview,
                     ctx.config.pixel_format,
                     ctx.config.transcoding_type.get_encoder_info().hw_accel,

@@ -7,6 +7,18 @@ use crate::media::{
     pixel_format::PixelFormat,
 };
 
+pub fn configure_default_wgpu_backend() {
+    if std::env::var("WGPU_BACKEND").is_err() {
+        unsafe {
+            std::env::set_var("WGPU_BACKEND", "dx12");
+        }
+    }
+}
+
+pub fn supports_zero_copy_preview(format: PixelFormat) -> bool {
+    format.supports_zero_copy_preview()
+}
+
 pub fn import_frame_texture(device: &wgpu::Device, frame: &Frame) -> Option<ImportedFrameTexture> {
     let GpuImportHandle::WindowsNtHandle(handle) = frame.gpu_import_handle()?;
     let format = texture_format_for(frame.format)?;

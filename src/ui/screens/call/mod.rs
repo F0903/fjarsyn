@@ -3,6 +3,7 @@ use std::{
     sync::Arc,
 };
 
+use futures::stream::unfold;
 use iced::{Subscription, Task};
 use tokio::sync::{Mutex, RwLock, mpsc};
 
@@ -10,7 +11,7 @@ use crate::{
     capture_providers::{
         CaptureFramerate, CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream,
     },
-    media::{ffmpeg::FFmpegDecoder, frame::Frame},
+    media::frame::Frame,
     ui::{
         app::AppState,
         message::{Message, ScreenMessage},
@@ -25,14 +26,49 @@ mod view;
 pub struct FrameReceiverSubData {
     pub(crate) capture: Arc<RwLock<PlatformCaptureProvider>>,
     pub(crate) framerate: CaptureFramerate,
-    pub(crate) stream_name: &'static str,
+    pub(crate) revision: u64,
 }
 
 impl Hash for FrameReceiverSubData {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.stream_name.hash(state);
+        (Arc::as_ptr(&self.capture) as *const ()).hash(state);
+        self.framerate.hash(state);
+        self.revision.hash(state);
     }
 }
+
+impl PartialEq for FrameReceiverSubData {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.capture, &other.capture)
+            && self.framerate == other.framerate
+            && self.revision == other.revision
+    }
+}
+
+impl Eq for FrameReceiverSubData {}
+
+#[derive(Clone)]
+pub struct DecodedFrameReceiverRef(pub Arc<Mutex<mpsc::UnboundedReceiver<Arc<Frame>>>>);
+
+impl std::fmt::Debug for DecodedFrameReceiverRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DecodedFrameReceiverRef")
+    }
+}
+
+impl Hash for DecodedFrameReceiverRef {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (Arc::as_ptr(&self.0) as *const ()).hash(state);
+    }
+}
+
+impl PartialEq for DecodedFrameReceiverRef {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for DecodedFrameReceiverRef {}
 
 #[derive(Debug, Clone)]
 pub enum CallMessage {
@@ -56,11 +92,14 @@ pub struct CallScreen {
     // Local Capture State
     pub(crate) local_frame: Option<Arc<Frame>>,
     pub(crate) frame_sender: Option<mpsc::Sender<Arc<Frame>>>,
+    pub(crate) capture_subscription_revision: u64,
+    pub(crate) pending_capture_start: bool,
     pub(crate) show_local_preview: bool,
 
     // Remote Capture State
     pub(crate) remote_frame: Option<Arc<Frame>>,
-    pub(crate) decoder: Option<Arc<Mutex<FFmpegDecoder>>>,
+    pub(crate) decoder_sender: Option<mpsc::UnboundedSender<bytes::Bytes>>,
+    pub(crate) decoded_frame_rx: Option<DecodedFrameReceiverRef>,
 }
 
 impl CallScreen {
@@ -70,10 +109,13 @@ impl CallScreen {
 
             local_frame: None,
             frame_sender: None,
+            capture_subscription_revision: 0,
+            pending_capture_start: false,
             show_local_preview: false,
 
             remote_frame: None,
-            decoder: None,
+            decoder_sender: None,
+            decoded_frame_rx: None,
         }
     }
 
@@ -109,7 +151,7 @@ impl Screen for CallScreen {
                     FrameReceiverSubData {
                         capture,
                         framerate: ctx.config.target_framerate,
-                        stream_name: "frame-receiver",
+                        revision: self.capture_subscription_revision,
                     },
                     Self::create_frame_receiver_subscription,
                 )
@@ -117,6 +159,27 @@ impl Screen for CallScreen {
                     Message::Screen(ScreenMessage::Call(CallMessage::FrameCaptured(Arc::new(f))))
                 }),
             );
+        }
+
+        if let Some(receiver) = self.decoded_frame_rx.clone() {
+            subscriptions.push(Subscription::run_with(receiver, |receiver_ref| {
+                let receiver = receiver_ref.0.clone();
+                Box::new(Box::pin(unfold(receiver, |receiver| async move {
+                    let mut lock = receiver.lock().await;
+                    if let Some(frame) = lock.recv().await {
+                        drop(lock);
+                        Some((
+                            Message::Screen(ScreenMessage::Call(CallMessage::DecodedFrameReady(
+                                frame,
+                            ))),
+                            receiver,
+                        ))
+                    } else {
+                        drop(lock);
+                        None
+                    }
+                })))
+            }));
         }
 
         Subscription::batch(subscriptions)

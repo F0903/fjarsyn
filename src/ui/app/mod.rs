@@ -46,6 +46,7 @@ pub struct NetworkingState {
 
 pub struct MediaState {
     pub capture: Option<Arc<RwLock<PlatformCaptureProvider>>>,
+    pub capture_initializing: bool,
     pub frame_packet_tx: Option<mpsc::Sender<Bytes>>,
     pub frame_packet_rx: EventReceiverRef<Bytes>,
 }
@@ -60,6 +61,7 @@ pub struct UIState {
     pub main_window: Option<WindowInfo>,
     pub back_queue: VecDeque<ActiveScreen>,
     pub notifications: NotificationService,
+    pub started_at: std::time::Instant,
 }
 
 pub struct Services {
@@ -98,7 +100,7 @@ pub struct Fjarsyn {
 
 impl Fjarsyn {
     fn capture_cpu_readback_enabled(config: &Config) -> bool {
-        crate::utils::gpu_preview::requires_cpu_readback(
+        crate::media::gpu_interop::requires_cpu_readback(
             config.enable_ui_preview,
             config.pixel_format,
             config.transcoding_type.get_encoder_info().hw_accel,
@@ -125,6 +127,7 @@ impl Fjarsyn {
             },
             media: MediaState {
                 capture: None,
+                capture_initializing: false,
                 frame_packet_tx: Some(frame_packet_tx.clone()),
                 frame_packet_rx: subscription::EventReceiverRef(Arc::new(Mutex::new(
                     frame_packet_rx,
@@ -139,6 +142,7 @@ impl Fjarsyn {
                 main_window: None,
                 back_queue: VecDeque::new(),
                 notifications: NotificationService::new(),
+                started_at: std::time::Instant::now(),
             },
             config: config.clone(),
             db: None,
@@ -155,7 +159,6 @@ impl Fjarsyn {
                         crate::database::init().await.map_err(Arc::new),
                     ))
                 }),
-                Self::init_capture_task(&config),
                 Self::init_call_service_task(
                     frame_packet_tx,
                     call_event_tx,
@@ -227,7 +230,7 @@ impl Fjarsyn {
 
     fn handle_tick(&mut self, now: std::time::Instant) -> Task<Message> {
         self.ctx.ui.notifications.dismiss_expired(now);
-        if self.ctx.session.incoming_call_timeout.is_some_and(|t| now > t) {
+        if self.ctx.session.incoming_call_timeout.is_some_and(|t| now >= t) {
             self.ctx.notify_info("Missed call.");
             use crate::ui::message::CallActionMessage;
             return Task::done(Message::CallAction(CallActionMessage::DeclineCall));
@@ -259,7 +262,7 @@ impl Fjarsyn {
         })
     }
 
-    fn init_capture_task(config: &Config) -> Task<Message> {
+    pub(crate) fn init_capture_task(config: &Config) -> Task<Message> {
         let fmt = config.pixel_format;
         let cursor = config.record_cursor;
         let border = config.recording_border_indicator;

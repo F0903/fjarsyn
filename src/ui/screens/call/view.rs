@@ -43,7 +43,9 @@ impl CallScreen {
         {
             let viewer: Element<'_, Message> = match &local_frame.data {
                 _ if local_frame.gpu_import_handle().is_some()
-                    && crate::utils::gpu_preview::can_zero_copy_preview(local_frame.format) =>
+                    && crate::media::gpu_interop::supports_zero_copy_preview(
+                        local_frame.format,
+                    ) =>
                 {
                     GpuFrameViewer::new(local_frame).into()
                 }
@@ -91,9 +93,7 @@ impl CallScreen {
             )))
             .spacing(10);
 
-        controls_row = if self.capture.is_none() {
-            controls_row.push(text("Screen sharing unavailable").size(14).style(text::secondary))
-        } else if self.is_capturing() {
+        controls_row = if self.is_capturing() {
             let mut buttons = vec![
                 button("Change Screen")
                     .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StartCapture)))
@@ -116,9 +116,16 @@ impl CallScreen {
             );
             controls_row.extend(buttons)
         } else {
-            controls_row.extend([button("Share Screen")
-                .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StartCapture)))
-                .into()])
+            let capture_busy = ctx.media.capture_initializing || self.pending_capture_start;
+            let share_button = if capture_busy {
+                button("Share Screen")
+            } else {
+                button("Share Screen")
+                    .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StartCapture)))
+            }
+            .width(Length::Fixed(120.0));
+
+            controls_row.extend([share_button.into()])
         };
 
         controls_row = controls_row.extend([button("End Call")

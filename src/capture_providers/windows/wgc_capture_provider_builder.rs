@@ -50,7 +50,7 @@ impl WgcCaptureProviderBuilder {
     }
 
     pub fn with_default_device(mut self) -> Result<Self> {
-        tracing::debug!("Initializing default capture device for WindowsCaptureProviderBuilder");
+        tracing::debug!("Initializing default capture device for WgcCaptureProviderBuilder");
         let d3d_device = create_d3d_device()?;
         let winrt_device = native_to_winrt_d3d11device(&d3d_device)?;
         self.device = Some(winrt_device);
@@ -65,9 +65,9 @@ impl WgcCaptureProviderBuilder {
 
     /// Must be called from the main thread.
     pub fn build(self) -> Result<WgcCaptureProvider> {
-        tracing::info!("Building WindowsCaptureProvider");
+        tracing::info!("Building WgcCaptureProvider");
         let device = self.device.ok_or_else(|| {
-            tracing::error!("Attempted to build WindowsCaptureProvider without a device");
+            tracing::error!("Attempted to build WgcCaptureProvider without a device");
             WgcCaptureProviderBuilderError::MissingDevice
         })?;
 

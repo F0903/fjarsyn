@@ -8,7 +8,7 @@ macro_rules! define_framerates {
     ($($value:literal),* $(,)?) => {
         paste::paste! {
             define_enum_with_all! {
-                #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
+                #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, Serialize, Deserialize)]
                 pub enum CaptureFramerate {
                     $( [<FPS $value>] ),*
                 }

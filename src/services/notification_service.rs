@@ -42,7 +42,11 @@ impl Notification {
     }
 
     pub fn expired(&self, now: Instant) -> bool {
-        now.duration_since(self.created_at) > self.duration
+        now.saturating_duration_since(self.created_at) >= self.duration
+    }
+
+    pub fn deadline(&self) -> Instant {
+        self.created_at + self.duration
     }
 }
 
@@ -85,6 +89,10 @@ impl NotificationService {
 
     pub fn dismiss_expired(&mut self, now: Instant) {
         self.notifications.retain(|_k, n| !n.expired(now));
+    }
+
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.notifications.values().map(Notification::deadline).min()
     }
 
     pub fn notifications(&self) -> impl Iterator<Item = &Notification> {

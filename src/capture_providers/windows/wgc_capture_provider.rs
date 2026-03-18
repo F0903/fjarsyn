@@ -173,8 +173,13 @@ impl WgcCaptureProvider {
             copy_texture(&context, &texture, staging_tex);
         }
 
-        // 3. Read from the previous ("read") pool textures
-        let read_idx = (pool.frame_count.wrapping_sub(1)) as usize % Self::PIPELINE_DEPTH;
+        // Warm up the pipeline with the current slot so the first delivered frame is real.
+        let pipeline_primed = pool.frame_count > 0;
+        let read_idx = if pipeline_primed {
+            (pool.frame_count.wrapping_sub(1)) as usize % Self::PIPELINE_DEPTH
+        } else {
+            write_idx
+        };
 
         let shared_handle = pool.shared_handles[read_idx];
 
