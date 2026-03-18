@@ -6,13 +6,9 @@ use std::{
 
 use iced::{Element, Length, Rectangle, mouse, widget::shader};
 use iced_wgpu::graphics::Viewport;
-use wgpu::hal::api::Dx12;
-use windows::Win32::Graphics::Direct3D12 as d3d12;
 
-use crate::media::{
-    frame::{Frame, FrameData, SyncHandle},
-    pixel_format::PixelFormat,
-};
+use super::gpu_texture_import::{self, ImportedFrameTexture};
+use crate::media::frame::{Frame, GpuImportHandle};
 
 pub struct GpuFrameViewer {
     frame: Arc<Frame>,
@@ -61,7 +57,13 @@ pub struct Pipeline {
     sampler: wgpu::Sampler,
     bind_group_layout: wgpu::BindGroupLayout,
     uniform_buffer: wgpu::Buffer,
-    cache: std::sync::Mutex<HashMap<SyncHandle, (wgpu::BindGroup, Instant)>>,
+    cache: std::sync::Mutex<HashMap<GpuImportHandle, CachedFrameTexture>>,
+}
+
+struct CachedFrameTexture {
+    bind_group: wgpu::BindGroup,
+    _texture: ImportedFrameTexture,
+    last_used: Instant,
 }
 
 impl shader::Primitive for Primitive {
@@ -100,108 +102,59 @@ impl shader::Primitive for Primitive {
         let uniforms = Uniforms { ndc_min: [ndc_x, ndc_y], ndc_max: [ndc_x_max, ndc_y_max] };
         queue.write_buffer(&pipeline.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        let FrameData::D3D11 { shared_handle, .. } = &self.frame.data else {
-            return;
-        };
-
-        let Some(sync_handle) = *shared_handle else {
+        let Some(import_handle) = self.frame.gpu_import_handle() else {
             return;
         };
 
         let mut cache = pipeline.cache.lock().unwrap();
-        if let Some(entry) = cache.get_mut(&sync_handle) {
-            entry.1 = Instant::now();
+        if let Some(entry) = cache.get_mut(&import_handle) {
+            entry.last_used = Instant::now();
             return;
         }
 
         let now = Instant::now();
-        cache.retain(|_, (_, timestamp)| now.duration_since(*timestamp) < Duration::from_secs(1));
+        cache.retain(|_, entry| now.duration_since(entry.last_used) < Duration::from_secs(1));
 
-        let handle = sync_handle.0;
-        let width = self.frame.size.x as u32;
-        let height = self.frame.size.y as u32;
-
-        let format = match self.frame.format {
-            PixelFormat::BGRA8 => wgpu::TextureFormat::Bgra8Unorm,
-            PixelFormat::RGBA8 => wgpu::TextureFormat::Rgba8Unorm,
-            PixelFormat::RGBA16 => wgpu::TextureFormat::Rgba16Float,
-            PixelFormat::RGBA10 => wgpu::TextureFormat::Rgb10a2Unorm,
-            _ => wgpu::TextureFormat::Bgra8Unorm,
+        let Some(texture) = gpu_texture_import::import_frame_texture(device, &self.frame) else {
+            return;
         };
 
-        unsafe {
-            let Some(hal_device) = device.as_hal::<Dx12>() else {
-                return;
-            };
+        let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-            let raw_device = hal_device.raw_device();
-            let mut raw_resource: Option<d3d12::ID3D12Resource> = None;
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Frame Viewer Bind Group"),
+            layout: &pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: pipeline.uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
 
-            if let Err(e) = raw_device.OpenSharedHandle(handle, &mut raw_resource) {
-                tracing::error!("Failed to open shared handle: {}", e);
-                return;
-            }
-
-            let raw_resource = raw_resource.unwrap();
-            let hal_texture = wgpu::hal::dx12::Device::texture_from_raw(
-                raw_resource,
-                format,
-                wgpu::TextureDimension::D2,
-                wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-                1,
-                1,
-            );
-
-            let texture_desc = wgpu::TextureDescriptor {
-                label: Some("Imported Shared Texture"),
-                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            };
-
-            let texture = device.create_texture_from_hal::<Dx12>(hal_texture, &texture_desc);
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Frame Viewer Bind Group"),
-                layout: &pipeline.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&pipeline.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: pipeline.uniform_buffer.as_entire_binding(),
-                    },
-                ],
-            });
-
-            cache.insert(sync_handle, (bind_group, Instant::now()));
-        }
+        cache.insert(
+            import_handle,
+            CachedFrameTexture { bind_group, _texture: texture, last_used: now },
+        );
     }
 
     fn draw(&self, pipeline: &Self::Pipeline, render_pass: &mut wgpu::RenderPass<'_>) -> bool {
-        let FrameData::D3D11 { shared_handle, .. } = &self.frame.data else {
-            return false;
-        };
-
-        let Some(sync_handle) = *shared_handle else {
+        let Some(import_handle) = self.frame.gpu_import_handle() else {
             return false;
         };
 
         let cache = pipeline.cache.lock().unwrap();
-        if let Some((bind_group, _)) = cache.get(&sync_handle) {
+        if let Some(entry) = cache.get(&import_handle) {
             render_pass.set_pipeline(&pipeline.pipeline);
-            render_pass.set_bind_group(0, bind_group, &[]);
+            render_pass.set_bind_group(0, &entry.bind_group, &[]);
             render_pass.draw(0..4, 0..1);
             true
         } else {

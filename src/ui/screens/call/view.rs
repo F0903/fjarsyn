@@ -4,14 +4,11 @@ use iced::{
 };
 
 use super::{CallMessage, CallScreen};
-use crate::{
-    media::frame::FrameData,
-    ui::{
-        self,
-        app::AppState,
-        components::{CpuFrameViewer, GpuFrameViewer},
-        message::{Message, NavigationMessage, Route, ScreenMessage},
-    },
+use crate::ui::{
+    self,
+    app::AppState,
+    components::{CpuFrameViewer, GpuFrameViewer},
+    message::{Message, NavigationMessage, Route, ScreenMessage},
 };
 
 impl CallScreen {
@@ -45,8 +42,8 @@ impl CallScreen {
             && ctx.config.enable_ui_preview
         {
             let viewer: Element<'_, Message> = match &local_frame.data {
-                FrameData::D3D11 { shared_handle: Some(_), .. }
-                    if crate::utils::gpu_preview::can_zero_copy_preview(local_frame.format) =>
+                _ if local_frame.gpu_import_handle().is_some()
+                    && crate::utils::gpu_preview::can_zero_copy_preview(local_frame.format) =>
                 {
                     GpuFrameViewer::new(local_frame).into()
                 }

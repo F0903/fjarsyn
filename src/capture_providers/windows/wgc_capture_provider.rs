@@ -31,7 +31,7 @@ use crate::{
         },
     },
     media::{
-        frame::{Frame, SyncHandle},
+        frame::{Frame, GpuFrameResource, GpuImportHandle},
         pixel_format::PixelFormat,
     },
     utils::{
@@ -43,7 +43,7 @@ use crate::{
 #[derive(Debug, Default)]
 struct ResourcePool {
     shared_textures: Vec<ID3D11Texture2D>,
-    shared_handles: Vec<SyncHandle>,
+    shared_handles: Vec<GpuImportHandle>,
     staging_textures: Vec<ID3D11Texture2D>,
     frame_count: u64,
     width: u32,
@@ -109,12 +109,12 @@ impl WgcCaptureProvider {
 
     fn process_frame(
         mut frame_buffer: Option<Buffer>,
-        frame: Direct3D11CaptureFrame,
+        capture_frame: Direct3D11CaptureFrame,
         resource_state_arc: Arc<RwLock<ResourcePool>>,
         pixel_format: PixelFormat,
         tx: tokio::sync::mpsc::Sender<Frame>,
     ) -> super::Result<()> {
-        let surface = frame.Surface().map_err(|e| {
+        let surface = capture_frame.Surface().map_err(|e| {
             tracing::error!("Failed to get surface! {}", e);
             WindowsCaptureError::FailedToGetSurface(e)
         })?;
@@ -131,7 +131,7 @@ impl WgcCaptureProvider {
             })?
         };
 
-        let size = frame.ContentSize().map_err(|e| {
+        let size = capture_frame.ContentSize().map_err(|e| {
             tracing::error!("Failed to get frame ContentSize! {}", e);
             WindowsCaptureError::FailedToGetContentSize(e)
         })?;
@@ -197,7 +197,7 @@ impl WgcCaptureProvider {
 
         pool.frame_count += 1;
 
-        let rel_time = frame
+        let rel_time = capture_frame
             .SystemRelativeTime()
             .map_err(|e| {
                 tracing::warn!("Failed to get frame system relative time: {}", e);
@@ -207,20 +207,20 @@ impl WgcCaptureProvider {
 
         let frame_duration = std::time::Duration::from_nanos((rel_time.Duration * 100) as u64);
 
-        let keep_alive: std::sync::Arc<dyn std::any::Any + Send + Sync> =
-            std::sync::Arc::new(frame);
+        let resource_owner: std::sync::Arc<dyn std::any::Any + Send + Sync> =
+            std::sync::Arc::new(capture_frame);
 
-        let frame = Frame::new_d3d11(
-            texture.clone(),
+        let output_frame = Frame::new_gpu(
+            GpuFrameResource::D3D11Texture(texture.clone()),
             Some(shared_handle),
             frame_buffer,
-            Some(keep_alive),
+            Some(resource_owner),
             pixel_format,
             Vector2 { x: size.Width, y: size.Height },
             Some(frame_duration),
         );
 
-        match tx.try_send(frame) {
+        match tx.try_send(output_frame) {
             Ok(_) => (),
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                 return Err(WindowsCaptureError::FrameSenderClosed);
@@ -314,7 +314,7 @@ impl WgcCaptureProvider {
                 };
 
                 pool.shared_textures.push(shared_tex);
-                pool.shared_handles.push(SyncHandle(shared_handle));
+                pool.shared_handles.push(GpuImportHandle::from_windows_nt_handle(shared_handle));
 
                 // Create Staging Texture (if requested)
                 if require_staging {

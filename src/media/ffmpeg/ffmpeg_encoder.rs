@@ -6,7 +6,6 @@ use ffmpeg_next as ffmpeg;
 use windows_core::Interface;
 
 #[cfg(target_os = "windows")]
-use crate::media::frame::FrameData;
 use crate::{
     media::{
         TargetResolution,
@@ -290,7 +289,7 @@ impl FFmpegEncoder {
 
         #[cfg(target_os = "windows")]
         if transcoding_type.get_encoder_info().hw_accel == HWAccelType::D3D11VA
-            && let FrameData::D3D11 { texture, .. } = &frame.data
+            && let Some(texture) = frame.d3d11_texture()
             && self.hw_device_ctx.is_some()
         {
             self.encode_d3d11(texture, width, height, dst_w, dst_h)?;
