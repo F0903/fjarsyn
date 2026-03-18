@@ -29,6 +29,7 @@ pub enum SettingsMessage {
     TargetBitrateInputChanged(String),
     RecordCursorChanged(bool),
     RecordingBorderIndicatorChanged(bool),
+    EnableUiPreviewChanged(bool),
     MaxDepacketLatencyChanged(u16),
     MaxDepacketLatencyInputChanged(String),
     SaveSettings,

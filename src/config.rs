@@ -30,6 +30,7 @@ pub struct Config {
     pub transcoding_type: FFmpegTranscodeType,
     pub record_cursor: bool,
     pub recording_border_indicator: bool,
+    pub enable_ui_preview: bool,
 }
 
 impl Default for Config {
@@ -44,6 +45,7 @@ impl Default for Config {
             transcoding_type: FFmpegTranscodeType::default(),
             record_cursor: true,
             recording_border_indicator: true,
+            enable_ui_preview: true,
         }
     }
 }

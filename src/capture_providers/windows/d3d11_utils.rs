@@ -122,7 +122,7 @@ impl IntoHWND for u64 {
 /// Returned future completes when the user picks an item or cancels the dialog.
 pub fn user_pick_capture_item(
     window: impl IntoHWND,
-) -> Result<impl Future<Output = Result<GraphicsCaptureItem>>> {
+) -> Result<impl std::future::Future<Output = Result<GraphicsCaptureItem>>> {
     tracing::info!("Initializing GraphicsCapturePicker...");
     let picker = GraphicsCapturePicker::new()?;
     let init_with_window: IInitializeWithWindow = picker.cast()?;
@@ -130,7 +130,14 @@ pub fn user_pick_capture_item(
 
     tracing::info!("Waiting for user to pick capture item...");
     let item_future = async move {
-        let result = picker.PickSingleItemAsync()?.await;
+        let op = picker.PickSingleItemAsync()?;
+
+        // Manual polling loop to wait for completion without relying on unstable Future impls
+        while op.Status()? == windows::Foundation::AsyncStatus::Started {
+            tokio::task::yield_now().await;
+        }
+
+        let result = op.GetResults();
         match &result {
             Ok(item) => tracing::info!(
                 "User picked capture item: {:?}",

@@ -4,11 +4,14 @@ use iced::{
 };
 
 use super::{CallMessage, CallScreen};
-use crate::ui::{
-    self,
-    app::AppState,
-    components::frame_viewer::FrameViewer,
-    message::{Message, NavigationMessage, Route, ScreenMessage},
+use crate::{
+    media::frame::FrameData,
+    ui::{
+        self,
+        app::AppState,
+        components::{FrameViewer, WgpuFrameViewer},
+        message::{Message, NavigationMessage, Route, ScreenMessage},
+    },
 };
 
 impl CallScreen {
@@ -37,8 +40,15 @@ impl CallScreen {
         if let Some(local_frame) = self.local_frame.clone()
             && self.show_local_preview
         {
+            let viewer: Element<'_, Message> = match &local_frame.data {
+                FrameData::D3D11 { shared_handle: Some(_), .. } => {
+                    WgpuFrameViewer::new(local_frame).into()
+                }
+                _ => FrameViewer::new(local_frame).into(),
+            };
+
             container(
-                container(FrameViewer::new(local_frame))
+                container(viewer)
                     .width(Length::Fixed(320.0))
                     .height(Length::Fixed(180.0))
                     .style(container::bordered_box),

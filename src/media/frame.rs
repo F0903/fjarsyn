@@ -5,6 +5,18 @@ use crate::{
     utils::{bitmap_utils::ensure_rgba8, buffer_pool::Buffer, vector2::Vector2},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SyncHandle(pub windows::Win32::Foundation::HANDLE);
+
+impl std::hash::Hash for SyncHandle {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.0.hash(state);
+    }
+}
+
+unsafe impl Send for SyncHandle {}
+unsafe impl Sync for SyncHandle {}
+
 #[derive(Debug)]
 pub enum FrameData {
     /// CPU-accessible memory buffer
@@ -14,6 +26,8 @@ pub enum FrameData {
     #[cfg(target_os = "windows")]
     D3D11 {
         texture: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+        /// Optional shared handle for cross-API zero-copy (e.g. wgpu)
+        shared_handle: Option<SyncHandle>,
         /// Optional cached CPU mapping for UI preview
         mapped_buffer: Option<bytes::Bytes>,
         /// Object to keep alive until this frame is dropped
@@ -29,6 +43,9 @@ pub struct Frame {
     pub duration: Option<Duration>,
 }
 
+unsafe impl Send for Frame {}
+unsafe impl Sync for Frame {}
+
 impl Frame {
     pub fn new_software(
         mut data: Buffer,
@@ -43,6 +60,7 @@ impl Frame {
     #[cfg(target_os = "windows")]
     pub fn new_d3d11(
         texture: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D,
+        shared_handle: Option<SyncHandle>,
         mapped_buffer: Option<Buffer>,
         keep_alive: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
         format: PixelFormat,
@@ -52,6 +70,7 @@ impl Frame {
         Frame {
             data: FrameData::D3D11 {
                 texture,
+                shared_handle,
                 mapped_buffer: mapped_buffer.map(|b| b.freeze()),
                 keep_alive,
             },

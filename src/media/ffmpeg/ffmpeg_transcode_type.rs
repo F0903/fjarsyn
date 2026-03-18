@@ -123,8 +123,8 @@ define_ffmpeg_transcode_types! {
                 opts.set("preset", "p1");
                 opts.set("tune", "ull");
             },
-            input_format: ffmpeg_next::format::Pixel::NV12,
-            scaler_format: ffmpeg_next::format::Pixel::NV12,
+            input_format: ffmpeg_next::format::Pixel::BGRA,
+            scaler_format: ffmpeg_next::format::Pixel::BGRA,
         },
         decoder: {
             name: "h264",

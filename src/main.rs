@@ -10,6 +10,15 @@ const LOG_LEVEL: Level = Level::TRACE;
 const LOG_LEVEL: Level = Level::INFO;
 
 fn main() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        if std::env::var("WGPU_BACKEND").is_err() {
+            unsafe {
+                std::env::set_var("WGPU_BACKEND", "dx12");
+            }
+        }
+    }
+
     tracing::subscriber::set_global_default(
         FmtSubscriber::builder().with_max_level(LOG_LEVEL).finish(),
     )

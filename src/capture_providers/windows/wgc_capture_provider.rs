@@ -30,7 +30,10 @@ use crate::{
             d3d11_utils::{copy_texture, map_read_texture, winrt_to_native_d3d11device},
         },
     },
-    media::{frame::Frame, pixel_format::PixelFormat},
+    media::{
+        frame::{Frame, SyncHandle},
+        pixel_format::PixelFormat,
+    },
     utils::{
         buffer_pool::{Buffer, BufferPool},
         vector2::Vector2,
@@ -38,8 +41,10 @@ use crate::{
 };
 
 #[derive(Debug, Default)]
-struct Staging {
-    textures: Vec<ID3D11Texture2D>,
+struct ResourcePool {
+    shared_textures: Vec<ID3D11Texture2D>,
+    shared_handles: Vec<SyncHandle>,
+    staging_textures: Vec<ID3D11Texture2D>,
     frame_count: u64,
     width: u32,
     height: u32,
@@ -51,23 +56,23 @@ pub struct WgcCaptureProvider {
     device: IDirect3DDevice,
     capture_item: Option<GraphicsCaptureItem>,
     pixel_format: PixelFormat,
-    staging_state: Arc<RwLock<Staging>>,
+    resource_state: Arc<RwLock<ResourcePool>>,
     buffer_pool: BufferPool,
 
     frame_pool: Option<Direct3D11CaptureFramePool>,
     session: Option<GraphicsCaptureSession>,
-    stream_tokens: Vec<i64>,
+    stream_tokens: Vec<windows::Foundation::EventRegistrationToken>,
     capturing: bool,
 
     record_cursor: bool,
     border_indicator: bool,
+    enable_ui_preview: bool,
 }
 
 impl WgcCaptureProvider {
     const WGC_FRAME_BUFFERS: i32 = 5;
-    const PIPELINE_DEPTH: usize = 2;
-    const TX_QUEUE_SIZE: usize = 2;
-    const BUFFER_SIZE: usize = 16 * 1024 * 1024;
+    const PIPELINE_DEPTH: usize = 3;
+    const BUFFER_SIZE: usize = 16 * 1024 * 1024; // 16MB for 4K support
     const BUFFER_MAX_COUNT: usize = 8;
 
     pub fn new(
@@ -75,12 +80,13 @@ impl WgcCaptureProvider {
         pixel_format: PixelFormat,
         record_cursor: bool,
         border_indicator: bool,
+        enable_ui_preview: bool,
     ) -> Self {
         Self {
             device,
             capture_item: None,
             pixel_format,
-            staging_state: Arc::new(RwLock::new(Staging::default())),
+            resource_state: Arc::new(RwLock::new(ResourcePool::default())),
             buffer_pool: BufferPool::init(Self::BUFFER_SIZE, Self::BUFFER_MAX_COUNT),
             frame_pool: None,
             session: None,
@@ -88,13 +94,14 @@ impl WgcCaptureProvider {
             capturing: false,
             record_cursor,
             border_indicator,
+            enable_ui_preview,
         }
     }
 
     fn process_frame(
-        mut frame_buffer: Buffer,
+        mut frame_buffer: Option<Buffer>,
         frame: Direct3D11CaptureFrame,
-        staging_state_arc: Arc<RwLock<Staging>>,
+        resource_state_arc: Arc<RwLock<ResourcePool>>,
         pixel_format: PixelFormat,
         tx: tokio::sync::mpsc::Sender<Frame>,
     ) -> super::Result<()> {
@@ -120,8 +127,6 @@ impl WgcCaptureProvider {
             WindowsCaptureError::FailedToGetContentSize(e)
         })?;
 
-        tracing::trace!("Frame: {} x {}, ptr={:?}", size.Width, size.Height, texture.as_raw());
-
         let device = unsafe {
             texture.GetDevice().map_err(|e| {
                 tracing::error!("Failed to get device: {}", e);
@@ -139,36 +144,49 @@ impl WgcCaptureProvider {
         let desc = unsafe {
             let mut d = std::mem::zeroed::<D3D11_TEXTURE2D_DESC>();
             texture.GetDesc(&mut d);
-            d.BindFlags = 0;
-            d.MiscFlags = 0;
-            d.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
-            d.Usage = D3D11_USAGE_STAGING;
-            d.MipLevels = 1;
-            d.ArraySize = 1;
-            d.SampleDesc.Count = 1;
-            d.SampleDesc.Quality = 0;
             d
         };
 
-        let mut staging = Self::ensure_staging_state(&device, &staging_state_arc, desc)?;
-        let write_idx = (staging.frame_count % Self::PIPELINE_DEPTH as u64) as usize;
-        let write_tex = &staging.textures[write_idx];
+        let mut pool =
+            Self::ensure_resource_pool(&device, &resource_state_arc, desc, frame_buffer.is_some())?;
+        let write_idx = (pool.frame_count % Self::PIPELINE_DEPTH as u64) as usize;
 
-        // 1. Copy current frame to the current ("write") staging texture (GPU operation, async)
-        copy_texture(&context, &texture, write_tex);
+        // 1. GPU-to-GPU copy to the Shared texture (for wgpu/zero-copy)
+        let shared_tex = &pool.shared_textures[write_idx];
+        copy_texture(&context, &texture, shared_tex);
 
-        // 2. Read from the previous ("read") staging texture (CPU operation, ideally finished by now)
-        let index = (staging.frame_count.wrapping_sub(1)) as usize % Self::PIPELINE_DEPTH;
-        let read_tex = &staging.textures[index];
-        map_read_texture(
-            &mut frame_buffer,
-            &context,
-            read_tex,
-            &desc,
-            pixel_format.bytes_per_pixel(),
-        )?;
+        // Submit to GPU to ensure shared handle reflects latest pixels
+        unsafe { context.Flush() };
 
-        staging.frame_count += 1;
+        // 2. GPU-to-GPU copy to the Staging texture (for CPU mapping) if requested
+        if frame_buffer.is_some() {
+            let staging_tex = &pool.staging_textures[write_idx];
+            copy_texture(&context, &texture, staging_tex);
+        }
+
+        // 3. Read from the previous ("read") pool textures
+        let read_idx = (pool.frame_count.wrapping_sub(1)) as usize % Self::PIPELINE_DEPTH;
+
+        let shared_handle = pool.shared_handles[read_idx];
+
+        if let Some(buf) = &mut frame_buffer {
+            let read_staging_tex = &pool.staging_textures[read_idx];
+            let mut staging_desc = desc;
+            staging_desc.Usage = D3D11_USAGE_STAGING;
+            staging_desc.BindFlags = 0;
+            staging_desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
+            staging_desc.MiscFlags = 0;
+
+            map_read_texture(
+                buf,
+                &context,
+                read_staging_tex,
+                &staging_desc,
+                pixel_format.bytes_per_pixel(),
+            )?;
+        }
+
+        pool.frame_count += 1;
 
         let rel_time = frame
             .SystemRelativeTime()
@@ -185,7 +203,8 @@ impl WgcCaptureProvider {
 
         let frame = Frame::new_d3d11(
             texture.clone(),
-            Some(frame_buffer), // We currently always map for simplicity, but could be None if preview is off
+            Some(shared_handle),
+            frame_buffer,
             Some(keep_alive),
             pixel_format,
             Vector2 { x: size.Width, y: size.Height },
@@ -205,48 +224,108 @@ impl WgcCaptureProvider {
         Ok(())
     }
 
-    fn ensure_staging_state<'a>(
+    fn ensure_resource_pool<'a>(
         device: &'a ID3D11Device,
-        staging_state_arc: &'a Arc<RwLock<Staging>>,
+        pool_arc: &'a Arc<RwLock<ResourcePool>>,
         desc: D3D11_TEXTURE2D_DESC,
-    ) -> super::Result<std::sync::RwLockWriteGuard<'a, Staging>> {
-        let mut staging = staging_state_arc.write().unwrap();
+        require_staging: bool,
+    ) -> super::Result<std::sync::RwLockWriteGuard<'a, ResourcePool>> {
+        let mut pool = pool_arc.write().unwrap();
 
-        // Initialize or re-initialize the staging pool if needed
-        if staging.textures.is_empty()
-            || staging.width != desc.Width
-            || staging.height != desc.Height
+        // Re-initialize pool if size changed or staging is now required but missing
+        if pool.shared_textures.is_empty()
+            || pool.width != desc.Width
+            || pool.height != desc.Height
+            || (require_staging && pool.staging_textures.is_empty())
         {
             tracing::info!(
-                "Initializing staging pool with depth {} for size {}x{}",
-                Self::TX_QUEUE_SIZE,
+                "Initializing resource pool (Shared: {}, Staging: {}) for size {}x{}",
+                true,
+                require_staging,
                 desc.Width,
                 desc.Height
             );
 
-            // Clear existing textures since we are possibly resizing
-            staging.textures.clear();
-            staging.width = desc.Width;
-            staging.height = desc.Height;
-            staging.frame_count = 0; // Reset pipeline state
+            pool.shared_textures.clear();
+            pool.shared_handles.clear();
+            pool.staging_textures.clear();
+            pool.width = desc.Width;
+            pool.height = desc.Height;
+            pool.frame_count = 0;
+
+            // Shared Texture Description
+            let mut shared_desc = desc;
+            shared_desc.Usage = windows::Win32::Graphics::Direct3D11::D3D11_USAGE_DEFAULT;
+            shared_desc.BindFlags =
+                windows::Win32::Graphics::Direct3D11::D3D11_BIND_SHADER_RESOURCE.0 as u32;
+            shared_desc.CPUAccessFlags = 0;
+            shared_desc.MiscFlags =
+                (windows::Win32::Graphics::Direct3D11::D3D11_RESOURCE_MISC_SHARED.0
+                    | windows::Win32::Graphics::Direct3D11::D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0)
+                    as u32;
+
+            // Staging Texture Description
+            let mut staging_desc = desc;
+            staging_desc.Usage = windows::Win32::Graphics::Direct3D11::D3D11_USAGE_STAGING;
+            staging_desc.BindFlags = 0;
+            staging_desc.CPUAccessFlags =
+                windows::Win32::Graphics::Direct3D11::D3D11_CPU_ACCESS_READ.0 as u32;
+            staging_desc.MiscFlags = 0;
 
             for _ in 0..Self::PIPELINE_DEPTH {
-                let staging_tex = unsafe {
+                // Create Shared Texture
+                let shared_tex: ID3D11Texture2D = unsafe {
                     let mut tex = MaybeUninit::<Option<ID3D11Texture2D>>::uninit();
-                    match device.CreateTexture2D(&desc, None, Some(tex.as_mut_ptr())) {
-                        Ok(_) => (),
-                        Err(err) => {
-                            tracing::error!("Failed to create staging texture: {}", err);
-                            return Err(WindowsCaptureError::FailedToCreateTexture(err));
-                        }
-                    }
-                    tex.assume_init().expect("Failed to create staging texture!")
+                    device.CreateTexture2D(&shared_desc, None, Some(tex.as_mut_ptr())).map_err(
+                        |err| {
+                            tracing::error!("Failed to create shared texture: {}", err);
+                            WindowsCaptureError::FailedToCreateTexture(err)
+                        },
+                    )?;
+                    tex.assume_init().expect("Failed to create shared texture!")
                 };
-                staging.textures.push(staging_tex);
+
+                let shared_handle = unsafe {
+                    let dxgi_res: windows::Win32::Graphics::Dxgi::IDXGIResource1 =
+                        shared_tex.cast().map_err(|e| {
+                            tracing::error!("Failed to cast to IDXGIResource1: {}", e);
+                            e
+                        })?;
+                    dxgi_res
+                        .CreateSharedHandle(
+                            None,
+                            (windows::Win32::Graphics::Dxgi::DXGI_SHARED_RESOURCE_READ.0
+                                | windows::Win32::Graphics::Dxgi::DXGI_SHARED_RESOURCE_WRITE.0)
+                                as u32,
+                            None,
+                        )
+                        .map_err(|e| {
+                            tracing::error!("Failed to create shared NT handle: {}", e);
+                            e
+                        })?
+                };
+
+                pool.shared_textures.push(shared_tex);
+                pool.shared_handles.push(SyncHandle(shared_handle));
+
+                // Create Staging Texture (if requested)
+                if require_staging {
+                    let staging_tex: ID3D11Texture2D = unsafe {
+                        let mut tex = MaybeUninit::<Option<ID3D11Texture2D>>::uninit();
+                        device
+                            .CreateTexture2D(&staging_desc, None, Some(tex.as_mut_ptr()))
+                            .map_err(|err| {
+                                tracing::error!("Failed to create staging texture: {}", err);
+                                WindowsCaptureError::FailedToCreateTexture(err)
+                            })?;
+                        tex.assume_init().expect("Failed to create staging texture!")
+                    };
+                    pool.staging_textures.push(staging_tex);
+                }
             }
         }
 
-        Ok(staging)
+        Ok(pool)
     }
 }
 
@@ -267,7 +346,7 @@ impl CaptureProvider for WgcCaptureProvider {
         })?;
 
         let device = self.device.clone();
-        let staging_state_arc = self.staging_state.clone();
+        let resource_state_arc = self.resource_state.clone();
 
         let size = capture_item.Size().map_err(|e| {
             tracing::error!("Failed to get size of capture item! {}", e);
@@ -303,8 +382,9 @@ impl CaptureProvider for WgcCaptureProvider {
         })?;
 
         let buffer_pool = self.buffer_pool.clone();
-        let staging_state_arc_inner = staging_state_arc.clone();
+        let resource_state_arc_inner = resource_state_arc.clone();
         let pixel_format = self.pixel_format;
+        let enable_ui_preview = self.enable_ui_preview;
 
         let token = frame_pool
             .FrameArrived(&TypedEventHandler::new(move |sender, _| {
@@ -321,24 +401,28 @@ impl CaptureProvider for WgcCaptureProvider {
                 match sender.TryGetNextFrame() {
                     Ok(frame) => {
                         let content_size = frame.ContentSize().unwrap_or(size);
-                        let buffer_size = content_size.Width as usize
-                            * content_size.Height as usize
-                            * pixel_format.bytes_per_pixel() as usize;
+                        let mut buffer = None;
 
-                        if buffer_size == 0 {
-                            tracing::warn!("Frame content size is 0, skipping frame.");
-                            return Ok(());
-                        }
+                        // We only allocate CPU memory if the UI preview is enabled and zero-copy failed
+                        // Or if we specifically want a software fallback.
+                        if enable_ui_preview {
+                            let buffer_size = content_size.Width as usize
+                                * content_size.Height as usize
+                                * pixel_format.bytes_per_pixel() as usize;
 
-                        let mut buffer = buffer_pool.get_unzeroed(buffer_size);
-                        unsafe {
-                            buffer.set_len(buffer_size);
+                            if buffer_size > 0 {
+                                let mut b = buffer_pool.get_unzeroed(buffer_size);
+                                unsafe {
+                                    b.set_len(buffer_size);
+                                }
+                                buffer = Some(b);
+                            }
                         }
 
                         match Self::process_frame(
                             buffer,
                             frame,
-                            staging_state_arc_inner.clone(),
+                            resource_state_arc_inner.clone(),
                             pixel_format,
                             tx.clone(),
                         ) {
@@ -358,7 +442,7 @@ impl CaptureProvider for WgcCaptureProvider {
                 tracing::error!("Failed to set FrameArrived handler! {}", e);
                 WindowsCaptureError::FailedToSetFrameArrivedHandler(e)
             })?;
-        tracing::debug!("Added frame arrived handler with token: {}", token);
+        tracing::debug!("Added frame arrived handler with token: {:?}", token);
         self.stream_tokens.push(token);
 
         // ALWAYS start capture when a stream is created
@@ -384,8 +468,10 @@ impl CaptureProvider for WgcCaptureProvider {
 
         // Reset staging state
         {
-            let mut state = self.staging_state.write().unwrap();
-            state.textures.clear();
+            let mut state = self.resource_state.write().unwrap();
+            state.shared_textures.clear();
+            state.shared_handles.clear();
+            state.staging_textures.clear();
             state.frame_count = 0;
         }
 
@@ -428,7 +514,7 @@ impl CaptureProvider for WgcCaptureProvider {
         if let Some(frame_pool) = &self.frame_pool {
             tracing::info!("Closing Direct3D11CaptureFramePool");
             for token in self.stream_tokens.drain(..) {
-                tracing::debug!("Removing frame arrived handler: {}", token);
+                tracing::debug!("Removing frame arrived handler: {:?}", token);
                 frame_pool.RemoveFrameArrived(token).ok();
             }
             frame_pool.Close().ok();

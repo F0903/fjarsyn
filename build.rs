@@ -38,7 +38,7 @@ fn set_windows_metadata() -> Result<()> {
     res.set("InternalName", &internal_name)
         .set("OriginalFilename", &internal_name)
         .set("ProductName", &pkg_name)
-        .set("FileDescription", &pkg_name) // For some reason this is shown as the app name in Task Manager. So we just use the package name as the "file description".
+        .set("FileDescription", &pkg_name)
         .set("ProductVersion", &version_string)
         .set("FileVersion", &version_string)
         .set_version_info(VersionInfo::PRODUCTVERSION, version_u64)

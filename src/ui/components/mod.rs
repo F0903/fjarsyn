@@ -4,6 +4,7 @@ pub mod resize_grid;
 pub mod sidebar;
 pub mod spacer;
 pub mod titlebar;
+pub mod wgpu_frame_viewer;
 
 pub use frame_viewer::FrameViewer;
 pub use notifications::notifications_view;
@@ -11,3 +12,4 @@ pub use resize_grid::resize_grid;
 pub use sidebar::{sidebar, sidebar_button};
 pub use spacer::vertical_spacer;
 pub use titlebar::{titlebar, window_controls};
+pub use wgpu_frame_viewer::WgpuFrameViewer;

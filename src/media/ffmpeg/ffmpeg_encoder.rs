@@ -80,8 +80,10 @@ impl FFmpegEncoder {
                     let hw_ctx = (*ctx).data as *mut ffmpeg_next::ffi::AVHWDeviceContext;
                     let d3d11_ctx = (*hw_ctx).hwctx as *mut AVD3D11VADeviceContext;
 
-                    let device: windows::Win32::Graphics::Direct3D11::ID3D11Device =
-                        std::mem::transmute_copy(&handle);
+                    // Use ManuallyDrop since FFmpeg will take ownership of the handle
+                    let device: std::mem::ManuallyDrop<
+                        windows::Win32::Graphics::Direct3D11::ID3D11Device,
+                    > = std::mem::ManuallyDrop::new(std::mem::transmute_copy(&handle));
                     let device_context = device.GetImmediateContext().ok();
 
                     (*d3d11_ctx).device = handle as *mut _;

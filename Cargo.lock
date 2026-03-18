@@ -1595,17 +1595,20 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 name = "fjarsyn"
 version = "0.3.0"
 dependencies = [
+ "bytemuck",
  "bytes",
  "chrono",
  "directories",
  "ffmpeg-next",
  "futures",
  "futures-util",
+ "glam",
  "iced",
  "iced_core",
  "iced_debug",
  "iced_devtools",
  "iced_fonts",
+ "iced_wgpu",
  "iced_winit",
  "mdns-sd",
  "once_cell",
@@ -1621,8 +1624,9 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "webrtc",
- "windows 0.62.2",
- "windows-core 0.62.2",
+ "wgpu",
+ "windows 0.58.0",
+ "windows-core 0.58.0",
  "windows-future",
  "winres",
 ]

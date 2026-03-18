@@ -239,10 +239,11 @@ impl Fjarsyn {
                 CallServiceConfig { frame_packet_tx, call_event_tx, max_depacket_latency, peer_id };
             let res = CallService::init(config).await;
             if let Ok(ref service) = res
-                && let Ok(d) = Discovery::new() {
-                    let _ = d.advertise(service.local_id(), service.signaling_port());
-                    let _ = d.browse(discovery_event_tx);
-                }
+                && let Ok(d) = Discovery::new()
+            {
+                let _ = d.advertise(service.local_id(), service.signaling_port());
+                let _ = d.browse(discovery_event_tx);
+            }
             use crate::ui::message::CallServiceMessage;
             Message::CallService(CallServiceMessage::CallServiceInitialized(
                 res.map(Arc::new).map_err(Arc::new),
@@ -254,9 +255,10 @@ impl Fjarsyn {
         let fmt = config.pixel_format;
         let cursor = config.record_cursor;
         let border = config.recording_border_indicator;
+        let preview = config.enable_ui_preview;
         Task::future(async move {
             let res = crate::capture_providers::windows::WgcCaptureProviderBuilder::new(
-                fmt, cursor, border,
+                fmt, cursor, border, preview,
             )
             .with_default_device()
             .and_then(|b| b.with_default_capture_item())

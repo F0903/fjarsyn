@@ -44,6 +44,15 @@ define_tab! {
                             ))
                         }),
                     ),
+                    setting_row(
+                        "UI Preview",
+                        "Show a local preview of the captured area (Increases CPU usage)",
+                        checkbox(config.enable_ui_preview).on_toggle(|val| {
+                            Message::Screen(ScreenMessage::Settings(
+                                SettingsMessage::EnableUiPreviewChanged(val),
+                            ))
+                        }),
+                    ),
                 ]
                 .spacing(20),
             ),

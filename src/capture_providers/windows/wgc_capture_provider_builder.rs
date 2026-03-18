@@ -29,16 +29,23 @@ pub struct WgcCaptureProviderBuilder {
     pixel_format: PixelFormat,
     record_cursor: bool,
     border_indicator: bool,
+    enable_ui_preview: bool,
 }
 
 impl WgcCaptureProviderBuilder {
-    pub fn new(pixel_format: PixelFormat, record_cursor: bool, border_indicator: bool) -> Self {
+    pub fn new(
+        pixel_format: PixelFormat,
+        record_cursor: bool,
+        border_indicator: bool,
+        enable_ui_preview: bool,
+    ) -> Self {
         WgcCaptureProviderBuilder {
             device: None,
             capture_item: None,
             pixel_format,
             record_cursor,
             border_indicator,
+            enable_ui_preview,
         }
     }
 
@@ -69,6 +76,7 @@ impl WgcCaptureProviderBuilder {
             self.pixel_format,
             self.record_cursor,
             self.border_indicator,
+            self.enable_ui_preview,
         );
         if let Some(capture_item) = self.capture_item {
             capture.set_capture_item(capture_item)?;

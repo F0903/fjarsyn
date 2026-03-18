@@ -58,6 +58,11 @@ impl SettingsScreen {
                 Task::none()
             }
 
+            SettingsMessage::EnableUiPreviewChanged(val) => {
+                self.working_config.enable_ui_preview = val;
+                Task::none()
+            }
+
             SettingsMessage::MaxDepacketLatencyChanged(val) => {
                 self.working_config.max_depacket_latency = val;
                 Task::none()
