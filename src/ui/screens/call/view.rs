@@ -71,7 +71,9 @@ impl CallScreen {
             )))
             .spacing(10);
 
-        controls_row = if self.is_capturing() {
+        controls_row = if self.capture.is_none() {
+            controls_row.push(text("Screen sharing unavailable").size(14).style(text::secondary))
+        } else if self.is_capturing() {
             controls_row.extend([
                 button("Change Screen")
                     .on_press(Message::Screen(ScreenMessage::Call(CallMessage::StartCapture)))

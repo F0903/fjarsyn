@@ -3,85 +3,8 @@ use iced::Task;
 use super::{ContactsMessage, ContactsScreen};
 use crate::ui::{
     app::AppState,
-    message::{ContactsServiceMessage, Message, NotificationMessage, ScreenMessage},
+    message::{ContactsServiceMessage, Message, ScreenMessage},
 };
-
-pub fn handle_load_contacts(ctx: &AppState) -> Task<Message> {
-    let Some(service) = ctx.services.contacts_service.clone() else {
-        return Task::none();
-    };
-
-    Task::future(async move {
-        let _ = service.refresh().await;
-        Message::NoOp
-    })
-}
-
-pub fn handle_save_contact(
-    ctx: &AppState,
-    peer_id: String,
-    name: String,
-    address: Option<String>,
-) -> Task<Message> {
-    let Some(service) = ctx.services.contacts_service.clone() else {
-        return Task::none();
-    };
-
-    Task::future(async move {
-        Message::ContactData(ContactsServiceMessage::ContactSaved(
-            service.create(peer_id, name, address).await,
-        ))
-    })
-}
-
-pub fn handle_delete_contact(ctx: &AppState, id: i64) -> Task<Message> {
-    let Some(service) = ctx.services.contacts_service.clone() else {
-        return Task::none();
-    };
-
-    Task::future(async move {
-        Message::ContactData(ContactsServiceMessage::ContactDeleted(service.delete(id).await))
-    })
-}
-
-pub fn handle_update_address(ctx: &mut AppState, id: i64, addr: String) -> Task<Message> {
-    if let Some(c) = ctx
-        .services
-        .contacts_service
-        .as_ref()
-        .map(|s| s.contacts())
-        .unwrap_or_default()
-        .iter()
-        .find(|c| c.id == id)
-    {
-        ctx.notify_info(format!("Updating address for {}...", c.name));
-        return Task::done(Message::ContactData(
-            ContactsServiceMessage::UpdateContactAddressConfirmed(id, addr),
-        ));
-    }
-    Task::none()
-}
-
-pub fn handle_update_confirmed(ctx: &AppState, id: i64, addr: String) -> Task<Message> {
-    let Some(service) = ctx.services.contacts_service.clone() else {
-        return Task::none();
-    };
-
-    let c = match service.contacts().iter().find(|c| c.id == id).cloned() {
-        Some(c) => c,
-        None => return Task::none(),
-    };
-    Task::future(async move {
-        let res = service.update(id, c.peer_id, c.name, Some(addr)).await;
-        match res {
-            Ok(_) => Message::ContactData(ContactsServiceMessage::LoadContacts),
-            Err(e) => Message::Notification(NotificationMessage::NotifyError(format!(
-                "Update Failed: {}",
-                e
-            ))),
-        }
-    })
-}
 
 impl ContactsScreen {
     pub(crate) fn handle_message(

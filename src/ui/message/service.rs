@@ -25,7 +25,6 @@ pub enum CallServiceMessage {
 #[derive(Debug, Clone)]
 pub enum ContactsServiceMessage {
     LoadContacts,
-    ContactsLoaded(Result<Vec<crate::services::contacts_service::Contact>, Arc<crate::Error>>),
     SaveContact { peer_id: String, name: String, address: Option<String> },
     DeleteContact(i64),
     ContactSaved(Result<i64, Arc<crate::Error>>),

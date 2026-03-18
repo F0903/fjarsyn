@@ -10,6 +10,6 @@ mod wgc_capture_provider_builder;
 //pub use capture_provider::WindowsCaptureProvider;
 pub use capture_stream::WindowsCaptureStream;
 pub use d3d11_utils::{create_capture_item_for_primary_monitor, user_pick_capture_item};
- use error::{Result, WindowsCaptureError};
+use error::{Result, WindowsCaptureError};
 pub use wgc_capture_provider::WgcCaptureProvider;
 pub use wgc_capture_provider_builder::{WgcCaptureProviderBuilder, WgcCaptureProviderBuilderError};

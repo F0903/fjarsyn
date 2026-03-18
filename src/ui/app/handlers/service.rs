@@ -11,18 +11,35 @@ use crate::{
             CallServiceMessage, CaptureMessage, ContactsServiceMessage, DatabaseMessage, Message,
             NavigationMessage, Route,
         },
+        screens::ActiveScreen,
     },
 };
+
+fn upsert_discovered_peer(app: &mut Fjarsyn, peer: crate::networking::discovery::PeerInfo) {
+    if let Some(existing) = app.ctx.networking.discovered_peers.iter_mut().find(|p| p.id == peer.id)
+    {
+        existing.update(peer);
+    } else {
+        app.ctx.networking.discovered_peers.push(peer);
+    }
+}
 
 pub fn handle_call_service_msg(app: &mut Fjarsyn, msg: CallServiceMessage) -> Task<Message> {
     match msg {
         CallServiceMessage::CallServiceInitialized(res) => {
-            if let Ok(service) = res {
-                if app.ctx.config.peer_id.is_none() {
-                    app.ctx.config.peer_id = Some(service.local_id().to_string());
-                    let _ = app.ctx.config.save();
+            match res {
+                Ok(service) => {
+                    if app.ctx.config.peer_id.is_none() {
+                        app.ctx.config.peer_id = Some(service.local_id().to_string());
+                        if let Err(err) = app.ctx.config.save() {
+                            app.ctx.notify_error(format!("Failed to save peer ID: {}", err));
+                        }
+                    }
+                    app.ctx.services.call_service = Some(service);
                 }
-                app.ctx.services.call_service = Some(service.clone());
+                Err(err) => {
+                    app.ctx.notify_error(format!("Call service failed to initialize: {}", err));
+                }
             }
             Task::none()
         }
@@ -45,10 +62,10 @@ pub fn handle_call_service_msg(app: &mut Fjarsyn, msg: CallServiceMessage) -> Ta
                             .iter()
                             .find(|p| p.id == *tid)
                             .cloned()
-                        {
-                            app.ctx.networking.recent_peers.retain(|rp| rp.id != p.id);
-                            app.ctx.networking.recent_peers.insert(0, p);
-                        }
+                    {
+                        app.ctx.networking.recent_peers.retain(|rp| rp.id != p.id);
+                        app.ctx.networking.recent_peers.insert(0, p);
+                    }
                     return Task::done(Message::Navigation(NavigationMessage::Navigate(
                         Route::Call,
                     )));
@@ -79,19 +96,10 @@ pub fn handle_call_service_msg(app: &mut Fjarsyn, msg: CallServiceMessage) -> Ta
                         return Task::none();
                     }
 
-                    if let Some(existing) =
-                        app.ctx.networking.discovered_peers.iter_mut().find(|p| p.id == peer.id)
-                    {
-                        existing.update(peer.clone());
-                    } else {
-                        app.ctx.networking.discovered_peers.push(peer.clone());
-                    }
+                    upsert_discovered_peer(app, peer);
                 }
                 DiscoveryEvent::PeerRemoved(fullname) => {
-                    app.ctx
-                        .networking
-                        .discovered_peers
-                        .retain(|p| !fullname.contains(&p.instance_name));
+                    app.ctx.networking.discovered_peers.retain(|p| p.instance_name != fullname);
                 }
             }
             Task::none()
@@ -109,13 +117,7 @@ pub fn handle_call_service_msg(app: &mut Fjarsyn, msg: CallServiceMessage) -> Ta
                 return Task::none();
             }
 
-            if let Some(existing) =
-                app.ctx.networking.discovered_peers.iter_mut().find(|p| p.id == peer.id)
-            {
-                existing.update(peer.clone());
-            } else {
-                app.ctx.networking.discovered_peers.push(peer.clone());
-            }
+            upsert_discovered_peer(app, peer);
             Task::none()
         }
         CallServiceMessage::PeerRemoved(id) => {
@@ -131,6 +133,11 @@ pub fn handle_capture_msg(app: &mut Fjarsyn, msg: CaptureMessage) -> Task<Messag
         CaptureMessage::CaptureInitialized(res) => match res {
             Ok(provider) => {
                 app.ctx.media.capture = Some(provider);
+                if let Some(capture) = app.ctx.media.capture.clone()
+                    && let ActiveScreen::Call(screen) = &mut app.active_screen
+                {
+                    screen.capture = Some(capture);
+                }
                 tracing::info!("Capture ready.");
             }
             Err(e) => {

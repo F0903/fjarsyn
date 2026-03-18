@@ -70,6 +70,6 @@ macro_rules! define_active_screen {
 define_active_screen! {
     Home(home::HomeScreen) => |ctx: &mut AppState| home::HomeScreen::new(ctx),
     Contacts(contacts::ContactsScreen) => |ctx: &mut AppState| contacts::ContactsScreen::new(ctx),
-    Call(call::CallScreen) => |ctx: &mut AppState| call::CallScreen::new(ctx.media.capture.clone().expect("Capture provider must be initialized")),
+    Call(call::CallScreen) => |ctx: &mut AppState| call::CallScreen::new(ctx.media.capture.clone()),
     Settings(settings::SettingsScreen) => |ctx: &mut AppState| settings::SettingsScreen::new(&ctx.config),
 }

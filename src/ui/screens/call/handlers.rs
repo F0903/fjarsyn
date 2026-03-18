@@ -38,16 +38,22 @@ impl CallScreen {
                 CallMessage::EndCall => {
                     self.frame_sender = None;
                     self.decoder = None;
+                    self.local_frame = None;
                     self.remote_frame = None;
-                    let capture_arc = self.capture.clone();
-
-                    let stop_capture_task = Task::future(async move {
-                        let mut capture = capture_arc.write().await;
-                        if let Err(e) = capture.stop_capture() {
-                            tracing::error!("Failed to stop capture: {}", e);
-                        }
-                        Message::Screen(ScreenMessage::Call(CallMessage::CaptureStopped))
-                    });
+                    self.show_local_preview = false;
+                    let stop_capture_task = self
+                        .capture
+                        .clone()
+                        .map(|capture_arc| {
+                            Task::future(async move {
+                                let mut capture = capture_arc.write().await;
+                                if let Err(e) = capture.stop_capture() {
+                                    tracing::error!("Failed to stop capture: {}", e);
+                                }
+                                Message::Screen(ScreenMessage::Call(CallMessage::CaptureStopped))
+                            })
+                        })
+                        .unwrap_or_else(Task::none);
 
                     let disconnect_task = if let Some(service) = &ctx.services.call_service {
                         let service_clone = service.clone();
@@ -68,10 +74,17 @@ impl CallScreen {
                     ])
                 }
                 CallMessage::StartCapture => {
+                    if self.capture.is_none() {
+                        ctx.notify_error("Screen capture is not available.");
+                        return Task::none();
+                    }
+
                     let window_handle = match ctx.ui.main_window.as_ref().and_then(|w| w.raw_id) {
                         Some(handle) => handle,
                         None => {
-                            tracing::error!("No active window handle");
+                            ctx.notify_error(
+                                "Screen capture picker is unavailable without an active window.",
+                            );
                             return Task::none();
                         }
                     };
@@ -88,7 +101,7 @@ impl CallScreen {
                             }
                         }),
                         Err(err) => {
-                            tracing::error!("Failed to pick_platform_capture_item: {}", err);
+                            ctx.notify_error(format!("Failed to open capture picker: {}", err));
                             Task::none()
                         }
                     }
@@ -98,7 +111,7 @@ impl CallScreen {
                     let capture_item = match capture_item_result {
                         Ok(item) => item,
                         Err(err) => {
-                            tracing::error!("Failed to pick capture item: {}", err);
+                            ctx.notify_error(format!("Failed to pick capture item: {}", err));
                             return Task::none();
                         }
                     };
@@ -107,33 +120,44 @@ impl CallScreen {
                     ))))
                 }
 
-                CallMessage::TryStartCapture(capture_item) => match self.capture.try_write() {
-                    Ok(mut capture) => {
-                        if let Err(err) = capture.set_capture_item(capture_item.clone()) {
-                            tracing::error!("Failed to set_capture_item: {}", err);
-                            return Task::none();
-                        }
-
-                        if let Err(err) = capture.start_capture() {
-                            tracing::error!("Failed to start_capture: {}", err);
-                            return Task::none();
-                        }
-
-                        Task::done(Message::Screen(ScreenMessage::Call(
-                            CallMessage::CaptureStarted,
-                        )))
+                CallMessage::TryStartCapture(capture_item) => match self.capture.as_ref() {
+                    None => {
+                        ctx.notify_error("Screen capture is not available.");
+                        Task::none()
                     }
-                    Err(_) => {
-                        let capture_arc = self.capture.clone();
-                        Task::future(async move {
-                            let _lock = capture_arc.write().await;
-                        })
-                        .map(move |_| {
-                            Message::Screen(ScreenMessage::Call(CallMessage::TryStartCapture(
-                                capture_item.clone(),
+                    Some(capture) => match capture.try_write() {
+                        Ok(mut capture) => {
+                            if let Err(err) = capture.set_capture_item(capture_item.clone()) {
+                                ctx.notify_error(format!(
+                                    "Failed to select capture source: {}",
+                                    err
+                                ));
+                                return Task::none();
+                            }
+
+                            if let Err(err) = capture.start_capture() {
+                                ctx.notify_error(format!("Failed to start capture: {}", err));
+                                return Task::none();
+                            }
+
+                            Task::done(Message::Screen(ScreenMessage::Call(
+                                CallMessage::CaptureStarted,
                             )))
-                        })
-                    }
+                        }
+                        Err(_) => {
+                            let capture_arc = self.capture.clone();
+                            Task::future(async move {
+                                if let Some(capture_arc) = capture_arc {
+                                    let _lock = capture_arc.write().await;
+                                }
+                            })
+                            .map(move |_| {
+                                Message::Screen(ScreenMessage::Call(CallMessage::TryStartCapture(
+                                    capture_item.clone(),
+                                )))
+                            })
+                        }
+                    },
                 },
 
                 CallMessage::CaptureStarted => Task::none(),
@@ -142,25 +166,32 @@ impl CallScreen {
                     Task::done(Message::Screen(ScreenMessage::Call(CallMessage::TryStopCapture)))
                 }
 
-                CallMessage::TryStopCapture => match self.capture.try_write() {
-                    Ok(mut capture) => {
-                        if let Err(err) = capture.stop_capture() {
-                            tracing::error!("Failed to stop capture: {}", err);
+                CallMessage::TryStopCapture => match self.capture.as_ref() {
+                    None => Task::done(Message::Screen(ScreenMessage::Call(
+                        CallMessage::CaptureStopped,
+                    ))),
+                    Some(capture) => match capture.try_write() {
+                        Ok(mut capture) => {
+                            if let Err(err) = capture.stop_capture() {
+                                ctx.notify_error(format!("Failed to stop capture: {}", err));
+                            }
+                            Task::done(Message::Screen(ScreenMessage::Call(
+                                CallMessage::CaptureStopped,
+                            )))
                         }
-                        Task::done(Message::Screen(ScreenMessage::Call(
-                            CallMessage::CaptureStopped,
-                        )))
-                    }
-                    Err(_) => {
-                        tracing::debug!(
-                            "Failed to acquire capture lock. Trying again with waiter..."
-                        );
-                        let capture_arc = self.capture.clone();
-                        Task::future(async move {
-                            let _lock = capture_arc.write().await;
-                            Message::Screen(ScreenMessage::Call(CallMessage::TryStopCapture))
-                        })
-                    }
+                        Err(_) => {
+                            tracing::debug!(
+                                "Failed to acquire capture lock. Trying again with waiter..."
+                            );
+                            let capture_arc = self.capture.clone();
+                            Task::future(async move {
+                                if let Some(capture_arc) = capture_arc {
+                                    let _lock = capture_arc.write().await;
+                                }
+                                Message::Screen(ScreenMessage::Call(CallMessage::TryStopCapture))
+                            })
+                        }
+                    },
                 },
 
                 CallMessage::CaptureStopped => {
@@ -168,6 +199,7 @@ impl CallScreen {
                     self.local_frame = None;
                     self.decoder = None;
                     self.remote_frame = None;
+                    self.show_local_preview = false;
                     Task::none()
                 }
 
@@ -214,12 +246,16 @@ impl CallScreen {
         }
     }
 
-    fn handle_frame_captured(&mut self, ctx: &AppState, frame: Arc<Frame>) -> Task<Message> {
+    fn handle_frame_captured(&mut self, ctx: &mut AppState, frame: Arc<Frame>) -> Task<Message> {
         self.local_frame = Some(frame.clone());
 
         if self.frame_sender.is_none() {
             let Some(service) = &ctx.services.call_service else {
                 tracing::error!("CallService is not initialized yet");
+                return Task::none();
+            };
+            let Some(capture) = self.capture.clone() else {
+                ctx.notify_error("Screen capture is not available.");
                 return Task::none();
             };
 
@@ -239,7 +275,6 @@ impl CallScreen {
                 target_resolution,
                 target_bitrate
             );
-            let capture = self.capture.clone();
             tokio::spawn(async move {
                 let device_handle = if transcoding_type.get_encoder_info().hw_accel
                     == crate::media::ffmpeg::HWAccelType::D3D11VA

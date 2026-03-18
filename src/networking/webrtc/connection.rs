@@ -389,6 +389,26 @@ impl WebRTC {
         Ok(())
     }
 
+    async fn restore_base_signaling(&self) {
+        *self.signaling_tx.write().await = Some(self.base_signaling_tx.clone());
+    }
+
+    pub async fn reset_after_failed_dial(&self) {
+        let pc = {
+            let lock = self.peer_connection.read().await;
+            lock.clone()
+        };
+
+        if pc.connection_state() != RTCPeerConnectionState::Closed
+            && let Err(err) = pc.close().await
+        {
+            tracing::debug!("Failed to close peer connection after dial failure: {}", err);
+        }
+
+        *self.remote_peer_id.write().await = None;
+        self.restore_base_signaling().await;
+    }
+
     pub async fn create_offer(&self) -> WebRTCResult<()> {
         // Automatically ensure we have a fresh PC before creating an offer
         let pc = self.prepare_pc().await?;
@@ -458,7 +478,7 @@ impl WebRTC {
         *self.remote_peer_id.write().await = None;
 
         // Restore base signaling (dropping any ephemeral dialer sender)
-        *self.signaling_tx.write().await = Some(self.base_signaling_tx.clone());
+        self.restore_base_signaling().await;
 
         Ok(())
     }
@@ -485,7 +505,7 @@ impl WebRTC {
         *self.remote_peer_id.write().await = None;
 
         // Restore base signaling (dropping any ephemeral dialer sender)
-        *self.signaling_tx.write().await = Some(self.base_signaling_tx.clone());
+        self.restore_base_signaling().await;
 
         Ok(())
     }

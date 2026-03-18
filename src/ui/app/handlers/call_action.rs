@@ -9,7 +9,7 @@ use crate::{
             CallActionMessage, CallServiceMessage, ContactsServiceMessage, Message,
             NavigationMessage, Route,
         },
-        utils::ResultExt,
+        utils::{ErrorExt, ResultExt},
     },
 };
 
@@ -23,10 +23,11 @@ pub fn handle_call_action_msg(app: &mut Fjarsyn, msg: CallActionMessage) -> Task
             };
 
             Task::future(async move {
-                match service.accept().await {
-                    Ok(_) => Message::Navigation(NavigationMessage::Navigate(Route::Call)),
-                    Err(_) => Message::NoOp,
-                }
+                service
+                    .accept()
+                    .await
+                    .map(|_| Message::Navigation(NavigationMessage::Navigate(Route::Call)))
+                    .unwrap_or_else(|err| err.to_notify_error())
             })
         }
         CallActionMessage::DeclineCall => {
@@ -37,8 +38,11 @@ pub fn handle_call_action_msg(app: &mut Fjarsyn, msg: CallActionMessage) -> Task
             };
 
             Task::future(async move {
-                let _ = service.decline().await;
-                Message::NoOp
+                service
+                    .decline()
+                    .await
+                    .map(|_| Message::NoOp)
+                    .unwrap_or_else(|err| err.to_notify_error())
             })
         }
         CallActionMessage::StartCall(target) => {

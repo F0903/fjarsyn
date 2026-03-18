@@ -78,19 +78,11 @@ where
             return;
         }
 
-        let img_handle = if self.frame.format == crate::media::pixel_format::PixelFormat::BGRA8 {
-            advanced::image::Handle::from_rgba(
-                self.frame.size.x as u32,
-                self.frame.size.y as u32,
-                pixels,
-            )
-        } else {
-            advanced::image::Handle::from_rgba(
-                self.frame.size.x as u32,
-                self.frame.size.y as u32,
-                pixels,
-            )
-        };
+        let img_handle = advanced::image::Handle::from_rgba(
+            self.frame.size.x as u32,
+            self.frame.size.y as u32,
+            pixels,
+        );
 
         let alloc = match renderer.load_image(&img_handle) {
             Ok(alloc) => alloc,

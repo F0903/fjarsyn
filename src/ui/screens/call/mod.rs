@@ -51,7 +51,7 @@ pub enum CallMessage {
 
 #[derive(Clone, Debug)]
 pub struct CallScreen {
-    pub(crate) capture: Arc<RwLock<PlatformCaptureProvider>>,
+    pub(crate) capture: Option<Arc<RwLock<PlatformCaptureProvider>>>,
 
     // Local Capture State
     pub(crate) local_frame: Option<Arc<Frame>>,
@@ -64,7 +64,7 @@ pub struct CallScreen {
 }
 
 impl CallScreen {
-    pub fn new(capture: Arc<RwLock<PlatformCaptureProvider>>) -> Self {
+    pub fn new(capture: Option<Arc<RwLock<PlatformCaptureProvider>>>) -> Self {
         Self {
             capture,
 
@@ -89,7 +89,11 @@ impl CallScreen {
     }
 
     pub(crate) fn is_capturing(&self) -> bool {
-        self.capture.try_read().map(|c| c.is_capturing()).unwrap_or(false)
+        self.capture
+            .as_ref()
+            .and_then(|capture| capture.try_read().ok())
+            .map(|capture| capture.is_capturing())
+            .unwrap_or(false)
     }
 }
 
@@ -97,11 +101,13 @@ impl Screen for CallScreen {
     fn subscription(&self, ctx: &AppState) -> Subscription<Message> {
         let mut subscriptions = vec![];
 
-        if self.is_capturing() {
+        if self.is_capturing()
+            && let Some(capture) = self.capture.clone()
+        {
             subscriptions.push(
                 Subscription::<Frame>::run_with(
                     FrameReceiverSubData {
-                        capture: self.capture.clone(),
+                        capture,
                         framerate: ctx.config.target_framerate,
                         stream_name: "frame-receiver",
                     },

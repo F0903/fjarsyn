@@ -167,7 +167,13 @@ impl CallService {
         *self.state.write().unwrap() = CallState::Dialing { target: target.clone() };
 
         let ResolvedTarget { peer_id: tid, address: taddr, name: tname } =
-            self.resolve_target(&target, contacts)?;
+            match self.resolve_target(&target, contacts) {
+                Ok(target) => target,
+                Err(err) => {
+                    *self.state.write().unwrap() = CallState::Idle;
+                    return Err(err);
+                }
+            };
 
         // Try to connect via discovered peers
         if let Some(id) = &tid
@@ -184,7 +190,10 @@ impl CallService {
                         }
                     }
 
-                    self.webrtc.create_offer().await.map_err(|e| format!("Offer failed: {}", e))?;
+                    if let Err(err) = self.webrtc.create_offer().await {
+                        self.rollback_failed_dial().await;
+                        return Err(format!("Offer failed: {}", err));
+                    }
 
                     *self.state.write().unwrap() = CallState::InCall { peer_id: tid.clone() };
 
@@ -209,7 +218,10 @@ impl CallService {
             };
 
             if self.webrtc.dial_direct(addr).await.is_ok() {
-                self.webrtc.create_offer().await.map_err(|e| format!("Offer failed: {}", e))?;
+                if let Err(err) = self.webrtc.create_offer().await {
+                    self.rollback_failed_dial().await;
+                    return Err(format!("Offer failed: {}", err));
+                }
 
                 *self.state.write().unwrap() = CallState::InCall { peer_id: tid.clone() };
 
@@ -224,6 +236,11 @@ impl CallService {
 
         *self.state.write().unwrap() = CallState::Idle;
         Err("Connection failed".into())
+    }
+
+    async fn rollback_failed_dial(&self) {
+        self.webrtc.reset_after_failed_dial().await;
+        *self.state.write().unwrap() = CallState::Idle;
     }
 
     /// Accepts an incoming call.
@@ -289,5 +306,31 @@ impl Drop for CallService {
             tracing::debug!("Aborting CallService task...");
             task.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CallEvent, CallState};
+    use crate::{networking::webrtc::WebRTCEvent, ui::message::CallTarget};
+
+    #[test]
+    fn connected_event_preserves_known_peer_id() {
+        let mut state = CallState::InCall { peer_id: Some("peer-123".into()) };
+
+        let event = state.apply_event(WebRTCEvent::Connected);
+
+        assert!(matches!(event, Some(CallEvent::CallConnected)));
+        assert_eq!(state, CallState::InCall { peer_id: Some("peer-123".into()) });
+    }
+
+    #[test]
+    fn disconnected_event_returns_to_idle() {
+        let mut state = CallState::Dialing { target: CallTarget::PeerId("peer-123".into()) };
+
+        let event = state.apply_event(WebRTCEvent::Disconnected);
+
+        assert!(matches!(event, Some(CallEvent::CallEnded)));
+        assert_eq!(state, CallState::Idle);
     }
 }

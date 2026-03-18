@@ -13,8 +13,13 @@ pub fn handle_contact_msg(app: &mut Fjarsyn, msg: ContactsServiceMessage) -> Tas
             };
 
             Task::future(async move {
-                let _ = service.refresh().await;
-                Message::NoOp
+                match service.refresh().await {
+                    Ok(_) => Message::NoOp,
+                    Err(err) => Message::Notification(NotificationMessage::NotifyError(format!(
+                        "Unable to load contacts: {}",
+                        err
+                    ))),
+                }
             })
         }
         ContactsServiceMessage::SaveContact { peer_id, name, address } => {
@@ -52,7 +57,9 @@ pub fn handle_contact_msg(app: &mut Fjarsyn, msg: ContactsServiceMessage) -> Tas
                     ContactsServiceMessage::UpdateContactAddressConfirmed(id, new_address.clone()),
                 ))
             } else {
-                Task::none()
+                Task::done(Message::Notification(NotificationMessage::NotifyError(
+                    "Contact not found.".into(),
+                )))
             }
         }
         ContactsServiceMessage::UpdateContactAddressConfirmed(id, addr) => {
@@ -61,13 +68,21 @@ pub fn handle_contact_msg(app: &mut Fjarsyn, msg: ContactsServiceMessage) -> Tas
             };
             let c = match service.contacts().iter().find(|c| c.id == id) {
                 Some(c) => c.clone(),
-                None => return Task::none(),
+                None => {
+                    return Task::done(Message::Notification(NotificationMessage::NotifyError(
+                        "Contact not found.".into(),
+                    )));
+                }
             };
+            let contact_name = c.name.clone();
 
             Task::future(async move {
                 let res = service.update(id, c.peer_id, c.name, Some(addr)).await;
                 match res {
-                    Ok(_) => Message::ContactData(ContactsServiceMessage::LoadContacts),
+                    Ok(_) => Message::Notification(NotificationMessage::NotifySuccess(format!(
+                        "Updated address for {}.",
+                        contact_name
+                    ))),
                     Err(e) => Message::Notification(NotificationMessage::NotifyError(format!(
                         "Update Failed: {}",
                         e
@@ -75,22 +90,25 @@ pub fn handle_contact_msg(app: &mut Fjarsyn, msg: ContactsServiceMessage) -> Tas
                 }
             })
         }
-        ContactsServiceMessage::ContactSaved(res) => {
-            if res.is_ok() {
+        ContactsServiceMessage::ContactSaved(res) => match res {
+            Ok(_) => {
                 app.ctx.notify_success("Contact saved.");
-                Task::done(Message::ContactData(ContactsServiceMessage::LoadContacts))
-            } else {
                 Task::none()
             }
-        }
-        ContactsServiceMessage::ContactDeleted(res) => {
-            if res.is_ok() {
+            Err(err) => {
+                app.ctx.notify_error(format!("Save Failed: {}", err));
+                Task::none()
+            }
+        },
+        ContactsServiceMessage::ContactDeleted(res) => match res {
+            Ok(_) => {
                 app.ctx.notify_success("Contact deleted.");
-                Task::done(Message::ContactData(ContactsServiceMessage::LoadContacts))
-            } else {
                 Task::none()
             }
-        }
-        ContactsServiceMessage::ContactsLoaded(_res) => Task::none(),
+            Err(err) => {
+                app.ctx.notify_error(format!("Delete Failed: {}", err));
+                Task::none()
+            }
+        },
     }
 }
