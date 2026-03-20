@@ -26,6 +26,7 @@ macro_rules! define_ffmpeg_transcode_types {
             $variant:ident $( => $def:tt )? {
                 encoder: {
                     name: $encoder_name:expr,
+                    display_name: $display_name:expr,
                     set_options: $set_encoder_options:expr,
                     input_format: $input_format:expr,
                     scaler_format: $scaler_format:expr,
@@ -108,8 +109,11 @@ macro_rules! define_ffmpeg_transcode_types {
         impl std::fmt::Display for FFmpegTranscodeType {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 let label = match self {
-                    FFmpegTranscodeType::H264Software => "H.264 (Software Encode)",
-                    FFmpegTranscodeType::H264Nvenc => "H.264 (NVIDIA Encode)",
+                    $(
+                        FFmpegTranscodeType::$variant => {
+                            $display_name
+                        }
+                    )*
                 };
 
                 f.write_str(label)
@@ -122,6 +126,7 @@ define_ffmpeg_transcode_types! {
     H264Software => default {
         encoder: {
             name: "libx264",
+            display_name: "H.264 (Software)",
             set_options: |opts: &mut ffmpeg_next::Dictionary| {
                 opts.set("preset", "ultrafast");
                 opts.set("tune", "zerolatency");
@@ -138,6 +143,7 @@ define_ffmpeg_transcode_types! {
     H264Nvenc {
         encoder: {
             name: "h264_nvenc",
+            display_name: "H.264 (NVIDIA)",
             set_options: |opts: &mut ffmpeg_next::Dictionary| {
                 opts.set("preset", "p1");
                 opts.set("tune", "ull");

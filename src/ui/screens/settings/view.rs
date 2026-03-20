@@ -26,7 +26,7 @@ impl SettingsScreen {
                 .spacing(6)
                 .align_y(Alignment::Center),
         )
-        .padding([6, 10])
+        .padding([6, 9])
         .on_press(Message::Screen(ScreenMessage::Settings(SettingsMessage::SaveSettings)))
         .style(|theme, status| theme::button_style(theme, status, true));
 
@@ -35,7 +35,7 @@ impl SettingsScreen {
                 .spacing(6)
                 .align_y(Alignment::Center),
         )
-        .padding([6, 10])
+        .padding([6, 9])
         .on_press(Message::Screen(ScreenMessage::Settings(SettingsMessage::DiscardSettings)))
         .style(|theme, status| theme::button_style(theme, status, false));
 
@@ -49,13 +49,13 @@ impl SettingsScreen {
                 rule::vertical(1),
                 row![discard_button, save_button].spacing(8).align_y(Alignment::Center),
             ]
-            .spacing(12)
+            .spacing(10)
             .align_y(Alignment::Center),
         )
         .height(Length::Shrink)
-        .padding([8, 10])
+        .padding([6, 8])
         .width(Length::Shrink)
-        .style(theme::id_card_container)
+        .style(theme::section_container)
         .into()
     }
 
@@ -74,16 +74,16 @@ impl SettingsScreen {
             Space::new().into()
         };
 
-        let header = if self.working_config != ctx.config {
-            row![title, Space::new().width(Length::Fill), unsaved_changes_bar]
-                .align_y(Alignment::Center)
-                .spacing(16)
-        } else {
-            row![title, Space::new().width(Length::Fill)].align_y(Alignment::Center)
-        };
+        let header_content = row![
+            title,
+            container(unsaved_changes_bar).width(Length::Fill).align_x(Alignment::End),
+        ]
+        .spacing(20)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
 
         let content = column![
-            header,
+            header_content,
             row![
                 self.view_sidebar(),
                 container(tab_content).width(Length::Fill).padding(Padding::ZERO.left(8.0))

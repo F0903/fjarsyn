@@ -36,13 +36,14 @@ pub(super) fn setting_row<'a>(
     row![
         column![
             text(label.into()).size(16),
-            text(description.into()).size(12).style(text::secondary)
+            text(description.into()).size(12).style(text::secondary).width(Length::Fill)
         ]
         .spacing(4)
         .width(Length::Fill),
-        container(control).width(Length::Shrink)
+        container(control).width(Length::FillPortion(2)).align_x(Alignment::End)
     ]
     .spacing(24)
     .align_y(Alignment::Center)
+    .width(Length::Fill)
     .into()
 }

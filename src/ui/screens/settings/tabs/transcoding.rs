@@ -85,7 +85,7 @@ define_tab! {
                         ]
                         .spacing(15)
                         .align_y(Alignment::Center)
-                        .width(Length::Fixed(400.0)),
+                        .width(Length::Fill),
                     ),
                 ]
                 .spacing(20),
