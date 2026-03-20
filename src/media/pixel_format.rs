@@ -19,6 +19,8 @@ macro_rules! define_pixel_formats {
         }
 
         impl PixelFormat {
+            pub const DEFAULT_CAPTURE: Self = Self::BGRA8;
+
             pub const fn bytes_per_pixel(&self) -> u32 {
                 match self {
                     $(

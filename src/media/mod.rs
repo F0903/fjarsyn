@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use crate::utils::vector2::Vector2;
 
+pub mod bitmap;
 pub mod ffmpeg;
 pub mod frame;
 pub mod gpu_interop;

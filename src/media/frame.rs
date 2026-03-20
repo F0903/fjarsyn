@@ -1,8 +1,8 @@
 use std::{hash::Hash, sync::Arc, time::Duration};
 
 use crate::{
-    media::pixel_format::PixelFormat,
-    utils::{bitmap_utils::ensure_rgba8, buffer_pool::Buffer, vector2::Vector2},
+    media::{bitmap::ensure_rgba8, pixel_format::PixelFormat},
+    utils::{buffer_pool::Buffer, vector2::Vector2},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

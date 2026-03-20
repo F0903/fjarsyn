@@ -4,6 +4,7 @@ use crate::ui::{app::AppState, message::Message, screens::Screen};
 
 pub mod handlers;
 mod view;
+mod workflow;
 
 #[derive(Debug, Clone)]
 pub enum ContactsMessage {

@@ -5,7 +5,7 @@ use iced::{
 use iced_fonts::lucide;
 
 use crate::{
-    config::Config,
+    config::{Config, NetworkConfig},
     define_tab,
     ui::{
         message::{Message, ScreenMessage},
@@ -29,15 +29,18 @@ define_tab! {
                 column![
                     setting_row(
                         "Jitter Buffer",
-                        "Maximum latency for the depacketizer",
+                        "Maximum time to wait for out-of-order video packets",
                         row![
-                            slider(0..=5000, config.max_depacket_latency, |val| {
+                            slider(
+                                0..=NetworkConfig::MAX_DEPACKET_LATENCY_MS,
+                                config.network.max_depacket_latency,
+                                |val| {
                                 Message::Screen(ScreenMessage::Settings(
                                     SettingsMessage::MaxDepacketLatencyChanged(val),
                                 ))
                             })
                             .width(Length::Fill),
-                            text_input("Latency", &format!("{}", config.max_depacket_latency))
+                            text_input("Latency", &format!("{}", config.network.max_depacket_latency))
                                 .on_input(|val| {
                                     Message::Screen(ScreenMessage::Settings(
                                         SettingsMessage::MaxDepacketLatencyInputChanged(val),

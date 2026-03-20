@@ -4,6 +4,8 @@ pub enum WindowEventMessage {
     WindowClosed(iced::window::Id),
     WindowRawIdFetched((iced::window::Id, u64)),
     WindowMaximized(bool),
+    CursorEntered,
+    CursorLeft,
     SyncMaximized,
 }
 

@@ -17,6 +17,7 @@ pub struct EncoderInfo {
 #[derive(Clone, Copy)]
 pub struct DecoderInfo {
     pub name: &'static str,
+    pub hw_accel: HWAccelType,
 }
 
 macro_rules! define_ffmpeg_transcode_types {
@@ -32,6 +33,7 @@ macro_rules! define_ffmpeg_transcode_types {
                 },
                 decoder: {
                     name: $decoder_name:expr,
+                    hw_accel: $decoder_hw_accel:expr,
                 }
             }
         ),* $(,)?
@@ -86,6 +88,7 @@ macro_rules! define_ffmpeg_transcode_types {
                     $(
                         FFmpegTranscodeType::$variant => DecoderInfo {
                             name: $decoder_name,
+                            hw_accel: $decoder_hw_accel,
                         },
                     )*
                 }
@@ -104,7 +107,12 @@ macro_rules! define_ffmpeg_transcode_types {
 
         impl std::fmt::Display for FFmpegTranscodeType {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{:?}", self)
+                let label = match self {
+                    FFmpegTranscodeType::H264Software => "H.264 (Software Encode)",
+                    FFmpegTranscodeType::H264Nvenc => "H.264 (NVIDIA Encode)",
+                };
+
+                f.write_str(label)
             }
         }
     };
@@ -124,6 +132,7 @@ define_ffmpeg_transcode_types! {
         },
         decoder: {
             name: "h264",
+            hw_accel: HWAccelType::D3D11VA,
         }
     },
     H264Nvenc {
@@ -139,6 +148,7 @@ define_ffmpeg_transcode_types! {
         },
         decoder: {
             name: "h264",
+            hw_accel: HWAccelType::D3D11VA,
         }
     },
 }

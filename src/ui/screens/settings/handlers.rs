@@ -1,6 +1,9 @@
 use iced::Task;
 
-use super::{SettingsMessage, SettingsScreen};
+use super::{
+    SettingsScreen,
+    workflow::{self, SettingsEffect},
+};
 use crate::ui::{
     app::AppState,
     message::{Message, ScreenMessage},
@@ -8,100 +11,41 @@ use crate::ui::{
 
 impl SettingsScreen {
     pub(crate) fn handle_message(&mut self, ctx: &mut AppState, message: Message) -> Task<Message> {
-        let msg = match message {
-            Message::Screen(ScreenMessage::Settings(s)) => s,
+        let message = match message {
+            Message::Screen(ScreenMessage::Settings(message)) => message,
             _ => return Task::none(),
         };
 
-        match msg {
-            SettingsMessage::TabChanged(tab) => {
-                self.active_tab = tab;
+        let effects = workflow::reduce(self, ctx, message);
+        self.run_effects(ctx, effects)
+    }
+
+    fn run_effects(&mut self, ctx: &mut AppState, effects: Vec<SettingsEffect>) -> Task<Message> {
+        Task::batch(effects.into_iter().map(|effect| self.run_effect(ctx, effect)))
+    }
+
+    fn run_effect(&mut self, ctx: &mut AppState, effect: SettingsEffect) -> Task<Message> {
+        match effect {
+            SettingsEffect::NotifyError(message) => {
+                ctx.notify_error(message);
                 Task::none()
             }
-
-            SettingsMessage::TranscodingTypeChanged(val) => {
-                self.working_config.transcoding_type = val;
-                Task::none()
-            }
-
-            SettingsMessage::TargetResolutionChanged(val) => {
-                self.working_config.target_resolution = val;
-                Task::none()
-            }
-
-            SettingsMessage::TargetFramerateChanged(val) => {
-                self.working_config.target_framerate = val;
-                Task::none()
-            }
-
-            SettingsMessage::TargetBitrateChanged(val) => {
-                self.working_config.target_bitrate = val;
-                Task::none()
-            }
-
-            SettingsMessage::TargetBitrateInputChanged(val) => {
-                if let Ok(num) = val.parse::<u32>() {
-                    self.working_config.target_bitrate = num * 1000;
-                } else {
-                    ctx.notify_error(format!("Invalid bitrate value: '{}'", val));
+            SettingsEffect::PersistConfig(config) => {
+                ctx.config = config;
+                if let Err(err) = ctx.config.save() {
+                    ctx.notify_error(format!("Unable to save settings: {}", err));
                 }
                 Task::none()
             }
-
-            SettingsMessage::RecordCursorChanged(val) => {
-                self.working_config.record_cursor = val;
-                Task::none()
-            }
-
-            SettingsMessage::RecordingBorderIndicatorChanged(val) => {
-                self.working_config.recording_border_indicator = val;
-                Task::none()
-            }
-
-            SettingsMessage::EnableUiPreviewChanged(val) => {
-                self.working_config.enable_ui_preview = val;
-                Task::none()
-            }
-
-            SettingsMessage::MaxDepacketLatencyChanged(val) => {
-                self.working_config.max_depacket_latency = val;
-                Task::none()
-            }
-
-            SettingsMessage::MaxDepacketLatencyInputChanged(val) => {
-                if let Ok(num) = val.parse::<u16>() {
-                    self.working_config.max_depacket_latency = num;
-                } else {
-                    ctx.notify_error(format!("Invalid max depacket latency value: '{}'", val));
-                }
-                Task::none()
-            }
-
-            SettingsMessage::SaveSettings => {
-                ctx.config = self.working_config.clone();
-                if let Err(e) = ctx.config.save() {
-                    ctx.notify_error(format!("Unable to save settings: {}", e));
-                }
-
+            SettingsEffect::ApplyCaptureReadback { enabled } => {
                 let Some(capture) = ctx.media.capture.clone() else {
                     return Task::none();
                 };
 
-                let cpu_readback_enabled = crate::media::gpu_interop::requires_cpu_readback(
-                    ctx.config.enable_ui_preview,
-                    ctx.config.pixel_format,
-                    ctx.config.transcoding_type.get_encoder_info().hw_accel,
-                );
-
                 Task::future(async move {
-                    capture.write().await.set_cpu_readback_enabled(cpu_readback_enabled);
+                    capture.write().await.set_cpu_readback_enabled(enabled);
                     Message::NoOp
                 })
-            }
-
-            SettingsMessage::DiscardSettings => {
-                self.working_config = ctx.config.clone();
-                Task::none()
             }
         }
     }

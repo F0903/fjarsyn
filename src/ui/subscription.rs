@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
 use futures::stream::{once, unfold};
 use iced::Subscription;
 use tokio::sync::{Mutex, mpsc};
@@ -31,6 +30,30 @@ impl<T> PartialEq for EventReceiverRef<T> {
 }
 impl<T> Eq for EventReceiverRef<T> {}
 
+type ChannelSubscriptionStream =
+    std::pin::Pin<Box<dyn futures::Stream<Item = Message> + Send + 'static>>;
+
+#[derive(Clone)]
+struct ChannelSubscriptionData<T> {
+    receiver: EventReceiverRef<T>,
+    map: fn(T) -> Message,
+}
+
+impl<T> std::hash::Hash for ChannelSubscriptionData<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.receiver.hash(state);
+        (self.map as usize).hash(state);
+    }
+}
+
+impl<T> PartialEq for ChannelSubscriptionData<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.receiver == other.receiver && std::ptr::fn_addr_eq(self.map, other.map)
+    }
+}
+
+impl<T> Eq for ChannelSubscriptionData<T> {}
+
 #[derive(Clone, Copy)]
 struct DeadlineSubData {
     deadline: std::time::Instant,
@@ -56,8 +79,6 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
 
     let screen_subscriptions = app.active_screen.subscription(&app.ctx);
 
-    let frame_subscription = packet_subscription(app.ctx.media.frame_packet_rx.0.clone());
-
     let call_event_subscription = app
         .ctx
         .networking
@@ -78,19 +99,13 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
         .map(|id| Message::WindowEvent(WindowEventMessage::WindowOpened(id)));
     let window_close_subscription = iced::window::close_events()
         .map(|id| Message::WindowEvent(WindowEventMessage::WindowClosed(id)));
-    let window_event_subscription = iced::event::listen().filter_map(|event| match event {
-        iced::Event::Window(iced::window::Event::Resized(_)) => {
-            Some(Message::WindowEvent(WindowEventMessage::SyncMaximized))
-        }
-        _ => None,
-    });
+    let window_event_subscription = iced::event::listen().filter_map(map_window_event);
     let deadline_subscription = next_deadline(app)
         .map(|deadline| deadline_subscription(app.ctx.ui.started_at, deadline))
         .unwrap_or(Subscription::none());
 
     Subscription::batch(vec![
         screen_subscriptions,
-        frame_subscription,
         call_event_subscription,
         discovery_subscription,
         window_open_subscription,
@@ -98,6 +113,21 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
         window_event_subscription,
         deadline_subscription,
     ])
+}
+
+fn map_window_event(event: iced::Event) -> Option<Message> {
+    match event {
+        iced::Event::Window(iced::window::Event::Resized(_)) => {
+            Some(Message::WindowEvent(WindowEventMessage::SyncMaximized))
+        }
+        iced::Event::Mouse(iced::mouse::Event::CursorEntered) => {
+            Some(Message::WindowEvent(WindowEventMessage::CursorEntered))
+        }
+        iced::Event::Mouse(iced::mouse::Event::CursorLeft) => {
+            Some(Message::WindowEvent(WindowEventMessage::CursorLeft))
+        }
+        _ => None,
+    }
 }
 
 fn next_deadline(app: &Fjarsyn) -> Option<std::time::Instant> {
@@ -133,60 +163,50 @@ fn deadline_subscription(
 pub fn call_event_subscription(
     receiver: Arc<Mutex<mpsc::Receiver<CallEvent>>>,
 ) -> Subscription<Message> {
-    Subscription::run_with(EventReceiverRef(receiver), |receiver_ref| {
-        let receiver = receiver_ref.0.clone();
-        Box::new(Box::pin(unfold(
-            receiver,
-            |receiver: Arc<Mutex<mpsc::Receiver<CallEvent>>>| async move {
-                let mut lock = receiver.lock().await;
-                if let Some(event) = lock.recv().await {
-                    drop(lock);
-                    Some((Message::CallService(CallServiceMessage::CallEvent(event)), receiver))
-                } else {
-                    drop(lock);
-                    None
-                }
-            },
-        )))
-    })
+    channel_subscription(receiver, map_call_event)
 }
 
 pub fn discovery_event_subscription(
     receiver: Arc<Mutex<mpsc::Receiver<DiscoveryEvent>>>,
 ) -> Subscription<Message> {
-    Subscription::run_with(EventReceiverRef(receiver), |receiver_ref| {
-        let receiver = receiver_ref.0.clone();
-        Box::new(Box::pin(unfold(
-            receiver,
-            |receiver: Arc<Mutex<mpsc::Receiver<DiscoveryEvent>>>| async move {
-                let mut lock = receiver.lock().await;
-                if let Some(event) = lock.recv().await {
-                    drop(lock);
-                    Some((
-                        Message::CallService(CallServiceMessage::DiscoveryEvent(event)),
-                        receiver,
-                    ))
-                } else {
-                    drop(lock);
-                    None
-                }
-            },
-        )))
-    })
+    channel_subscription(receiver, map_discovery_event)
 }
 
-pub fn packet_subscription(receiver: Arc<Mutex<mpsc::Receiver<Bytes>>>) -> Subscription<Message> {
-    Subscription::run_with(EventReceiverRef(receiver), |receiver_ref| {
-        let receiver = receiver_ref.0.clone();
-        Box::new(Box::pin(unfold(receiver, |receiver| async move {
-            let mut lock = receiver.lock().await;
-            if let Some(packet) = lock.recv().await {
-                drop(lock);
-                Some((Message::CallService(CallServiceMessage::PacketReceived(packet)), receiver))
-            } else {
-                drop(lock);
-                None
-            }
-        })))
-    })
+fn map_call_event(event: CallEvent) -> Message {
+    Message::CallService(CallServiceMessage::CallEvent(event))
+}
+
+fn map_discovery_event(event: DiscoveryEvent) -> Message {
+    Message::CallService(CallServiceMessage::DiscoveryEvent(event))
+}
+
+fn channel_subscription<T: Send + 'static>(
+    receiver: Arc<Mutex<mpsc::Receiver<T>>>,
+    map: fn(T) -> Message,
+) -> Subscription<Message> {
+    // Most event channels follow the same pattern: wait for the next item and
+    // translate it into a UI message. Keep that adapter generic and leave only
+    // the event-to-message mapping at the call site.
+    Subscription::run_with(
+        ChannelSubscriptionData { receiver: EventReceiverRef(receiver), map },
+        build_channel_subscription::<T>,
+    )
+}
+
+fn build_channel_subscription<T: Send + 'static>(
+    data: &ChannelSubscriptionData<T>,
+) -> ChannelSubscriptionStream {
+    let receiver = data.receiver.0.clone();
+    let map = data.map;
+
+    Box::pin(unfold(receiver, move |receiver| async move {
+        let mut lock = receiver.lock().await;
+        if let Some(event) = lock.recv().await {
+            drop(lock);
+            Some((map(event), receiver))
+        } else {
+            drop(lock);
+            None
+        }
+    }))
 }

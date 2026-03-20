@@ -122,7 +122,7 @@ impl IntoHWND for u64 {
 /// Returned future completes when the user picks an item or cancels the dialog.
 pub fn user_pick_capture_item(
     window: impl IntoHWND,
-) -> Result<impl std::future::Future<Output = Result<GraphicsCaptureItem>>> {
+) -> Result<impl std::future::Future<Output = Result<Option<GraphicsCaptureItem>>>> {
     tracing::info!("Initializing GraphicsCapturePicker...");
     let picker = GraphicsCapturePicker::new()?;
     let init_with_window: IInitializeWithWindow = picker.cast()?;
@@ -143,9 +143,15 @@ pub fn user_pick_capture_item(
                 "User picked capture item: {:?}",
                 item.DisplayName().unwrap_or_default()
             ),
-            Err(e) => tracing::error!("Error picking capture item: {:?}", e),
+            Err(e) => {
+                // HRESULT(0) indicates the user cancelled the dialog
+                if e.code() == HRESULT(0) {
+                    return Ok(None);
+                }
+                tracing::error!("Error picking capture item: {:?}", e)
+            }
         }
-        result
+        result.map(Some)
     };
     Ok(item_future)
 }

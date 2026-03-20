@@ -1,84 +1,108 @@
 use iced::{
-    Alignment, Element, Length, Padding, padding,
-    widget::{button, column, container, row, scrollable, text},
+    Alignment, Element, Length, Padding,
+    widget::{Space, button, column, container, row, rule, scrollable, text},
 };
 use iced_fonts::lucide;
 
 use super::{SettingsMessage, SettingsScreen};
 use crate::ui::{
     app::AppState,
-    components::vertical_spacer,
     fonts,
     message::{Message, ScreenMessage},
     screens::settings::tabs,
     theme,
 };
 
-impl SettingsScreen {
-    pub fn render_view<'a>(&'a self, ctx: &'a AppState) -> Element<'a, Message> {
-        let title = text("Settings").size(32).font(fonts::outfit::BOLD).style(text::primary);
+const SETTINGS_PAGE_MAX_WIDTH: f32 = 1380.0;
+const SETTINGS_CONTENT_MAX_WIDTH: f32 = 940.0;
+const SETTINGS_SIDEBAR_WIDTH: f32 = 220.0;
 
-        let tab_content = scrollable(self.active_tab.view(&self.working_config));
+impl SettingsScreen {
+    fn unsaved_changes_bar(&self) -> Element<'_, Message> {
+        const SIZE: u32 = 13;
 
         let save_button = button(
-            row![lucide::save(), text("Save").size(16)]
-                .spacing(3)
-                .padding(5)
+            row![lucide::save().size(SIZE), text("Save").size(SIZE)]
+                .spacing(6)
                 .align_y(Alignment::Center),
         )
-        .padding(5)
+        .padding([6, 10])
         .on_press(Message::Screen(ScreenMessage::Settings(SettingsMessage::SaveSettings)))
         .style(|theme, status| theme::button_style(theme, status, true));
 
         let discard_button = button(
-            row![lucide::trash(), text("Discard").size(16)]
-                .spacing(3)
-                .padding(5)
+            row![lucide::trash().size(SIZE), text("Discard").size(SIZE)]
+                .spacing(6)
                 .align_y(Alignment::Center),
         )
-        .padding(5)
+        .padding([6, 10])
         .on_press(Message::Screen(ScreenMessage::Settings(SettingsMessage::DiscardSettings)))
         .style(|theme, status| theme::button_style(theme, status, false));
 
-        let unsaved_changes_card = container(
-            container(
-                column![
-                    row![
-                        lucide::triangle_alert().size(18),
-                        text("Unsaved Changes").size(16).font(fonts::outfit::BOLD),
-                    ]
-                    .spacing(10)
-                    .align_y(Alignment::Center),
-                    text("You have modified settings that haven't been saved yet.")
-                        .size(13)
-                        .style(text::secondary),
-                    vertical_spacer(),
-                    container(
-                        row![save_button, discard_button].spacing(10).padding(padding::top(10))
-                    )
-                    .center_x(Length::Fill),
+        container(
+            row![
+                row![
+                    lucide::triangle_alert().size(SIZE),
+                    text("Unsaved changes").size(SIZE).font(fonts::outfit::BOLD)
                 ]
-                .spacing(10),
-            )
-            .max_width(400)
-            .padding(20)
-            .style(theme::card_container),
+                .spacing(6),
+                rule::vertical(1),
+                row![discard_button, save_button].spacing(8).align_y(Alignment::Center),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
         )
-        .align_x(Alignment::Center)
-        .align_y(Alignment::End)
-        .padding(padding::top(20));
+        .height(Length::Shrink)
+        .padding([8, 10])
+        .width(Length::Shrink)
+        .style(theme::id_card_container)
+        .into()
+    }
 
-        let mut content = column![
-            title,
-            row![self.view_sidebar(), container(tab_content).width(Length::Fill)].spacing(10)
+    pub fn render_view<'a>(&'a self, ctx: &'a AppState) -> Element<'a, Message> {
+        let title = text("Settings").size(32).font(fonts::outfit::BOLD).style(text::primary);
+
+        let tab_content = scrollable(
+            container(self.active_tab.view(&self.working_config))
+                .max_width(SETTINGS_CONTENT_MAX_WIDTH)
+                .width(Length::Fill),
+        );
+
+        let unsaved_changes_bar = if self.working_config != ctx.config {
+            self.unsaved_changes_bar()
+        } else {
+            Space::new().into()
+        };
+
+        let header = if self.working_config != ctx.config {
+            row![title, Space::new().width(Length::Fill), unsaved_changes_bar]
+                .align_y(Alignment::Center)
+                .spacing(16)
+        } else {
+            row![title, Space::new().width(Length::Fill)].align_y(Alignment::Center)
+        };
+
+        let content = column![
+            header,
+            row![
+                self.view_sidebar(),
+                container(tab_content).width(Length::Fill).padding(Padding::ZERO.left(8.0))
+            ]
+            .spacing(18)
         ]
-        .spacing(30);
+        .spacing(24)
+        .max_width(SETTINGS_PAGE_MAX_WIDTH);
 
-        if self.working_config != ctx.config {
-            content = content.push(unsaved_changes_card);
-        }
-
-        container(content).padding(20).width(Length::Fill).height(Length::Fill).into()
+        container(
+            container(content)
+                .padding(24)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     fn view_sidebar(&self) -> Element<'_, Message> {
@@ -98,12 +122,17 @@ impl SettingsScreen {
             .into()
         });
 
-        scrollable(
-            container(column(tabs).spacing(5))
-                .width(Length::Fixed(200.0))
-                .height(Length::Fill)
-                .padding(Padding::ZERO.right(20.0)),
+        container(
+            column![
+                text("Categories").size(12).font(fonts::outfit::SEMIBOLD).style(text::secondary),
+                scrollable(container(column(tabs).spacing(6)).width(Length::Fill))
+            ]
+            .spacing(12),
         )
+        .width(Length::Fixed(SETTINGS_SIDEBAR_WIDTH))
+        .height(Length::Shrink)
+        .padding(16)
+        .style(theme::card_container)
         .into()
     }
 }

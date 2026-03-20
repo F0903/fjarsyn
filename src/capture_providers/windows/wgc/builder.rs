@@ -1,10 +1,11 @@
 use windows::Graphics::{Capture::GraphicsCaptureItem, DirectX::Direct3D11::IDirect3DDevice};
 
+use super::WgcCaptureProvider;
 use crate::{
     capture_providers::{
         CaptureProvider,
         windows::{
-            WgcCaptureProvider, WindowsCaptureError,
+            WindowsCaptureError,
             d3d11_utils::{create_d3d_device, native_to_winrt_d3d11device},
         },
     },

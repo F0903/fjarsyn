@@ -1,114 +1,84 @@
 use iced::Task;
 
 use crate::ui::{
-    app::Fjarsyn,
+    app::{
+        Fjarsyn,
+        workflows::contact::{self, ContactEffect},
+    },
     message::{ContactsServiceMessage, Message, NotificationMessage},
 };
 
-pub fn handle_contact_msg(app: &mut Fjarsyn, msg: ContactsServiceMessage) -> Task<Message> {
-    match msg {
-        ContactsServiceMessage::LoadContacts => {
-            let Some(service) = app.ctx.services.contacts_service.clone() else {
-                return Task::none();
-            };
+pub fn handle_contact_msg(app: &mut Fjarsyn, message: ContactsServiceMessage) -> Task<Message> {
+    let effects = contact::reduce(app, message);
+    run_effects(app, effects)
+}
 
-            Task::future(async move {
-                match service.refresh().await {
-                    Ok(_) => Message::NoOp,
-                    Err(err) => Message::Notification(NotificationMessage::NotifyError(format!(
-                        "Unable to load contacts: {}",
-                        err
-                    ))),
-                }
-            })
+fn run_effects(app: &mut Fjarsyn, effects: Vec<ContactEffect>) -> Task<Message> {
+    let mut tasks = Vec::with_capacity(effects.len());
+    for effect in effects {
+        tasks.push(run_effect(app, effect));
+    }
+    Task::batch(tasks)
+}
+
+fn run_effect(app: &mut Fjarsyn, effect: ContactEffect) -> Task<Message> {
+    match effect {
+        ContactEffect::NotifyError(message) => {
+            app.ctx.notify_error(message);
+            Task::none()
         }
-        ContactsServiceMessage::SaveContact { peer_id, name, address } => {
-            let Some(service) = app.ctx.services.contacts_service.clone() else {
-                return Task::none();
-            };
-            let peer_id = peer_id.clone();
-            let name = name.clone();
-            let address = address.clone();
-
+        ContactEffect::NotifyInfo(message) => {
+            app.ctx.notify_info(message);
+            Task::none()
+        }
+        ContactEffect::NotifySuccess(message) => {
+            app.ctx.notify_success(message);
+            Task::none()
+        }
+        ContactEffect::LoadContacts(service) => Task::future(async move {
+            match service.refresh().await {
+                Ok(_) => Message::NoOp,
+                Err(err) => Message::Notification(NotificationMessage::NotifyError(format!(
+                    "Unable to load contacts: {}",
+                    err
+                ))),
+            }
+        }),
+        ContactEffect::SaveContact { service, peer_id, name, address } => {
             Task::future(async move {
                 Message::ContactData(ContactsServiceMessage::ContactSaved(
                     service.create(peer_id, name, address).await,
                 ))
             })
         }
-        ContactsServiceMessage::DeleteContact(id) => {
-            let Some(service) = app.ctx.services.contacts_service.clone() else {
-                return Task::none();
-            };
+        ContactEffect::DeleteContact { service, id } => Task::future(async move {
+            Message::ContactData(ContactsServiceMessage::ContactDeleted(service.delete(id).await))
+        }),
+        ContactEffect::ConfirmUpdateContactAddress { id, new_address } => {
+            Task::done(Message::ContactData(ContactsServiceMessage::UpdateContactAddressConfirmed(
+                id,
+                new_address,
+            )))
+        }
+        ContactEffect::UpdateContactAddress { service, contact, new_address } => {
+            let contact_name = contact.name.clone();
 
             Task::future(async move {
-                Message::ContactData(ContactsServiceMessage::ContactDeleted(
-                    service.delete(id).await,
-                ))
-            })
-        }
-        ContactsServiceMessage::UpdateContactAddress { id, new_address } => {
-            let Some(service) = app.ctx.services.contacts_service.as_ref() else {
-                return Task::none();
-            };
-            if let Some(c) = service.contacts().iter().find(|c| c.id == id) {
-                app.ctx.notify_info(format!("Updating address for {}...", c.name));
-                Task::done(Message::ContactData(
-                    ContactsServiceMessage::UpdateContactAddressConfirmed(id, new_address.clone()),
-                ))
-            } else {
-                Task::done(Message::Notification(NotificationMessage::NotifyError(
-                    "Contact not found.".into(),
-                )))
-            }
-        }
-        ContactsServiceMessage::UpdateContactAddressConfirmed(id, addr) => {
-            let Some(service) = app.ctx.services.contacts_service.clone() else {
-                return Task::none();
-            };
-            let c = match service.contacts().iter().find(|c| c.id == id) {
-                Some(c) => c.clone(),
-                None => {
-                    return Task::done(Message::Notification(NotificationMessage::NotifyError(
-                        "Contact not found.".into(),
-                    )));
-                }
-            };
-            let contact_name = c.name.clone();
+                let result = service
+                    .update(contact.id, contact.peer_id, contact.name, Some(new_address))
+                    .await;
 
-            Task::future(async move {
-                let res = service.update(id, c.peer_id, c.name, Some(addr)).await;
-                match res {
+                match result {
                     Ok(_) => Message::Notification(NotificationMessage::NotifySuccess(format!(
                         "Updated address for {}.",
                         contact_name
                     ))),
-                    Err(e) => Message::Notification(NotificationMessage::NotifyError(format!(
+                    Err(err) => Message::Notification(NotificationMessage::NotifyError(format!(
                         "Update Failed: {}",
-                        e
+                        err
                     ))),
                 }
             })
         }
-        ContactsServiceMessage::ContactSaved(res) => match res {
-            Ok(_) => {
-                app.ctx.notify_success("Contact saved.");
-                Task::none()
-            }
-            Err(err) => {
-                app.ctx.notify_error(format!("Save Failed: {}", err));
-                Task::none()
-            }
-        },
-        ContactsServiceMessage::ContactDeleted(res) => match res {
-            Ok(_) => {
-                app.ctx.notify_success("Contact deleted.");
-                Task::none()
-            }
-            Err(err) => {
-                app.ctx.notify_error(format!("Delete Failed: {}", err));
-                Task::none()
-            }
-        },
     }
 }

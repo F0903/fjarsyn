@@ -4,7 +4,10 @@ use crate::{
     networking::discovery::PeerInfo,
     services::call_service::DialSuccess,
     ui::{
-        app::Fjarsyn,
+        app::{
+            Fjarsyn,
+            workflows::call_action::{self, CallActionEffect},
+        },
         message::{
             CallActionMessage, CallServiceMessage, ContactsServiceMessage, Message,
             NavigationMessage, Route,
@@ -13,55 +16,35 @@ use crate::{
     },
 };
 
-pub fn handle_call_action_msg(app: &mut Fjarsyn, msg: CallActionMessage) -> Task<Message> {
-    match msg {
-        CallActionMessage::AcceptCall => {
-            app.ctx.session.incoming_call_id = None;
-            app.ctx.session.incoming_call_timeout = None;
-            let Some(service) = app.ctx.services.call_service.clone() else {
-                return Task::none();
-            };
+pub fn handle_call_action_msg(app: &mut Fjarsyn, message: CallActionMessage) -> Task<Message> {
+    let effects = call_action::reduce(app, message);
+    Task::batch(effects.into_iter().map(run_effect))
+}
 
-            Task::future(async move {
-                service
-                    .accept()
-                    .await
-                    .map(|_| Message::Navigation(NavigationMessage::Navigate(Route::Call)))
-                    .unwrap_or_else(|err| err.to_notify_error())
-            })
-        }
-        CallActionMessage::DeclineCall => {
-            app.ctx.session.incoming_call_id = None;
-            app.ctx.session.incoming_call_timeout = None;
-            let Some(service) = app.ctx.services.call_service.clone() else {
-                return Task::none();
-            };
-
-            Task::future(async move {
-                service
-                    .decline()
-                    .await
-                    .map(|_| Message::NoOp)
-                    .unwrap_or_else(|err| err.to_notify_error())
-            })
-        }
-        CallActionMessage::StartCall(target) => {
-            let Some(service) = app.ctx.services.call_service.clone() else {
-                return Task::none();
-            };
-            let Some(contacts_service) = app.ctx.services.contacts_service.clone() else {
-                return Task::none();
-            };
-            let target = target.clone();
-            let discovered = app.ctx.networking.discovered_peers.clone();
-            let contacts = contacts_service.contacts();
-
+fn run_effect(effect: CallActionEffect) -> Task<Message> {
+    match effect {
+        CallActionEffect::Accept(service) => Task::future(async move {
+            service
+                .accept()
+                .await
+                .map(|_| Message::Navigation(NavigationMessage::Navigate(Route::Call)))
+                .unwrap_or_else(|err| err.to_notify_error())
+        }),
+        CallActionEffect::Decline(service) => Task::future(async move {
+            service
+                .decline()
+                .await
+                .map(|_| Message::NoOp)
+                .unwrap_or_else(|err| err.to_notify_error())
+        }),
+        CallActionEffect::Start { service, target, contacts, discovered } => {
             Task::future(async move {
                 service
                     .dial(target, &contacts, &discovered)
                     .await
                     .map(|DialSuccess { peer_id, name, socket_addr, update_contact_address }| {
                         let mut batch = Vec::new();
+
                         if let Some((id, addr)) = update_contact_address {
                             batch.push(Message::ContactData(
                                 ContactsServiceMessage::UpdateContactAddress {
@@ -70,6 +53,7 @@ pub fn handle_call_action_msg(app: &mut Fjarsyn, msg: CallActionMessage) -> Task
                                 },
                             ));
                         }
+
                         if let (Some(id), Some(name), Some(addr)) = (peer_id, name, socket_addr) {
                             batch.push(Message::CallService(CallServiceMessage::PeerFound(
                                 PeerInfo {
@@ -81,11 +65,12 @@ pub fn handle_call_action_msg(app: &mut Fjarsyn, msg: CallActionMessage) -> Task
                                 },
                             )));
                         }
+
                         batch.push(Message::Navigation(NavigationMessage::Navigate(Route::Call)));
                         Message::Batch(batch)
                     })
                     .map_notify_error()
-                    .unwrap_or_else(|msg| msg)
+                    .unwrap_or_else(|message| message)
             })
         }
     }

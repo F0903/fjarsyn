@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
-
 use crate::{
     networking::discovery::{DiscoveryEvent, PeerInfo},
     services::call_service::CallEvent,
@@ -19,7 +17,6 @@ pub enum CallServiceMessage {
     DiscoveryEvent(DiscoveryEvent),
     PeerFound(PeerInfo),
     PeerRemoved(String),
-    PacketReceived(Bytes),
 }
 
 #[derive(Debug, Clone)]

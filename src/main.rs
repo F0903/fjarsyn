@@ -10,6 +10,10 @@ const LOG_LEVEL: Level = Level::TRACE;
 const LOG_LEVEL: Level = Level::INFO;
 
 fn main() -> Result<()> {
+    unsafe {
+        std::env::set_var("WGPU_POWER_PREF", "low");
+    }
+
     fjarsyn::media::gpu_interop::configure_default_wgpu_backend();
 
     tracing::subscriber::set_global_default(
@@ -22,6 +26,7 @@ fn main() -> Result<()> {
         .subscription(Fjarsyn::subscription)
         .title(Fjarsyn::title)
         .theme(Fjarsyn::theme)
+        .settings(iced::Settings { antialiasing: false, vsync: false, ..Default::default() })
         .default_font(fjarsyn::ui::fonts::outfit::REGULAR)
         .run()?;
     tracing::info!("App exited.");

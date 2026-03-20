@@ -6,6 +6,5 @@ Each TODO is somewhat abstract and may require a lot of work to implement.
   
 
 - Messaging system.
-- Work on the user interface. Custom styling and a more unique identity in general.
-- Optimizations to capture, preview and encode of frame. It should be possible to pass a DirectX frame handle to keep the data on the GPU for as long as possible and avoid copying back to CPU.
+- More tests
 - Audio capture, streaming and playback.

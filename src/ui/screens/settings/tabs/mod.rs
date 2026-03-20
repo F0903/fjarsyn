@@ -1,6 +1,6 @@
 mod capture;
-mod encoding;
 mod network;
+mod transcoding;
 
 use std::{
     collections::BTreeMap,
@@ -69,4 +69,4 @@ impl PartialEq for dyn SettingsTab {
     }
 }
 
-register_tabs!(capture::Capture, encoding::Encoding, network::Network);
+register_tabs!(capture::Capture, transcoding::Transcoding, network::Network);

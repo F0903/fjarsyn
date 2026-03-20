@@ -21,18 +21,18 @@ use crate::{
 };
 
 define_tab! {
-    Encoding,
-    icon: lucide::video(),
+    Transcoding,
+    icon: lucide::arrow_right_left(),
     view: |config| {
         let content = column![
              settings_section(
-                lucide::video(),
-                "Encoding",
+                lucide::arrow_right_left(),
+                "Transcoding",
                 column![
-                     setting_row(
-                        "Codec",
-                        "Video compression standard and hardware acceleration",
-                        pick_list(FFmpegTranscodeType::ALL, Some(config.transcoding_type), |val| {
+                    setting_row(
+                        "Transcoder",
+                        "Video codec and preferred encode path. Decoding uses GPU acceleration when available.",
+                        pick_list(FFmpegTranscodeType::ALL, Some(config.video.transcoding_type), |val| {
                             Message::Screen(ScreenMessage::Settings(
                                 SettingsMessage::TranscodingTypeChanged(val),
                             ))
@@ -43,7 +43,7 @@ define_tab! {
                      setting_row(
                         "Resolution",
                         "Maximum streaming resolution",
-                        pick_list(TargetResolution::ALL, Some(config.target_resolution), |val| {
+                        pick_list(TargetResolution::ALL, Some(config.video.target_resolution), |val| {
                             Message::Screen(ScreenMessage::Settings(
                                 SettingsMessage::TargetResolutionChanged(val),
                             ))
@@ -54,7 +54,7 @@ define_tab! {
                     setting_row(
                         "Framerate",
                         "Target frames per second",
-                        pick_list(CaptureFramerate::ALL, Some(config.target_framerate), |val| {
+                        pick_list(CaptureFramerate::ALL, Some(config.video.target_framerate), |val| {
                             Message::Screen(ScreenMessage::Settings(
                                 SettingsMessage::TargetFramerateChanged(val),
                             ))
@@ -66,13 +66,13 @@ define_tab! {
                         "Bitrate",
                         "Target bitrate for the video stream",
                         row![
-                            slider(100_000..=100_000_000, config.target_bitrate, |val| {
+                            slider(100_000..=100_000_000, config.video.target_bitrate, |val| {
                                 Message::Screen(ScreenMessage::Settings(
                                     SettingsMessage::TargetBitrateChanged(val),
                                 ))
                             })
                             .width(Length::Fill),
-                            text_input("Bitrate", &format!("{}", config.target_bitrate / 1000))
+                            text_input("Bitrate", &format!("{}", config.video.target_bitrate / 1000))
                                 .on_input(|val| {
                                     Message::Screen(ScreenMessage::Settings(
                                         SettingsMessage::TargetBitrateInputChanged(val),

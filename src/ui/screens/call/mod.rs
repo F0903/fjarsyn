@@ -1,16 +1,9 @@
-use std::{
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use futures::stream::unfold;
 use iced::{Subscription, Task};
-use tokio::sync::{Mutex, RwLock, mpsc};
 
 use crate::{
-    capture_providers::{
-        CaptureFramerate, CaptureProvider, PlatformCaptureProvider, PlatformCaptureStream,
-    },
     media::frame::Frame,
     ui::{
         app::AppState,
@@ -19,56 +12,19 @@ use crate::{
     },
 };
 
+mod capture;
 mod handlers;
+mod media;
+mod state;
 mod view;
+mod workers;
+mod workflow;
 
-#[derive(Debug, Clone)]
-pub struct FrameReceiverSubData {
-    pub(crate) capture: Arc<RwLock<PlatformCaptureProvider>>,
-    pub(crate) framerate: CaptureFramerate,
-    pub(crate) revision: u64,
-}
+use state::{CaptureState, LocalShareState, RemoteVideoState};
+use workers::LatestFrameReceiverRef;
 
-impl Hash for FrameReceiverSubData {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        (Arc::as_ptr(&self.capture) as *const ()).hash(state);
-        self.framerate.hash(state);
-        self.revision.hash(state);
-    }
-}
-
-impl PartialEq for FrameReceiverSubData {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.capture, &other.capture)
-            && self.framerate == other.framerate
-            && self.revision == other.revision
-    }
-}
-
-impl Eq for FrameReceiverSubData {}
-
-#[derive(Clone)]
-pub struct DecodedFrameReceiverRef(pub Arc<Mutex<mpsc::UnboundedReceiver<Arc<Frame>>>>);
-
-impl std::fmt::Debug for DecodedFrameReceiverRef {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("DecodedFrameReceiverRef")
-    }
-}
-
-impl Hash for DecodedFrameReceiverRef {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        (Arc::as_ptr(&self.0) as *const ()).hash(state);
-    }
-}
-
-impl PartialEq for DecodedFrameReceiverRef {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl Eq for DecodedFrameReceiverRef {}
+type FrameSubscriptionStream =
+    std::pin::Pin<Box<dyn futures::Stream<Item = Message> + Send + 'static>>;
 
 #[derive(Debug, Clone)]
 pub enum CallMessage {
@@ -78,107 +34,115 @@ pub enum CallMessage {
     CaptureStopped,
     TryStartCapture(crate::capture_providers::PlatformCaptureItem),
     TryStopCapture,
-    PlatformUserPickedCaptureItem(Result<crate::capture_providers::PlatformCaptureItem, String>),
-    FrameCaptured(Arc<Frame>),
+    PlatformUserPickedCaptureItem(
+        Result<Option<crate::capture_providers::PlatformCaptureItem>, String>,
+    ),
+    LocalFrameReady(Arc<crate::media::frame::Frame>),
     DecodedFrameReady(Arc<Frame>),
+    DecodedFrameCleared,
+    RemoteStreamStarted,
+    RemoteStreamEnded,
     ToggleLocalPreview,
     EndCall,
 }
 
 #[derive(Clone, Debug)]
 pub struct CallScreen {
-    pub(crate) capture: Option<Arc<RwLock<PlatformCaptureProvider>>>,
-
-    // Local Capture State
-    pub(crate) local_frame: Option<Arc<Frame>>,
-    pub(crate) frame_sender: Option<mpsc::Sender<Arc<Frame>>>,
-    pub(crate) capture_subscription_revision: u64,
-    pub(crate) pending_capture_start: bool,
-    pub(crate) show_local_preview: bool,
-
-    // Remote Capture State
-    pub(crate) remote_frame: Option<Arc<Frame>>,
-    pub(crate) decoder_sender: Option<mpsc::UnboundedSender<bytes::Bytes>>,
-    pub(crate) decoded_frame_rx: Option<DecodedFrameReceiverRef>,
+    pub(crate) capture: CaptureState,
+    pub(crate) local: LocalShareState,
+    pub(crate) remote: RemoteVideoState,
 }
 
 impl CallScreen {
-    pub fn new(capture: Option<Arc<RwLock<PlatformCaptureProvider>>>) -> Self {
+    pub fn new(ctx: &AppState) -> Self {
         Self {
-            capture,
-
-            local_frame: None,
-            frame_sender: None,
-            capture_subscription_revision: 0,
-            pending_capture_start: false,
-            show_local_preview: false,
-
-            remote_frame: None,
-            decoder_sender: None,
-            decoded_frame_rx: None,
+            capture: CaptureState::new(ctx.media.capture.clone()),
+            local: LocalShareState::default(),
+            remote: RemoteVideoState::new(
+                ctx.media.frame_packet_rx.clone(),
+                ctx.config.video.transcoding_type,
+                crate::media::pixel_format::PixelFormat::DEFAULT_CAPTURE,
+            ),
         }
-    }
-
-    pub(crate) fn create_frame_receiver_subscription(
-        data: &FrameReceiverSubData,
-    ) -> PlatformCaptureStream {
-        tracing::info!("Creating frame receiver sub with framerate: {}", data.framerate);
-
-        data.capture
-            .blocking_write()
-            .create_stream(data.framerate)
-            .expect("Failed to create stream!")
     }
 
     pub(crate) fn is_capturing(&self) -> bool {
-        self.capture
-            .as_ref()
-            .and_then(|capture| capture.try_read().ok())
-            .map(|capture| capture.is_capturing())
-            .unwrap_or(false)
+        self.capture.is_capturing()
     }
 }
 
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+enum FrameSubscriptionKind {
+    Local,
+    Remote,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct FrameSubscriptionData {
+    receiver: LatestFrameReceiverRef,
+    kind: FrameSubscriptionKind,
+}
+
+fn latest_frame_subscription(data: FrameSubscriptionData) -> Subscription<Message> {
+    Subscription::run_with(data, build_latest_frame_subscription)
+}
+
+fn build_latest_frame_subscription(data: &FrameSubscriptionData) -> FrameSubscriptionStream {
+    let receiver = data.receiver.0.clone();
+    let kind = data.kind;
+
+    Box::pin(unfold(receiver, move |receiver| async move {
+        loop {
+            let result = {
+                let mut lock = receiver.lock().await;
+                lock.changed().await
+            };
+
+            match result {
+                Ok(()) => {
+                    let frame = {
+                        let lock = receiver.lock().await;
+                        lock.borrow().clone()
+                    };
+
+                    let message = match (kind, frame) {
+                        (FrameSubscriptionKind::Local, Some(frame)) => Some(Message::Screen(
+                            ScreenMessage::Call(CallMessage::LocalFrameReady(frame)),
+                        )),
+                        (FrameSubscriptionKind::Local, None) => None,
+                        (FrameSubscriptionKind::Remote, Some(frame)) => Some(Message::Screen(
+                            ScreenMessage::Call(CallMessage::DecodedFrameReady(frame)),
+                        )),
+                        (FrameSubscriptionKind::Remote, None) => Some(Message::Screen(
+                            ScreenMessage::Call(CallMessage::DecodedFrameCleared),
+                        )),
+                    };
+
+                    if let Some(message) = message {
+                        return Some((message, receiver));
+                    }
+                }
+                Err(_) => return None,
+            }
+        }
+    }))
+}
+
 impl Screen for CallScreen {
-    fn subscription(&self, ctx: &AppState) -> Subscription<Message> {
+    fn subscription(&self, _ctx: &AppState) -> Subscription<Message> {
         let mut subscriptions = vec![];
 
-        if self.is_capturing()
-            && let Some(capture) = self.capture.clone()
-        {
-            subscriptions.push(
-                Subscription::<Frame>::run_with(
-                    FrameReceiverSubData {
-                        capture,
-                        framerate: ctx.config.target_framerate,
-                        revision: self.capture_subscription_revision,
-                    },
-                    Self::create_frame_receiver_subscription,
-                )
-                .map(|f| {
-                    Message::Screen(ScreenMessage::Call(CallMessage::FrameCaptured(Arc::new(f))))
-                }),
-            );
+        if let Some(receiver) = self.local.latest_frame_receiver() {
+            subscriptions.push(latest_frame_subscription(FrameSubscriptionData {
+                receiver,
+                kind: FrameSubscriptionKind::Local,
+            }));
         }
 
-        if let Some(receiver) = self.decoded_frame_rx.clone() {
-            subscriptions.push(Subscription::run_with(receiver, |receiver_ref| {
-                let receiver = receiver_ref.0.clone();
-                Box::new(Box::pin(unfold(receiver, |receiver| async move {
-                    let mut lock = receiver.lock().await;
-                    if let Some(frame) = lock.recv().await {
-                        drop(lock);
-                        Some((
-                            Message::Screen(ScreenMessage::Call(CallMessage::DecodedFrameReady(
-                                frame,
-                            ))),
-                            receiver,
-                        ))
-                    } else {
-                        drop(lock);
-                        None
-                    }
-                })))
+        if let Some(receiver) = self.remote.decoded_frame_receiver() {
+            subscriptions.push(latest_frame_subscription(FrameSubscriptionData {
+                receiver,
+                kind: FrameSubscriptionKind::Remote,
             }));
         }
 

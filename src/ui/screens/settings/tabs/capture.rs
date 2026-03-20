@@ -29,7 +29,7 @@ define_tab! {
                     setting_row(
                         "Record Cursor",
                         "Show the mouse cursor in the recording",
-                        checkbox(config.record_cursor).on_toggle(|val| {
+                        checkbox(config.capture.record_cursor).on_toggle(|val| {
                             Message::Screen(ScreenMessage::Settings(
                                 SettingsMessage::RecordCursorChanged(val),
                             ))
@@ -38,7 +38,7 @@ define_tab! {
                      setting_row(
                         "Border Indicator",
                         "Show a yellow border around the recorded area",
-                        checkbox(config.recording_border_indicator).on_toggle(|val| {
+                        checkbox(config.capture.recording_border_indicator).on_toggle(|val| {
                             Message::Screen(ScreenMessage::Settings(
                                 SettingsMessage::RecordingBorderIndicatorChanged(val),
                             ))
@@ -47,7 +47,7 @@ define_tab! {
                     setting_row(
                         "UI Preview",
                         "Show a local preview of the captured area (may use CPU readback when needed)",
-                        checkbox(config.enable_ui_preview).on_toggle(|val| {
+                        checkbox(config.capture.enable_ui_preview).on_toggle(|val| {
                             Message::Screen(ScreenMessage::Settings(
                                 SettingsMessage::EnableUiPreviewChanged(val),
                             ))

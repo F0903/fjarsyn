@@ -51,12 +51,9 @@ fn main() {
     if cfg!(target_os = "windows") {
         set_windows_metadata().expect("failed to embed Windows resources");
 
-        // Link required Windows system libraries for static FFmpeg build
-        println!("cargo:rustc-link-lib=strmiids");
+        // FFmpeg's Windows Media Foundation path depends on COM interface IIDs that
+        // vcpkg/ffmpeg-sys-next does not reliably surface through Cargo metadata.
         println!("cargo:rustc-link-lib=mfuuid");
-        println!("cargo:rustc-link-lib=vfw32");
-        println!("cargo:rustc-link-lib=libx264");
-        println!("cargo:rustc-link-lib=x265-static");
-        println!("cargo:rustc-link-lib=libmfx");
+        println!("cargo:rustc-link-lib=strmiids");
     }
 }

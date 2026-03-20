@@ -18,6 +18,7 @@ mod components;
 mod handlers;
 mod tabs;
 mod view;
+mod workflow;
 
 #[derive(Debug, Clone)]
 pub enum SettingsMessage {

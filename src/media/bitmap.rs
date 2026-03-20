@@ -12,7 +12,7 @@ pub fn ensure_rgba8(bitmap: &mut [u8], src_format: &mut PixelFormat) {
     *src_format = PixelFormat::RGBA8;
 }
 
-//TODO: SIMD
+// TODO: SIMD
 #[inline]
 fn swap_first_channel(bitmap: &mut [u8]) {
     let len = bitmap.len();

@@ -4,6 +4,7 @@ use crate::ui::{app::AppState, message::Message, screens::Screen};
 
 mod handlers;
 mod view;
+mod workflow;
 
 #[derive(Debug, Clone)]
 pub enum HomeMessage {

@@ -1,4 +1,3 @@
-pub mod bitmap_utils;
 pub(crate) mod buffer_pool;
 #[macro_use]
 pub mod define_enum_with_all;

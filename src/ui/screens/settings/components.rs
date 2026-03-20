@@ -18,11 +18,11 @@ pub(super) fn settings_section<'a>(
             ]
             .spacing(12)
             .align_y(Alignment::Center),
-            container(content).padding(Padding::ZERO.top(10.0))
+            container(content).padding(Padding::ZERO.top(12.0))
         ]
-        .spacing(15),
+        .spacing(18),
     )
-    .padding(20)
+    .padding(22)
     .style(theme::section_container)
     .width(Length::Fill)
     .into()
@@ -42,7 +42,7 @@ pub(super) fn setting_row<'a>(
         .width(Length::Fill),
         container(control).width(Length::Shrink)
     ]
-    .spacing(20)
+    .spacing(24)
     .align_y(Alignment::Center)
     .into()
 }
