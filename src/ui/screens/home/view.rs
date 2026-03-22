@@ -8,7 +8,10 @@ use super::{HomeMessage, HomeScreen};
 use crate::ui::{
     app::{AppState, NetworkingState},
     fonts,
-    message::{CallActionMessage, CallTarget, ContactsServiceMessage, Message, ScreenMessage},
+    message::{
+        CallActionMessage, CallTarget, ContactsServiceMessage, Message, MessagingServiceMessage,
+        ScreenMessage,
+    },
     theme,
 };
 
@@ -98,7 +101,11 @@ impl HomeScreen {
                                 row![
                                     self.action_button(
                                         lucide::message_square(),
-                                        Message::NoOp,
+                                        Message::Messaging(
+                                            MessagingServiceMessage::OpenConversation(
+                                                peer.id.clone(),
+                                            ),
+                                        ),
                                         false
                                     ),
                                     self.action_button(

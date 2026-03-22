@@ -39,6 +39,8 @@ impl CallService {
                 }
             };
 
+        *self.webrtc.remote_peer_id.write().await = tid.clone();
+
         if let Some(id) = &tid
             && let Some(peer) = discovered.iter().find(|peer| peer.id == *id)
         {
@@ -75,6 +77,7 @@ impl CallService {
                 Ok(addr) => addr,
                 Err(_) => {
                     *self.state.write().unwrap() = CallState::Idle;
+                    *self.webrtc.remote_peer_id.write().await = None;
                     return Err("Invalid address format".into());
                 }
             };
@@ -97,6 +100,7 @@ impl CallService {
         }
 
         *self.state.write().unwrap() = CallState::Idle;
+        *self.webrtc.remote_peer_id.write().await = None;
         Err("Connection failed".into())
     }
 

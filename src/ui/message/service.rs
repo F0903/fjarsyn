@@ -1,8 +1,11 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
 use crate::{
     networking::discovery::{DiscoveryEvent, PeerInfo},
-    services::call_service::CallEvent,
+    services::{
+        call_service::CallEvent,
+        messaging_service::{MessagingError, MessagingEvent, MessagingService},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -28,4 +31,13 @@ pub enum ContactsServiceMessage {
     ContactDeleted(Result<(), Arc<crate::Error>>),
     UpdateContactAddress { id: i64, new_address: String },
     UpdateContactAddressConfirmed(i64, String),
+}
+
+#[derive(Debug, Clone)]
+pub enum MessagingServiceMessage {
+    Initialize,
+    ServiceInitialized(Result<Arc<MessagingService>, Arc<MessagingError>>),
+    Event(MessagingEvent),
+    OpenConversation(String),
+    SendMessage { peer_id: String, address: SocketAddr, body: String },
 }

@@ -23,17 +23,21 @@ impl WebRTC {
     pub(super) fn setup_ice_candidate_handler(
         pc: &RTCPeerConnection,
         signaling_tx: Arc<RwLock<Option<mpsc::Sender<SignalingMessage>>>>,
+        remote_peer_id: Arc<RwLock<Option<String>>>,
         local_id: String,
     ) {
         pc.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
             let signaling_tx = signaling_tx.clone();
+            let remote_peer_id = remote_peer_id.clone();
             let local_id = local_id.clone();
             Box::pin(async move {
                 if let Some(candidate) = candidate
                     && let Ok(candidate_str) = serde_json::to_string(&candidate.to_json().unwrap())
                 {
+                    let target_peer_id = remote_peer_id.read().await.clone();
                     let message = SignalingMessage {
                         from: local_id,
+                        to: target_peer_id,
                         sig_type: SignalingType::Candidate,
                         data: candidate_str,
                     };

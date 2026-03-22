@@ -13,7 +13,7 @@ pub use database::DatabaseMessage;
 pub use navigation::{NavigationMessage, Route};
 pub use notification::NotificationMessage;
 pub use screen::ScreenMessage;
-pub use service::{CallServiceMessage, ContactsServiceMessage};
+pub use service::{CallServiceMessage, ContactsServiceMessage, MessagingServiceMessage};
 pub use window::{WindowControlMessage, WindowEventMessage};
 
 #[derive(Debug, Clone)]
@@ -25,6 +25,7 @@ pub enum Message {
     Notification(NotificationMessage),
     Database(DatabaseMessage),
     ContactData(ContactsServiceMessage),
+    Messaging(MessagingServiceMessage),
     Capture(CaptureMessage),
     WindowEvent(WindowEventMessage),
     WindowControl(WindowControlMessage),

@@ -6,10 +6,10 @@ use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     networking::discovery::DiscoveryEvent,
-    services::call_service::CallEvent,
+    services::{call_service::CallEvent, messaging_service::MessagingEvent},
     ui::{
         app::Fjarsyn,
-        message::{CallServiceMessage, Message, WindowEventMessage},
+        message::{CallServiceMessage, Message, MessagingServiceMessage, WindowEventMessage},
     },
 };
 
@@ -103,11 +103,19 @@ pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
     let deadline_subscription = next_deadline(app)
         .map(|deadline| deadline_subscription(app.ctx.ui.started_at, deadline))
         .unwrap_or(Subscription::none());
+    let messaging_subscription = app
+        .ctx
+        .messaging
+        .event_rx
+        .as_ref()
+        .map(|rx| messaging_event_subscription(rx.clone()))
+        .unwrap_or(Subscription::none());
 
     Subscription::batch(vec![
         screen_subscriptions,
         call_event_subscription,
         discovery_subscription,
+        messaging_subscription,
         window_open_subscription,
         window_close_subscription,
         window_event_subscription,
@@ -172,12 +180,22 @@ pub fn discovery_event_subscription(
     channel_subscription(receiver, map_discovery_event)
 }
 
+pub fn messaging_event_subscription(
+    receiver: Arc<Mutex<mpsc::Receiver<MessagingEvent>>>,
+) -> Subscription<Message> {
+    channel_subscription(receiver, map_messaging_event)
+}
+
 fn map_call_event(event: CallEvent) -> Message {
     Message::CallService(CallServiceMessage::CallEvent(event))
 }
 
 fn map_discovery_event(event: DiscoveryEvent) -> Message {
     Message::CallService(CallServiceMessage::DiscoveryEvent(event))
+}
+
+fn map_messaging_event(event: MessagingEvent) -> Message {
+    Message::Messaging(MessagingServiceMessage::Event(event))
 }
 
 fn channel_subscription<T: Send + 'static>(

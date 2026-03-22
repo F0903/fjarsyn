@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use iced::Task;
 
 use crate::ui::{
@@ -7,7 +9,7 @@ use crate::ui::{
     },
     message::{
         CallServiceMessage, CaptureMessage, ContactsServiceMessage, DatabaseMessage, Message,
-        NavigationMessage, ScreenMessage,
+        MessagingServiceMessage, NavigationMessage, ScreenMessage,
     },
 };
 
@@ -56,6 +58,20 @@ fn run_effect(app: &mut Fjarsyn, effect: ServiceEffect) -> Task<Message> {
         ServiceEffect::LoadContacts => {
             Task::done(Message::ContactData(ContactsServiceMessage::LoadContacts))
         }
+        ServiceEffect::InitializeMessaging { db, webrtc, event_tx } => Task::future(async move {
+            Message::Messaging(MessagingServiceMessage::ServiceInitialized(
+                crate::services::messaging_service::MessagingService::init(
+                    crate::services::messaging_service::MessagingServiceConfig {
+                        db,
+                        webrtc,
+                        event_tx,
+                    },
+                )
+                .await
+                .map(Arc::new)
+                .map_err(Arc::new),
+            ))
+        }),
         ServiceEffect::RetryCallCaptureStart => Task::done(Message::Screen(ScreenMessage::Call(
             crate::ui::screens::call::CallMessage::StartCapture,
         ))),

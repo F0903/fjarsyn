@@ -10,7 +10,10 @@ use crate::{
     ui::{
         app::AppState,
         fonts,
-        message::{CallActionMessage, CallTarget, ContactsServiceMessage, Message, ScreenMessage},
+        message::{
+            CallActionMessage, CallTarget, ContactsServiceMessage, Message,
+            MessagingServiceMessage, ScreenMessage,
+        },
         theme,
     },
 };
@@ -161,6 +164,14 @@ impl ContactsScreen {
                         .spacing(2)
                         .width(Length::Fill),
                         row![
+                            button(lucide::message_square().size(16))
+                                .on_press(Message::Messaging(
+                                    MessagingServiceMessage::OpenConversation(
+                                        contact_peer_id.clone(),
+                                    ),
+                                ))
+                                .padding(8)
+                                .style(|theme, status| theme::button_style(theme, status, false)),
                             button(lucide::phone().size(16))
                                 .on_press(Message::CallAction(CallActionMessage::StartCall(
                                     CallTarget::ContactId(contact_id),

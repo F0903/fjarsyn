@@ -17,6 +17,7 @@ use crate::networking::{
 mod control;
 mod handlers;
 mod media;
+mod messaging;
 mod peer_connection;
 mod signaling_flow;
 
@@ -29,6 +30,12 @@ pub enum WebRTCEvent {
     RemoteStreamEnded,
 }
 
+#[derive(Debug, Clone)]
+pub enum MessagingSignalEvent {
+    IncomingMessage { from: String, payload: crate::networking::protocol::ChatMessagePayload },
+    Receipt { from: String, payload: crate::networking::protocol::ChatReceiptPayload },
+}
+
 #[derive(Clone)]
 pub struct WebRTC {
     pub peer_connection: Arc<RwLock<Arc<RTCPeerConnection>>>,
@@ -38,6 +45,7 @@ pub struct WebRTC {
     pub video_track: Arc<RwLock<Arc<TrackLocalStaticSample>>>,
     pub control_channel: Arc<RwLock<Option<Arc<RTCDataChannel>>>>,
     pub remote_peer_id: Arc<RwLock<Option<String>>>,
+    pub message_signal_tx: Arc<RwLock<Option<mpsc::Sender<MessagingSignalEvent>>>>,
     pub local_peer_id: String,
     pub direct_signaling_port: u16,
     packet_sink: mpsc::Sender<Bytes>,
@@ -94,6 +102,7 @@ impl WebRTC {
         let video_track_lock = Arc::new(RwLock::new(video_track));
         let control_channel = Arc::new(RwLock::new(None));
         let remote_peer_id = Arc::new(RwLock::new(None));
+        let message_signal_tx = Arc::new(RwLock::new(None));
 
         let webrtc = Arc::new(Self {
             peer_connection: peer_connection_lock,
@@ -103,6 +112,7 @@ impl WebRTC {
             video_track: video_track_lock,
             control_channel,
             remote_peer_id,
+            message_signal_tx,
             local_peer_id,
             direct_signaling_port: direct_port,
             packet_sink,

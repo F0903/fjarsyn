@@ -44,9 +44,14 @@ impl AppBootstrap {
         let (frame_packet_tx, frame_packet_rx) = mpsc::channel(REMOTE_SAMPLE_QUEUE_CAPACITY);
         let (discovery_event_tx, discovery_event_rx) = mpsc::channel(100);
         let (call_event_tx, call_event_rx) = mpsc::channel(100);
+        let (messaging_event_tx, messaging_event_rx) = mpsc::channel(100);
 
         let mut ctx = AppState {
-            services: Services { call_service: None, contacts_service: None },
+            services: Services {
+                call_service: None,
+                contacts_service: None,
+                messaging_service: None,
+            },
             networking: NetworkingState {
                 discovered_peers: Vec::new(),
                 recent_peers: Vec::new(),
@@ -68,6 +73,11 @@ impl AppBootstrap {
                 incoming_call_id: None,
                 incoming_call_timeout: None,
                 call_connected: false,
+            },
+            messaging: super::state::MessagingState {
+                event_tx: Some(messaging_event_tx.clone()),
+                event_rx: Some(Arc::new(Mutex::new(messaging_event_rx))),
+                pending_open_peer_id: None,
             },
             ui: UIState {
                 main_window: None,

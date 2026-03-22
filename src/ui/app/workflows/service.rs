@@ -7,6 +7,7 @@ use crate::{
     services::{
         call_service::{CallEvent, CallService},
         contacts_service::ContactsService,
+        messaging_service::MessagingEvent,
     },
     ui::{
         app::{ActiveScreen, Fjarsyn},
@@ -20,6 +21,11 @@ pub(crate) enum ServiceEffect {
     SaveConfig,
     Navigate(Route),
     LoadContacts,
+    InitializeMessaging {
+        db: SqlitePool,
+        webrtc: Arc<crate::networking::webrtc::WebRTC>,
+        event_tx: tokio::sync::mpsc::Sender<MessagingEvent>,
+    },
     RetryCallCaptureStart,
 }
 
@@ -110,6 +116,9 @@ fn reduce_call_service_initialized(
     }
 
     app.ctx.services.call_service = Some(service);
+    if let Some(effect) = maybe_initialize_messaging_service(app) {
+        effects.push(effect);
+    }
     effects
 }
 
@@ -173,7 +182,11 @@ fn reduce_discovery_event(app: &mut Fjarsyn, event: DiscoveryEvent) {
 fn reduce_database_initialized(app: &mut Fjarsyn, pool: SqlitePool) -> Vec<ServiceEffect> {
     app.ctx.db = Some(pool.clone());
     app.ctx.services.contacts_service = Some(Arc::new(ContactsService::new(pool)));
-    vec![ServiceEffect::LoadContacts]
+    let mut effects = vec![ServiceEffect::LoadContacts];
+    if let Some(effect) = maybe_initialize_messaging_service(app) {
+        effects.push(effect);
+    }
+    effects
 }
 
 fn maybe_upsert_peer(app: &mut Fjarsyn, peer: PeerInfo) {
@@ -204,4 +217,16 @@ fn update_recent_peer(app: &mut Fjarsyn) {
         app.ctx.networking.recent_peers.retain(|recent| recent.id != peer.id);
         app.ctx.networking.recent_peers.insert(0, peer);
     }
+}
+
+fn maybe_initialize_messaging_service(app: &mut Fjarsyn) -> Option<ServiceEffect> {
+    if app.ctx.services.messaging_service.is_some() {
+        return None;
+    }
+
+    let db = app.ctx.db.clone()?;
+    let call_service = app.ctx.services.call_service.clone()?;
+    let event_tx = app.ctx.messaging.event_tx.clone()?;
+
+    Some(ServiceEffect::InitializeMessaging { db, webrtc: call_service.webrtc(), event_tx })
 }

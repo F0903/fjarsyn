@@ -11,7 +11,7 @@ use webrtc::{
 
 use super::{WebRTC, WebRTCEvent};
 use crate::networking::{
-    protocol::{SignalingMessage, SignalingType},
+    protocol::{ChatMessagePayload, ChatReceiptPayload, SignalingMessage, SignalingType},
     signaling,
     webrtc::{WebRTCError, webrtc_error::WebRTCResult},
 };
@@ -69,6 +69,24 @@ impl WebRTC {
                 pc.close().await.map_err(WebRTCError::PeerConnectionError)?;
                 *self.remote_peer_id.write().await = None;
             }
+            SignalingType::ChatMessage => {
+                let payload: ChatMessagePayload =
+                    serde_json::from_str(&msg.data).map_err(WebRTCError::DeserializeError)?;
+                self.forward_message_signal(super::MessagingSignalEvent::IncomingMessage {
+                    from: msg.from,
+                    payload,
+                })
+                .await;
+            }
+            SignalingType::ChatReceipt => {
+                let payload: ChatReceiptPayload =
+                    serde_json::from_str(&msg.data).map_err(WebRTCError::DeserializeError)?;
+                self.forward_message_signal(super::MessagingSignalEvent::Receipt {
+                    from: msg.from,
+                    payload,
+                })
+                .await;
+            }
         }
         Ok(())
     }
@@ -110,6 +128,7 @@ impl WebRTC {
 
         let message = SignalingMessage {
             from: self.local_peer_id.clone(),
+            to: self.remote_peer_id.read().await.clone(),
             sig_type: SignalingType::Offer,
             data: sdp,
         };
@@ -133,6 +152,7 @@ impl WebRTC {
 
         let response = SignalingMessage {
             from: self.local_peer_id.clone(),
+            to: self.remote_peer_id.read().await.clone(),
             sig_type: SignalingType::Answer,
             data: answer_sdp,
         };
@@ -150,6 +170,7 @@ impl WebRTC {
     pub async fn decline_call(&self) -> WebRTCResult<()> {
         let message = SignalingMessage {
             from: self.local_peer_id.clone(),
+            to: self.remote_peer_id.read().await.clone(),
             sig_type: SignalingType::Decline,
             data: String::new(),
         };
@@ -175,6 +196,7 @@ impl WebRTC {
     pub async fn disconnect(&self) -> WebRTCResult<()> {
         let message = SignalingMessage {
             from: self.local_peer_id.clone(),
+            to: self.remote_peer_id.read().await.clone(),
             sig_type: SignalingType::Decline,
             data: String::new(),
         };

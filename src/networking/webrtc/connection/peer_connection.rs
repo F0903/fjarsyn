@@ -75,6 +75,7 @@ impl WebRTC {
         Self::setup_ice_candidate_handler(
             pc,
             self.signaling_tx.clone(),
+            self.remote_peer_id.clone(),
             self.local_peer_id.clone(),
         );
         Self::setup_connection_state_handler(pc, self.event_tx.clone());

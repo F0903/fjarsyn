@@ -1,6 +1,7 @@
 pub mod call;
 pub mod contacts;
 pub mod home;
+pub mod messages;
 pub mod settings;
 
 use iced::{Element, Subscription, Task};
@@ -69,6 +70,7 @@ macro_rules! define_active_screen {
 
 define_active_screen! {
     Home(home::HomeScreen) => |ctx: &mut AppState| home::HomeScreen::new(ctx),
+    Messages(messages::MessagesScreen) => |ctx: &mut AppState| messages::MessagesScreen::new(ctx),
     Contacts(contacts::ContactsScreen) => |ctx: &mut AppState| contacts::ContactsScreen::new(ctx),
     Call(call::CallScreen) => |ctx: &mut AppState| call::CallScreen::new(ctx),
     Settings(settings::SettingsScreen) => |ctx: &mut AppState| settings::SettingsScreen::new(&ctx.config),

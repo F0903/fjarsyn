@@ -85,14 +85,16 @@ impl Fjarsyn {
         let sidebar = match self.active_screen {
             ActiveScreen::Call(_) => None,
             _ => {
-                let contacts = self.ctx.services.contacts_service.as_ref().map(|c| c.contacts());
-                let contacts_ref = contacts.as_ref().map(|c| c.as_slice()).unwrap_or(&[]);
+                let selected_peer_id = match &self.active_screen {
+                    ActiveScreen::Messages(screen) => screen.selected_peer_id.as_deref(),
+                    _ => None,
+                };
 
                 Some(components::sidebar(
-                    contacts_ref,
-                    &self.ctx.networking,
+                    &self.ctx,
                     current_route,
                     self.ctx.services.call_service.as_ref().map(|c| c.local_id().to_owned()),
+                    selected_peer_id,
                 ))
             }
         };

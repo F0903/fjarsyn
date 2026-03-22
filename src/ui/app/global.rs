@@ -12,6 +12,7 @@ pub(super) fn handle_global_message(app: &mut Fjarsyn, message: Message) -> Task
         Message::WindowControl(msg) => handlers::window::handle_window_control_msg(app, msg),
         Message::ContactData(msg) => handlers::contact::handle_contact_msg(app, msg),
         Message::CallService(msg) => handlers::service::handle_call_service_msg(app, msg),
+        Message::Messaging(msg) => handlers::messaging::handle_messaging_msg(app, msg),
         Message::Capture(msg) => handlers::service::handle_capture_msg(app, msg),
         Message::Database(msg) => handlers::service::handle_database_msg(app, msg),
         Message::CallAction(msg) => handlers::call_action::handle_call_action_msg(app, msg),

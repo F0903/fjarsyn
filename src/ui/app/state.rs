@@ -12,6 +12,7 @@ use crate::{
     services::{
         call_service::{CallEvent, CallService},
         contacts_service::ContactsService,
+        messaging_service::{MessagingEvent, MessagingService},
         notification_service::NotificationService,
     },
     ui::subscription::EventReceiverRef,
@@ -48,6 +49,12 @@ pub struct SessionState {
     pub call_connected: bool,
 }
 
+pub struct MessagingState {
+    pub event_tx: Option<mpsc::Sender<MessagingEvent>>,
+    pub event_rx: Option<Arc<Mutex<mpsc::Receiver<MessagingEvent>>>>,
+    pub pending_open_peer_id: Option<String>,
+}
+
 pub struct UIState {
     pub main_window: Option<WindowInfo>,
     pub back_queue: VecDeque<ActiveScreen>,
@@ -59,6 +66,7 @@ pub struct UIState {
 pub struct Services {
     pub call_service: Option<Arc<CallService>>,
     pub contacts_service: Option<Arc<ContactsService>>,
+    pub messaging_service: Option<Arc<MessagingService>>,
 }
 
 pub struct AppState {
@@ -66,6 +74,7 @@ pub struct AppState {
     pub networking: NetworkingState,
     pub media: MediaState,
     pub session: SessionState,
+    pub messaging: MessagingState,
     pub ui: UIState,
     pub config: Config,
     pub db: Option<sqlx::SqlitePool>,
