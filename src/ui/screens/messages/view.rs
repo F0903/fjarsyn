@@ -1,5 +1,5 @@
 use iced::{
-    Alignment, Element, Length,
+    Alignment, Border, Color, Element, Length,
     widget::{button, column, container, row, scrollable, text, text_input},
 };
 use iced_fonts::lucide;
@@ -20,15 +20,13 @@ impl MessagesScreen {
         let selected_messages = self
             .selected_peer_id
             .as_deref()
-            .and_then(|selected_peer_id| {
-                ctx.services.messaging_service.as_ref().map(|service| {
-                    service
-                        .messages()
-                        .iter()
-                        .filter(|message| message.peer_id == selected_peer_id)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                })
+            .map(|selected_peer_id| {
+                ctx.messaging
+                    .messages
+                    .iter()
+                    .filter(|message| message.peer_id == selected_peer_id)
+                    .cloned()
+                    .collect::<Vec<_>>()
             })
             .unwrap_or_default();
 
@@ -58,7 +56,7 @@ impl MessagesScreen {
         };
 
         let title = peer_display_name(ctx, selected_peer_id);
-        let status_label = peer_status_label(ctx, selected_peer_id);
+        let truncated_peer_id = truncate_with_ellipsis(selected_peer_id, 28);
 
         let mut transcript = column![].spacing(12);
         if messages.is_empty() {
@@ -95,11 +93,10 @@ impl MessagesScreen {
             row![
                 column![
                     text(title).size(30).style(text::primary).font(fonts::outfit::BOLD),
-                    text(selected_peer_id.to_string()).size(12).style(text::secondary),
+                    text(truncated_peer_id).size(12).style(text::secondary),
                 ]
                 .spacing(4)
-                .width(Length::Fill),
-                text(status_label).size(12).style(text::secondary)
+                .width(Length::Fill)
             ]
             .align_y(Alignment::Center),
             container(scrollable(transcript))
@@ -116,10 +113,10 @@ impl MessagesScreen {
 
     fn view_message_bubble<'a>(&self, message: ConversationMessage) -> Element<'a, Message> {
         let is_outgoing = matches!(message.direction, MessageDirection::Outgoing);
-        let status_label = match message.status {
-            MessageStatus::Pending => "Pending receipt",
-            MessageStatus::Delivered => "Delivered",
-            MessageStatus::Failed => "Failed",
+        let status_icon = match message.status {
+            MessageStatus::Pending => lucide::minus().size(12),
+            MessageStatus::Delivered => lucide::check().size(12),
+            MessageStatus::Failed => lucide::x().size(12),
         };
 
         let bubble = container(
@@ -129,19 +126,27 @@ impl MessagesScreen {
                     text(message.created_at.format("%H:%M").to_string())
                         .size(11)
                         .style(text::secondary),
-                    text(status_label).size(11).style(text::secondary),
+                    status_icon.style(text::secondary),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center)
             ]
-            .spacing(10),
+            .spacing(8),
         )
-        .padding(14)
-        .max_width(420)
-        .style(if is_outgoing {
-            crate::ui::theme::icon_bubble_container
-        } else {
-            crate::ui::theme::card_container
+        .padding([9, 11])
+        .max_width(360)
+        .style(move |_| container::Style {
+            background: Some(if is_outgoing {
+                Color { a: 0.18, ..crate::ui::theme::PRIMARY_COLOR }.into()
+            } else {
+                crate::ui::theme::CARD_BACKGROUND.into()
+            }),
+            border: Border {
+                color: crate::ui::theme::BORDER_COLOR,
+                width: 1.0,
+                radius: 10.0.into(),
+            },
+            ..Default::default()
         });
 
         if is_outgoing {
@@ -160,7 +165,7 @@ fn peer_display_name(ctx: &AppState, peer_id: &str) -> String {
     if let Some(contact) = ctx.services.contacts_service.as_ref().and_then(|service| {
         service.contacts().iter().find(|contact| contact.peer_id == peer_id).cloned()
     }) {
-        return contact.name;
+        return truncate_with_ellipsis(contact.name.trim(), 28);
     }
 
     ctx.networking
@@ -169,20 +174,10 @@ fn peer_display_name(ctx: &AppState, peer_id: &str) -> String {
         .find(|peer| peer.id == peer_id)
         .map(|peer| peer.instance_name.trim().to_string())
         .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| crate::utils::string_utils::truncate(peer_id, 12).to_string())
+        .map(|name| truncate_with_ellipsis(&name, 28))
+        .unwrap_or_else(|| crate::utils::string_utils::abbreviate_middle(peer_id, 14, 6))
 }
 
-fn peer_status_label(ctx: &AppState, peer_id: &str) -> String {
-    if ctx.networking.discovered_peers.iter().any(|peer| peer.id == peer_id) {
-        return "Reachable".into();
-    }
-
-    if let Some(contact) = ctx.services.contacts_service.as_ref().and_then(|service| {
-        service.contacts().iter().find(|contact| contact.peer_id == peer_id).cloned()
-    }) && contact.address.as_deref().is_some_and(|address| !address.trim().is_empty())
-    {
-        return "Saved route".into();
-    }
-
-    "Offline".into()
+fn truncate_with_ellipsis(value: &str, max_chars: usize) -> String {
+    crate::utils::string_utils::truncate_with_ellipsis(value, max_chars)
 }

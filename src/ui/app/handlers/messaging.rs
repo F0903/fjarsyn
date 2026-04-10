@@ -5,7 +5,7 @@ use crate::ui::{
         Fjarsyn,
         workflows::messaging::{self, MessagingEffect},
     },
-    message::{Message, MessagingServiceMessage, NavigationMessage, ScreenMessage},
+    message::{Message, MessagingServiceMessage, ScreenMessage},
     screens::messages::MessagesMessage,
     utils::ErrorExt,
 };
@@ -23,9 +23,6 @@ fn run_effect(effect: MessagingEffect) -> Task<Message> {
         MessagingEffect::NotifyInfo(message) => Task::done(Message::Notification(
             crate::ui::message::NotificationMessage::NotifyInfo(message),
         )),
-        MessagingEffect::Navigate(route) => {
-            Task::done(Message::Navigation(NavigationMessage::Navigate(route)))
-        }
         MessagingEffect::SendMessage { service, peer_id, address, body } => {
             Task::future(async move {
                 service

@@ -9,7 +9,7 @@ use crate::ui::{
     app::{AppState, NetworkingState},
     fonts,
     message::{
-        CallActionMessage, CallTarget, ContactsServiceMessage, Message, MessagingServiceMessage,
+        CallActionMessage, CallTarget, ContactsServiceMessage, Message, NavigationMessage, Route,
         ScreenMessage,
     },
     theme,
@@ -101,11 +101,9 @@ impl HomeScreen {
                                 row![
                                     self.action_button(
                                         lucide::message_square(),
-                                        Message::Messaging(
-                                            MessagingServiceMessage::OpenConversation(
-                                                peer.id.clone(),
-                                            ),
-                                        ),
+                                        Message::Navigation(NavigationMessage::Navigate(
+                                            Route::Messages { peer_id: Some(peer.id.clone()) },
+                                        )),
                                         false
                                     ),
                                     self.action_button(

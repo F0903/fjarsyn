@@ -38,6 +38,5 @@ pub enum MessagingServiceMessage {
     Initialize,
     ServiceInitialized(Result<Arc<MessagingService>, Arc<MessagingError>>),
     Event(MessagingEvent),
-    OpenConversation(String),
     SendMessage { peer_id: String, address: SocketAddr, body: String },
 }

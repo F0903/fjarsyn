@@ -77,7 +77,8 @@ impl AppBootstrap {
             messaging: super::state::MessagingState {
                 event_tx: Some(messaging_event_tx.clone()),
                 event_rx: Some(Arc::new(Mutex::new(messaging_event_rx))),
-                pending_open_peer_id: None,
+                messages: Arc::new(Vec::new()),
+                revision: 0,
             },
             ui: UIState {
                 main_window: None,

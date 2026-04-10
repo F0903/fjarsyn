@@ -20,9 +20,8 @@ pub struct MessagesScreen {
 }
 
 impl MessagesScreen {
-    pub fn new(ctx: &mut AppState) -> Self {
-        let selected_peer_id =
-            ctx.messaging.pending_open_peer_id.take().or_else(|| first_peer_id(ctx));
+    pub fn new(ctx: &mut AppState, selected_peer_id: Option<String>) -> Self {
+        let selected_peer_id = selected_peer_id.or_else(|| first_peer_id(ctx));
 
         Self { selected_peer_id, draft: String::new() }
     }
@@ -43,9 +42,7 @@ impl Screen for MessagesScreen {
 }
 
 fn first_peer_id(ctx: &AppState) -> Option<String> {
-    if let Some(service) = ctx.services.messaging_service.as_ref()
-        && let Some(message) = service.messages().iter().last()
-    {
+    if let Some(message) = ctx.messaging.messages.iter().last() {
         return Some(message.peer_id.clone());
     }
 

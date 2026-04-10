@@ -113,3 +113,71 @@ impl MessageModel {
         Ok(result.rows_affected() > 0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use chrono::Utc;
+    use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+
+    use super::MessageModel;
+
+    async fn test_pool() -> (SqlitePool, std::path::PathBuf) {
+        let path =
+            std::env::temp_dir().join(format!("fjarsyn-message-model-{}.db", uuid::Uuid::new_v4()));
+
+        let options = SqliteConnectOptions::new().filename(&path).create_if_missing(true);
+        let pool = SqlitePool::connect_with(options).await.unwrap();
+
+        sqlx::query(
+            "CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT NOT NULL,
+                peer_id TEXT NOT NULL,
+                direction TEXT NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
+                body TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed')),
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                delivered_at DATETIME,
+                UNIQUE (message_id, direction)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE INDEX idx_messages_peer_created_at
+             ON messages (peer_id, created_at, id)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        (pool, path)
+    }
+
+    #[tokio::test]
+    async fn incoming_and_outgoing_can_share_message_id() {
+        let (pool, path) = test_pool().await;
+        let now = Utc::now();
+
+        MessageModel::create_outgoing(&pool, "same-id", "peer-a", "hello", now).await.unwrap();
+
+        let inserted =
+            MessageModel::create_incoming_if_missing(&pool, "same-id", "peer-a", "hello", now, now)
+                .await
+                .unwrap();
+
+        assert!(inserted);
+
+        let messages = MessageModel::list(&pool).await.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().any(|message| message.direction == "outgoing"));
+        assert!(messages.iter().any(|message| message.direction == "incoming"));
+
+        pool.close().await;
+        let _ = fs::remove_file(path);
+    }
+}

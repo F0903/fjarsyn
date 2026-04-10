@@ -13,7 +13,7 @@ use crate::{
     },
     ui::{
         app::AppState,
-        message::{Message, MessagingServiceMessage, NavigationMessage, Route},
+        message::{Message, NavigationMessage, Route},
         theme,
     },
 };
@@ -33,7 +33,7 @@ pub fn sidebar_button<'a>(
     label: &'a str,
     msg: Message,
 ) -> iced::widget::Button<'a, Message> {
-    let is_active = active_route == target_route;
+    let is_active = active_route.same_screen(&target_route);
 
     button(
         row![icon.size(16), text(label).size(14)]
@@ -56,21 +56,14 @@ pub fn sidebar<'a>(
 
     let sidebar_nav = column![
         sidebar_button(
-            current_route,
+            current_route.clone(),
             Route::Home,
             lucide::house(),
             "Home",
             Message::Navigation(NavigationMessage::Navigate(Route::Home))
         ),
         sidebar_button(
-            current_route,
-            Route::Messages,
-            lucide::message_square(),
-            "Messages",
-            Message::Navigation(NavigationMessage::Navigate(Route::Messages))
-        ),
-        sidebar_button(
-            current_route,
+            current_route.clone(),
             Route::Contacts,
             lucide::users(),
             "Contacts",
@@ -103,7 +96,7 @@ pub fn sidebar<'a>(
         );
     } else {
         for conversation in conversations {
-            let is_selected = current_route == Route::Messages
+            let is_selected = matches!(&current_route, Route::Messages { .. })
                 && selected_peer_id == Some(conversation.peer_id.as_str());
 
             conversations_list = conversations_list.push(
@@ -143,9 +136,9 @@ pub fn sidebar<'a>(
                     .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
-                .on_press(Message::Messaging(MessagingServiceMessage::OpenConversation(
-                    conversation.peer_id,
-                )))
+                .on_press(Message::Navigation(NavigationMessage::Navigate(Route::Messages {
+                    peer_id: Some(conversation.peer_id),
+                })))
                 .style(move |theme, status| {
                     theme::sidebar_button_style(theme, status, is_selected)
                 }),
@@ -204,8 +197,7 @@ fn build_sidebar_conversations(
 ) -> Vec<SidebarConversation> {
     let contacts = ctx.services.contacts_service.as_ref().map(|service| service.contacts());
     let contacts = contacts.as_ref().map(|contacts| contacts.as_slice()).unwrap_or(&[]);
-    let messages = ctx.services.messaging_service.as_ref().map(|service| service.messages());
-    let messages = messages.as_ref().map(|messages| messages.as_slice()).unwrap_or(&[]);
+    let messages = ctx.messaging.messages.as_slice();
 
     let mut conversations = Vec::new();
     let mut seen = HashSet::new();
@@ -254,7 +246,7 @@ fn build_sidebar_conversation(
                     .map(|peer| peer.instance_name.trim().to_string())
                     .filter(|name| !name.is_empty())
             })
-            .unwrap_or_else(|| crate::utils::string_utils::truncate(&peer_id, 12).to_string()),
+            .unwrap_or_else(|| crate::utils::string_utils::abbreviate_middle(&peer_id, 14, 6)),
         subtitle: last_message.map(sidebar_preview).unwrap_or_else(|| {
             if discovered.is_some() { "Online" } else { "No messages yet" }.into()
         }),

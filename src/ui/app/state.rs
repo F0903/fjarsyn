@@ -12,7 +12,7 @@ use crate::{
     services::{
         call_service::{CallEvent, CallService},
         contacts_service::ContactsService,
-        messaging_service::{MessagingEvent, MessagingService},
+        messaging_service::{ConversationMessage, MessagingEvent, MessagingService},
         notification_service::NotificationService,
     },
     ui::subscription::EventReceiverRef,
@@ -52,7 +52,8 @@ pub struct SessionState {
 pub struct MessagingState {
     pub event_tx: Option<mpsc::Sender<MessagingEvent>>,
     pub event_rx: Option<Arc<Mutex<mpsc::Receiver<MessagingEvent>>>>,
-    pub pending_open_peer_id: Option<String>,
+    pub messages: Arc<Vec<ConversationMessage>>,
+    pub revision: u64,
 }
 
 pub struct UIState {

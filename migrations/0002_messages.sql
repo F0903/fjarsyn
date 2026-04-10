@@ -1,12 +1,13 @@
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    message_id TEXT NOT NULL UNIQUE,
+    message_id TEXT NOT NULL,
     peer_id TEXT NOT NULL,
     direction TEXT NOT NULL CHECK (direction IN ('incoming', 'outgoing')),
     body TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending', 'delivered', 'failed')),
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    delivered_at DATETIME
+    delivered_at DATETIME,
+    UNIQUE (message_id, direction)
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_peer_created_at

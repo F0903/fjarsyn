@@ -11,8 +11,8 @@ use crate::{
         app::AppState,
         fonts,
         message::{
-            CallActionMessage, CallTarget, ContactsServiceMessage, Message,
-            MessagingServiceMessage, ScreenMessage,
+            CallActionMessage, CallTarget, ContactsServiceMessage, Message, NavigationMessage,
+            Route, ScreenMessage,
         },
         theme,
     },
@@ -165,11 +165,9 @@ impl ContactsScreen {
                         .width(Length::Fill),
                         row![
                             button(lucide::message_square().size(16))
-                                .on_press(Message::Messaging(
-                                    MessagingServiceMessage::OpenConversation(
-                                        contact_peer_id.clone(),
-                                    ),
-                                ))
+                                .on_press(Message::Navigation(NavigationMessage::Navigate(
+                                    Route::Messages { peer_id: Some(contact_peer_id.clone()) },
+                                )))
                                 .padding(8)
                                 .style(|theme, status| theme::button_style(theme, status, false)),
                             button(lucide::phone().size(16))
