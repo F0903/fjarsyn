@@ -1592,9 +1592,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
-name = "fjarsyn"
-version = "0.4.0"
+name = "fjarsyn-core"
+version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bytemuck",
  "bytes",
  "chrono",
@@ -1602,31 +1603,42 @@ dependencies = [
  "ffmpeg-next",
  "futures",
  "futures-util",
- "iced",
- "iced_core",
- "iced_debug",
- "iced_devtools",
- "iced_fonts",
- "iced_wgpu",
- "iced_winit",
  "mdns-sd",
- "once_cell",
- "paste",
  "serde",
  "serde_json",
  "sqlx",
- "syn",
  "thiserror 2.0.18",
  "tokio",
  "tokio-tungstenite",
  "tracing",
- "tracing-subscriber",
  "uuid",
  "webrtc",
  "wgpu",
  "windows 0.58.0",
  "windows-core 0.58.0",
- "windows-future",
+]
+
+[[package]]
+name = "fjarsyn-native"
+version = "0.4.0"
+dependencies = [
+ "bytemuck",
+ "bytes",
+ "fjarsyn-core",
+ "futures",
+ "iced",
+ "iced_core",
+ "iced_fonts",
+ "iced_wgpu",
+ "iced_winit",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wgpu",
+ "windows 0.58.0",
+ "windows-core 0.58.0",
  "winres",
 ]
 
@@ -2245,18 +2257,6 @@ checksum = "25035ab0215a620e53f4103e36fc4e59a1fb2817e4bfc38a30ad27b4202ea0be"
 dependencies = [
  "iced_core",
  "iced_futures",
- "log",
-]
-
-[[package]]
-name = "iced_devtools"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59b8e2a306ac5c583234b02f5404afdb7b7467c8f72a4a44ad3e7be30fc4b339"
-dependencies = [
- "iced_debug",
- "iced_program",
- "iced_widget",
  "log",
 ]
 

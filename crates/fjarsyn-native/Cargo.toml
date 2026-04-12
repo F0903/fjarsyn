@@ -1,0 +1,36 @@
+[package]
+name = "fjarsyn-native"
+description = "A native and efficient screen sharing application."
+version = "0.4.0"
+edition = "2024"
+
+[[bin]]
+name = "fjarsyn"
+path = "src/main.rs"
+
+[build-dependencies]
+winres = "0.1"
+
+[dependencies]
+fjarsyn-core = { path = "../fjarsyn-core" }
+bytes = { workspace = true }
+futures = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+iced = { version = "0.14.0", features = [
+    "tokio",
+    "image",
+    "canvas",
+    "advanced",
+] }
+iced_winit = { version = "0.14.0" }
+iced_core = { version = "0.14.0" }
+iced_wgpu = { version = "0.14.0" }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+windows = { workspace = true }
+windows-core = { workspace = true }
+iced_fonts = { version = "0.3", features = ["lucide"] }
