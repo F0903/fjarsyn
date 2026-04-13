@@ -13,10 +13,10 @@ use iced_fonts::lucide;
 use super::{CallMessage, CallScreen};
 use crate::ui::{
     self,
-    app::AppContext,
     components::{CpuFrameViewer, GpuFrameViewer},
     fonts,
     message::{Message, ScreenMessage},
+    shell::AppContext,
 };
 
 const LOCAL_PREVIEW_WIDTH: f32 = 320.0;

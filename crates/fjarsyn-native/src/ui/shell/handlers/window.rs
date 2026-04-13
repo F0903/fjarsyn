@@ -2,12 +2,12 @@ use fjarsyn_core::executors::{AppEvent, LifecycleAction};
 use iced::{Task, window as iced_window};
 
 use crate::ui::{
-    app::{
+    message::{Message, WindowControlMessage, WindowEventMessage},
+    shell::{
         Fjarsyn,
         handlers::app_event,
         workflows::window::{self, WindowEffect},
     },
-    message::{Message, WindowControlMessage, WindowEventMessage},
 };
 
 pub fn handle_window_event_msg(app: &mut Fjarsyn, message: WindowEventMessage) -> Task<Message> {

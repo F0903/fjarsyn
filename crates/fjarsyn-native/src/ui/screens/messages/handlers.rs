@@ -4,8 +4,8 @@ use iced::Task;
 
 use super::{MessagesScreen, workflow};
 use crate::ui::{
-    app::{AppContext, AppContextMut},
     message::{Message, MessagingServiceMessage, NotificationMessage, ScreenMessage},
+    shell::{AppContext, AppContextMut},
 };
 
 impl MessagesScreen {

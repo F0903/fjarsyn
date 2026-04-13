@@ -1,7 +1,7 @@
 use fjarsyn_core::capture_providers::PlatformCaptureItem;
 
 use super::{CallMessage, CallScreen, state::RemoteStreamStatus};
-use crate::ui::app::AppContextMut;
+use crate::ui::shell::AppContextMut;
 
 #[derive(Debug, Clone)]
 pub(crate) enum CallEffect {

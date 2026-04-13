@@ -1,9 +1,9 @@
 use iced::Task;
 
 use crate::ui::{
-    app::{ActiveScreen, AppContext, Fjarsyn, handlers::messaging},
     message::{Message, NavigationMessage, Route},
     screens::ScreenEntry,
+    shell::{ActiveScreen, AppContext, Fjarsyn, handlers::messaging},
 };
 
 pub fn handle_navigation_msg(app: &mut Fjarsyn, message: NavigationMessage) -> Task<Message> {

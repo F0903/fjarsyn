@@ -11,8 +11,8 @@ use fjarsyn_core::{
 use iced::Task;
 
 use crate::ui::{
-    app::Fjarsyn,
     message::{Message, NavigationMessage},
+    shell::Fjarsyn,
 };
 
 pub fn run_app_commands(app: &mut Fjarsyn, commands: AppCommands) -> Task<Message> {

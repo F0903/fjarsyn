@@ -6,10 +6,10 @@ use iced_fonts::lucide;
 
 use super::{SettingsMessage, SettingsScreen};
 use crate::ui::{
-    app::AppContext,
     fonts,
     message::{Message, ScreenMessage},
     screens::settings::tabs,
+    shell::AppContext,
     theme,
 };
 

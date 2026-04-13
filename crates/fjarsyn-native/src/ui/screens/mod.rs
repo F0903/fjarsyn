@@ -7,8 +7,8 @@ pub mod settings;
 use iced::{Element, Subscription, Task};
 
 use crate::ui::{
-    app::{AppContext, AppContextMut},
     message::{Message, Route},
+    shell::{AppContext, AppContextMut},
 };
 
 #[derive(Debug, thiserror::Error)]

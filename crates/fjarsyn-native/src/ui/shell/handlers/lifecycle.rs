@@ -3,8 +3,8 @@ use iced::Task;
 
 use super::app_event;
 use crate::ui::{
-    app::Fjarsyn,
     message::{LifecycleMessage, Message},
+    shell::Fjarsyn,
 };
 
 pub fn handle_lifecycle_msg(app: &mut Fjarsyn, message: LifecycleMessage) -> Task<Message> {

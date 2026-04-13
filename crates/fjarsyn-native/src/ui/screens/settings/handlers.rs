@@ -5,8 +5,8 @@ use super::{
     workflow::{self, SettingsEffect},
 };
 use crate::ui::{
-    app::AppContextMut,
     message::{ConfigMessage, Message, ScreenMessage},
+    shell::AppContextMut,
 };
 
 impl SettingsScreen {

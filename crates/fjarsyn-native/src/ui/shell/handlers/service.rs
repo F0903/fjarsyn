@@ -8,8 +8,8 @@ use fjarsyn_core::{
 use iced::Task;
 
 use crate::ui::{
-    app::{ActiveScreen, Fjarsyn, handlers::app_event},
     message::{CallServiceMessage, CaptureMessage, DatabaseMessage, Message, ScreenMessage},
+    shell::{ActiveScreen, Fjarsyn, handlers::app_event},
 };
 
 pub fn handle_call_service_msg(app: &mut Fjarsyn, message: CallServiceMessage) -> Task<Message> {

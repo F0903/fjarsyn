@@ -49,14 +49,16 @@ pub struct UIState {
     pub cursor_inside_window: bool,
 }
 
-pub struct RuntimeServices {
+// Concrete native service handles owned by the shell runtime.
+pub struct Services {
     pub call_service: Option<Arc<CallService>>,
     pub contacts_service: Option<Arc<ContactsService>>,
     pub discovery_service: Option<Arc<DiscoveryService>>,
     pub messaging_service: Option<Arc<MessagingService>>,
 }
 
-pub struct AppRuntime {
+// Runtime-only channels, database handles, and services owned by the native shell.
+pub struct ShellRuntime {
     pub frame_packet_tx: mpsc::Sender<Bytes>,
     pub frame_packet_rx: EventReceiverRef<Bytes>,
     pub discovery_event_tx: mpsc::Sender<DiscoveryEvent>,
@@ -65,10 +67,11 @@ pub struct AppRuntime {
     pub call_event_rx: EventReceiverRef<CallEvent>,
     pub messaging_event_tx: mpsc::Sender<MessagingEvent>,
     pub messaging_event_rx: EventReceiverRef<MessagingEvent>,
-    pub services: RuntimeServices,
+    pub services: Services,
     pub db: Option<sqlx::SqlitePool>,
 }
 
+// Native shell state: wraps core app state with UI and media state the core does not own.
 pub struct ShellState {
     pub core: AppState,
     pub media: MediaState,
@@ -105,7 +108,7 @@ impl DerefMut for ShellState {
 
 pub struct Fjarsyn {
     pub(crate) ctx: ShellState,
-    pub(crate) runtime: AppRuntime,
+    pub(crate) runtime: ShellRuntime,
     pub(crate) active_screen: ActiveScreen,
 }
 
@@ -115,14 +118,14 @@ pub struct AppContextBase<State, Runtime> {
     pub runtime: Runtime,
 }
 
-pub type AppContext<'a> = AppContextBase<&'a ShellState, &'a AppRuntime>;
-pub type AppContextMut<'a> = AppContextBase<&'a mut ShellState, &'a mut AppRuntime>;
+pub type AppContext<'a> = AppContextBase<&'a ShellState, &'a ShellRuntime>;
+pub type AppContextMut<'a> = AppContextBase<&'a mut ShellState, &'a mut ShellRuntime>;
 
 impl<State, Runtime> AppContextBase<State, Runtime>
 where
-    Runtime: Deref<Target = AppRuntime>,
+    Runtime: Deref<Target = ShellRuntime>,
 {
-    pub fn services(&self) -> &RuntimeServices {
+    pub fn services(&self) -> &Services {
         &self.runtime.services
     }
 
@@ -142,12 +145,12 @@ where
     }
 }
 
-impl<'a> AppContextBase<&'a mut ShellState, &'a mut AppRuntime> {
+impl<'a> AppContextBase<&'a mut ShellState, &'a mut ShellRuntime> {
     pub fn as_ref(&self) -> AppContext<'_> {
         AppContextBase { state: &*self.state, runtime: &*self.runtime }
     }
 
-    pub fn services_mut(&mut self) -> &mut RuntimeServices {
+    pub fn services_mut(&mut self) -> &mut Services {
         &mut self.runtime.services
     }
 

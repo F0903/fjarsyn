@@ -7,12 +7,12 @@ use iced_fonts::lucide;
 
 use super::{ContactsMessage, ContactsScreen};
 use crate::ui::{
-    app::AppContext,
     fonts,
     message::{
         CallActionMessage, CallTarget, ContactsServiceMessage, Message, NavigationMessage, Route,
         ScreenMessage,
     },
+    shell::AppContext,
     theme,
 };
 

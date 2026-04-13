@@ -1,9 +1,9 @@
 use iced::{Subscription, Task};
 
 use crate::ui::{
-    app::{AppContext, AppContextMut},
     message::Message,
     screens::Screen,
+    shell::{AppContext, AppContextMut},
 };
 
 mod handlers;

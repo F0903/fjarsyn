@@ -9,9 +9,9 @@ use iced_fonts::lucide;
 
 use super::{MessagesMessage, MessagesScreen};
 use crate::ui::{
-    app::AppContext,
     fonts,
     message::{Message, ScreenMessage},
+    shell::AppContext,
     theme,
 };
 

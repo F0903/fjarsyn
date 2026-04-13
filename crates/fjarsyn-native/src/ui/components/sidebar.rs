@@ -14,8 +14,8 @@ use iced::{
 use iced_fonts::lucide;
 
 use crate::ui::{
-    app::AppContext,
     message::{Message, NavigationMessage, Route},
+    shell::AppContext,
     theme,
 };
 

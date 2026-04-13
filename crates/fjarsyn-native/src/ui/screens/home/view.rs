@@ -6,12 +6,12 @@ use iced_fonts::lucide;
 
 use super::{HomeMessage, HomeScreen};
 use crate::ui::{
-    app::{AppContext, NetworkingState},
     fonts,
     message::{
         CallActionMessage, CallTarget, ContactsServiceMessage, Message, NavigationMessage, Route,
         ScreenMessage,
     },
+    shell::{AppContext, NetworkingState},
     theme,
 };
 

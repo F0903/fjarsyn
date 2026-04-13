@@ -10,9 +10,9 @@ use iced::{Subscription, Task};
 use crate::{
     settings_tab,
     ui::{
-        app::{AppContext, AppContextMut},
         message::Message,
         screens::{Screen, settings::tabs::SettingsTab},
+        shell::{AppContext, AppContextMut},
     },
 };
 

@@ -6,9 +6,8 @@ use fjarsyn_core::{
 use tokio::sync::mpsc;
 
 use super::{
-    ActiveScreen, AppContext, AppRuntime, AppState, ContactsState, Fjarsyn, MediaState,
-    MessagingState, NetworkingState, RuntimeServices, ServicesState, SessionState, ShellState,
-    UIState,
+    ActiveScreen, AppContext, AppState, ContactsState, Fjarsyn, MediaState, MessagingState,
+    NetworkingState, Services, ServicesState, SessionState, ShellRuntime, ShellState, UIState,
 };
 use crate::ui::subscription::EventReceiverRef;
 
@@ -62,7 +61,7 @@ impl AppBootstrap {
             },
         };
 
-        let runtime = AppRuntime {
+        let runtime = ShellRuntime {
             frame_packet_tx,
             frame_packet_rx: EventReceiverRef::new(frame_packet_rx),
             discovery_event_tx,
@@ -71,7 +70,7 @@ impl AppBootstrap {
             call_event_rx: EventReceiverRef::new(call_event_rx),
             messaging_event_tx,
             messaging_event_rx: EventReceiverRef::new(messaging_event_rx),
-            services: RuntimeServices {
+            services: Services {
                 call_service: None,
                 contacts_service: None,
                 discovery_service: None,

@@ -7,8 +7,8 @@ use iced::Subscription;
 pub use receiver::EventReceiverRef;
 
 use crate::ui::{
-    app::{AppContext, Fjarsyn},
     message::{Message, WindowEventMessage},
+    shell::{AppContext, Fjarsyn},
 };
 
 pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {

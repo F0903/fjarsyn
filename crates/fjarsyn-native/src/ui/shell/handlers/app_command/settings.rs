@@ -1,8 +1,8 @@
 use iced::Task;
 
 use crate::ui::{
-    app::Fjarsyn,
     message::{ConfigMessage, Message},
+    shell::Fjarsyn,
 };
 
 pub(super) fn run_save_config(

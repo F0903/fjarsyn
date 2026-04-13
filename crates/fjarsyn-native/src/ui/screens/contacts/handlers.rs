@@ -2,8 +2,8 @@ use iced::Task;
 
 use super::{ContactsScreen, workflow};
 use crate::ui::{
-    app::AppContextMut,
     message::{Message, ScreenMessage},
+    shell::AppContextMut,
 };
 
 impl ContactsScreen {

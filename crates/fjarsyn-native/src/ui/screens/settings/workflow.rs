@@ -4,7 +4,7 @@ use fjarsyn_core::config::{
 };
 
 use super::{SettingsMessage, SettingsScreen};
-use crate::ui::app::AppContext;
+use crate::ui::shell::AppContext;
 
 #[derive(Debug, Clone)]
 pub(crate) enum SettingsEffect {

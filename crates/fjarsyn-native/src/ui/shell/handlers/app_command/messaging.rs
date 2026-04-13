@@ -3,9 +3,9 @@ use std::sync::Arc;
 use iced::Task;
 
 use crate::ui::{
-    app::Fjarsyn,
     message::{Message, MessagingServiceMessage, ScreenMessage},
     screens::messages::MessagesMessage,
+    shell::Fjarsyn,
 };
 
 pub(super) fn run_send_message(

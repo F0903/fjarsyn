@@ -8,9 +8,9 @@ use futures::stream::unfold;
 use iced::{Subscription, Task};
 
 use crate::ui::{
-    app::{AppContext, AppContextMut},
     message::{Message, ScreenMessage},
     screens::Screen,
+    shell::{AppContext, AppContextMut},
 };
 
 mod capture;

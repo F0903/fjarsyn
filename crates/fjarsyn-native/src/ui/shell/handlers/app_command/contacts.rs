@@ -1,8 +1,8 @@
 use iced::Task;
 
 use crate::ui::{
-    app::Fjarsyn,
     message::{ContactsServiceMessage, Message},
+    shell::Fjarsyn,
 };
 
 pub(super) fn run_load_contacts(app: &mut Fjarsyn) -> Task<Message> {

@@ -9,7 +9,7 @@ use iced::{
 
 use super::{APP_TITLE, Fjarsyn};
 use crate::ui::{
-    app::AppContext, components, message::Message, screens::Screen, subscription, theme,
+    components, message::Message, screens::Screen, shell::AppContext, subscription, theme,
 };
 
 impl Fjarsyn {

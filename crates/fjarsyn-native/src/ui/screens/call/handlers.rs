@@ -6,8 +6,8 @@ use super::{
     workflow::{self, CallEffect},
 };
 use crate::ui::{
-    app::AppContextMut,
     message::{CallServiceMessage, Message, ScreenMessage},
+    shell::AppContextMut,
 };
 
 impl CallScreen {

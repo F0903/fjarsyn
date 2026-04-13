@@ -1,7 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use fjarsyn_core::config::Config;
-use fjarsyn_native::{Result, ui::app::Fjarsyn, utils::wgpu};
+use fjarsyn_native::{Result, ui::shell::Fjarsyn, utils::wgpu};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 

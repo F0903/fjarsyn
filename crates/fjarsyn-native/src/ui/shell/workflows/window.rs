@@ -1,8 +1,8 @@
 use iced::window as iced_window;
 
 use crate::ui::{
-    app::{Fjarsyn, WindowInfo},
     message::{WindowControlMessage, WindowEventMessage},
+    shell::{Fjarsyn, WindowInfo},
 };
 
 pub(crate) enum WindowEffect {

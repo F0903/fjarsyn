@@ -10,8 +10,8 @@ use fjarsyn_core::{
 use iced::Task;
 
 use crate::ui::{
-    app::Fjarsyn,
     message::{CallServiceMessage, Message, MessagingServiceMessage},
+    shell::Fjarsyn,
 };
 
 pub(super) fn run_retry_startup(app: &mut Fjarsyn) -> Task<Message> {

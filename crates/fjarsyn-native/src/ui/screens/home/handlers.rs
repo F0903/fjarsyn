@@ -2,8 +2,8 @@ use iced::Task;
 
 use super::{HomeScreen, workflow};
 use crate::ui::{
-    app::AppContextMut,
     message::{Message, ScreenMessage},
+    shell::AppContextMut,
 };
 
 impl HomeScreen {

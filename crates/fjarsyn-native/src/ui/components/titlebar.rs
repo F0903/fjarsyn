@@ -5,9 +5,9 @@ use iced::{
 use iced_fonts::lucide;
 
 use crate::ui::{
-    app::APP_TITLE,
     fonts,
     message::{Message, WindowControlMessage},
+    shell::APP_TITLE,
     theme,
 };
 

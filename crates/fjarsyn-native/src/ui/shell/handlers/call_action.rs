@@ -2,8 +2,8 @@ use fjarsyn_core::executors::{AppEvent, CallAction};
 use iced::Task;
 
 use crate::ui::{
-    app::{Fjarsyn, handlers::app_event},
     message::{CallActionMessage, Message},
+    shell::{Fjarsyn, handlers::app_event},
 };
 
 pub fn handle_call_action_msg(app: &mut Fjarsyn, message: CallActionMessage) -> Task<Message> {

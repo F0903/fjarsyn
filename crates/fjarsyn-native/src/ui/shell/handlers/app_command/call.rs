@@ -6,10 +6,10 @@ use fjarsyn_core::{
 use iced::Task;
 
 use crate::ui::{
-    app::Fjarsyn,
     message::{
         CallActionMessage, CallServiceMessage, ContactsServiceMessage, Message, NavigationMessage,
     },
+    shell::Fjarsyn,
 };
 
 pub(super) fn run_accept_call(app: &mut Fjarsyn) -> Task<Message> {

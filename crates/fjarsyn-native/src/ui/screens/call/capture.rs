@@ -7,8 +7,8 @@ use iced::Task;
 
 use super::{CallMessage, CallScreen};
 use crate::ui::{
-    app::{AppContext, AppContextMut, Fjarsyn},
     message::{Message, NavigationMessage, Route, ScreenMessage},
+    shell::{AppContext, AppContextMut, Fjarsyn},
 };
 
 impl CallScreen {

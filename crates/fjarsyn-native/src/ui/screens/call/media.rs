@@ -4,7 +4,7 @@ use super::{
     CallScreen,
     workers::{CaptureWorker, CaptureWorkerConfig, EncoderWorker, EncoderWorkerConfig},
 };
-use crate::ui::app::AppContextMut;
+use crate::ui::shell::AppContextMut;
 
 impl CallScreen {
     pub(super) fn clear_media_pipeline(&mut self) {

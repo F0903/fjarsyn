@@ -7,8 +7,8 @@ use fjarsyn_core::{
 use iced::Task;
 
 use crate::ui::{
-    app::{Fjarsyn, handlers::app_event},
     message::{Message, MessagingServiceMessage},
+    shell::{Fjarsyn, handlers::app_event},
 };
 
 pub fn handle_messaging_msg(app: &mut Fjarsyn, message: MessagingServiceMessage) -> Task<Message> {

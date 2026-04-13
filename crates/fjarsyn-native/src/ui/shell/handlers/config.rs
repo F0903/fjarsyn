@@ -3,8 +3,8 @@ use iced::Task;
 
 use super::app_event;
 use crate::ui::{
-    app::Fjarsyn,
     message::{ConfigMessage, Message},
+    shell::Fjarsyn,
 };
 
 pub fn handle_config_msg(app: &mut Fjarsyn, message: ConfigMessage) -> Task<Message> {
