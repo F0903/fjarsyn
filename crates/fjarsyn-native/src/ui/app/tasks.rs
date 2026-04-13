@@ -15,6 +15,28 @@ use super::{Fjarsyn, bootstrap::AppBootstrap};
 use crate::ui::message::Message;
 
 impl Fjarsyn {
+    pub(crate) fn startup_service_tasks(app: &Fjarsyn) -> Task<Message> {
+        let frame_packet_tx = app.runtime.frame_packet_tx.clone();
+        let call_event_tx = app.runtime.call_event_tx.clone();
+        let max_depacket_latency = app.ctx.config.network.max_depacket_latency;
+        let peer_id = app.ctx.config.identity.peer_id.clone();
+
+        Task::batch([
+            Task::future(async {
+                use crate::ui::message::DatabaseMessage;
+                Message::Database(DatabaseMessage::DatabaseInitialized(
+                    database::init().await.map_err(Arc::new),
+                ))
+            }),
+            Self::init_call_service_task(
+                frame_packet_tx,
+                call_event_tx,
+                max_depacket_latency,
+                peer_id,
+            ),
+        ])
+    }
+
     fn capture_cpu_readback_enabled(config: &Config) -> bool {
         gpu_interop::requires_cpu_readback(
             config.capture.enable_ui_preview,
@@ -23,33 +45,12 @@ impl Fjarsyn {
         )
     }
 
-    pub fn init() -> (Self, Task<Message>) {
-        let bootstrap = AppBootstrap::load();
+    pub fn init(config: Config) -> (Self, Task<Message>) {
+        let bootstrap = AppBootstrap::new(config);
         let app = bootstrap.app;
-        let frame_packet_tx = app.runtime.frame_packet_tx.clone();
-        let call_event_tx = app.runtime.call_event_tx.clone();
-        let max_depacket_latency = app.ctx.config.network.max_depacket_latency;
-        let peer_id = app.ctx.config.identity.peer_id.clone();
+        let startup_services = Self::startup_service_tasks(&app);
 
-        (
-            app,
-            Task::batch([
-                Task::future(async {
-                    use crate::ui::message::DatabaseMessage;
-                    Message::Database(DatabaseMessage::DatabaseInitialized(
-                        database::init().await.map_err(Arc::new),
-                    ))
-                }),
-                Self::init_call_service_task(
-                    frame_packet_tx,
-                    call_event_tx,
-                    max_depacket_latency,
-                    peer_id,
-                ),
-                Self::open_window_task(),
-                Self::load_fonts_task(),
-            ]),
-        )
+        (app, Task::batch([startup_services, Self::open_window_task(), Self::load_fonts_task()]))
     }
 
     fn init_call_service_task(

@@ -1,4 +1,4 @@
-pub use fjarsyn_core::navigation::Route;
+pub use fjarsyn_core::app::Route;
 
 #[derive(Debug, Clone)]
 pub enum NavigationMessage {

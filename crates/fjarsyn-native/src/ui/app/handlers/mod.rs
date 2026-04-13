@@ -1,6 +1,9 @@
 pub mod app_command;
+pub mod app_event;
 pub mod call_action;
+pub mod config;
 pub mod contact;
+pub mod lifecycle;
 pub mod messaging;
 pub mod navigation;
 pub mod service;

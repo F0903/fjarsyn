@@ -8,6 +8,8 @@ use crate::ui::message::{Message, NotificationMessage};
 pub(super) fn handle_global_message(app: &mut Fjarsyn, message: Message) -> Task<Message> {
     match message {
         Message::Navigation(msg) => handlers::navigation::handle_navigation_msg(app, msg),
+        Message::Lifecycle(msg) => handlers::lifecycle::handle_lifecycle_msg(app, msg),
+        Message::Config(msg) => handlers::config::handle_config_msg(app, msg),
         Message::WindowEvent(msg) => handlers::window::handle_window_event_msg(app, msg),
         Message::WindowControl(msg) => handlers::window::handle_window_control_msg(app, msg),
         Message::ContactData(msg) => handlers::contact::handle_contact_msg(app, msg),
@@ -58,6 +60,10 @@ fn copy_id_task(id: String) -> Task<Message> {
 }
 
 fn handle_tick(app: &mut Fjarsyn, now: std::time::Instant) -> Task<Message> {
+    if matches!(app.ctx.lifecycle, fjarsyn_core::app::AppLifecycle::ShuttingDown) {
+        return Task::none();
+    }
+
     app.ctx.ui.notifications.dismiss_expired(now);
 
     if app.ctx.session.incoming_call_timeout.is_some_and(|deadline| now >= deadline) {

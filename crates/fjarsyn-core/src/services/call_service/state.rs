@@ -1,4 +1,4 @@
-pub use crate::call::{CallEvent, CallState, CallTarget, CallTransportEvent};
+pub use crate::communication::call::{CallEvent, CallState, CallTarget, CallTransportEvent};
 use crate::networking::webrtc::WebRTCEvent;
 
 pub fn map_webrtc_event(event: WebRTCEvent) -> CallTransportEvent {

@@ -18,7 +18,7 @@ impl CallScreen {
     ) -> Task<Message> {
         match message {
             Message::Screen(ScreenMessage::Call(msg)) => {
-                let effects = workflow::reduce(self, ctx, msg);
+                let effects = workflow::execute_call_message(self, ctx, msg);
                 self.run_effects(ctx, effects)
             }
 

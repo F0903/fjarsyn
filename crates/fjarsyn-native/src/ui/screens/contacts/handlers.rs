@@ -13,7 +13,9 @@ impl ContactsScreen {
         message: Message,
     ) -> Task<Message> {
         let effects = match message {
-            Message::Screen(ScreenMessage::Contacts(message)) => workflow::reduce(self, message),
+            Message::Screen(ScreenMessage::Contacts(message)) => {
+                workflow::execute_contacts_message(self, message)
+            }
             _ => return Task::none(),
         };
 

@@ -5,7 +5,7 @@ use fjarsyn_core::{
         contacts_service::Contact,
         messaging_service::{ConversationSummary, MessageDirection},
     },
-    text::{abbreviate_middle, truncate},
+    utils::text::{abbreviate_middle, truncate},
 };
 use iced::{
     Alignment, Element, Length,
@@ -32,27 +32,31 @@ pub fn sidebar_button<'a>(
     target_route: Route,
     icon: iced::widget::Text<'a>,
     label: &'a str,
-    msg: Message,
+    msg: Option<Message>,
 ) -> iced::widget::Button<'a, Message> {
     let is_active = active_route.same_screen(&target_route);
 
-    button(
+    let mut nav_button = button(
         row![icon.size(16), text(label).size(14)]
             .spacing(10)
             .align_y(Alignment::Center)
             .width(Length::Fill),
     )
     .width(Length::Fill)
-    .on_press(msg)
-    .style(move |theme, status| theme::sidebar_button_style(theme, status, is_active))
+    .style(move |theme, status| theme::sidebar_button_style(theme, status, is_active));
+
+    if let Some(msg) = msg {
+        nav_button = nav_button.on_press(msg);
+    }
+
+    nav_button
 }
 
-pub fn sidebar<'a>(
-    ctx: AppContext<'a>,
-    current_route: Route,
-    selected_peer_id: Option<&'a str>,
-) -> Element<'a, Message> {
+pub fn sidebar<'a>(ctx: AppContext<'a>, current_route: Route) -> Element<'a, Message> {
+    let selected_peer_id = ctx.messaging.active_peer_id.as_deref();
     let conversations = build_sidebar_conversations(ctx, selected_peer_id);
+    let contacts_available = ctx.can_use_contacts();
+    let messaging_available = ctx.can_use_messaging();
 
     let sidebar_nav = column![
         sidebar_button(
@@ -60,17 +64,24 @@ pub fn sidebar<'a>(
             Route::Home,
             lucide::house(),
             "Home",
-            Message::Navigation(NavigationMessage::Navigate(Route::Home))
+            Some(Message::Navigation(NavigationMessage::Navigate(Route::Home)))
         ),
         sidebar_button(
             current_route.clone(),
             Route::Contacts,
             lucide::users(),
             "Contacts",
-            Message::Navigation(NavigationMessage::Navigate(Route::Contacts))
+            contacts_available
+                .then(|| { Message::Navigation(NavigationMessage::Navigate(Route::Contacts)) })
         ),
     ]
     .spacing(5);
+
+    let mut add_contact_button = button(lucide::user_plus().size(14)).style(button::text);
+    if contacts_available {
+        add_contact_button = add_contact_button
+            .on_press(Message::Navigation(NavigationMessage::Navigate(Route::Contacts)));
+    }
 
     let conversations_header = row![
         text("CONVERSATIONS")
@@ -78,15 +89,21 @@ pub fn sidebar<'a>(
             .style(text::secondary)
             .font(crate::ui::fonts::outfit::BOLD)
             .width(Length::Fill),
-        button(lucide::user_plus().size(14))
-            .on_press(Message::Navigation(NavigationMessage::Navigate(Route::Contacts)))
-            .style(button::text)
+        add_contact_button
     ]
     .spacing(10)
     .align_y(Alignment::Center);
 
     let mut conversations_list = column![conversations_header].spacing(8);
-    if conversations.is_empty() {
+    if !messaging_available {
+        conversations_list = conversations_list.push(
+            text(messaging_unavailable_text(ctx))
+                .size(12)
+                .style(text::secondary)
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Center),
+        );
+    } else if conversations.is_empty() {
         conversations_list = conversations_list.push(
             text("No conversations yet")
                 .size(12)
@@ -98,51 +115,52 @@ pub fn sidebar<'a>(
         for conversation in conversations {
             let is_selected = matches!(&current_route, Route::Messages { .. })
                 && selected_peer_id == Some(conversation.peer_id.as_str());
-
-            conversations_list = conversations_list.push(
-                button(
-                    row![
-                        container(lucide::user().size(16))
-                            .padding(8)
-                            .style(theme::icon_bubble_container),
-                        column![
-                            text(conversation.title).size(14),
-                            row![
-                                container(Space::new().width(6)).width(6).height(6).style(
-                                    move |_| container::Style {
-                                        background: Some(
-                                            if conversation.online {
-                                                iced::Color::from_rgb(0.2, 0.8, 0.2)
-                                            } else {
-                                                iced::Color::from_rgb(0.5, 0.5, 0.5)
-                                            }
-                                            .into(),
-                                        ),
-                                        border: iced::Border {
-                                            radius: 3.0.into(),
-                                            ..Default::default()
-                                        },
+            let peer_id = conversation.peer_id.clone();
+            let mut conversation_button = button(
+                row![
+                    container(lucide::user().size(16))
+                        .padding(8)
+                        .style(theme::icon_bubble_container),
+                    column![
+                        text(conversation.title).size(14),
+                        row![
+                            container(Space::new().width(6)).width(6).height(6).style(move |_| {
+                                container::Style {
+                                    background: Some(
+                                        if conversation.online {
+                                            iced::Color::from_rgb(0.2, 0.8, 0.2)
+                                        } else {
+                                            iced::Color::from_rgb(0.5, 0.5, 0.5)
+                                        }
+                                        .into(),
+                                    ),
+                                    border: iced::Border {
+                                        radius: 3.0.into(),
                                         ..Default::default()
-                                    }
-                                ),
-                                text(conversation.subtitle).size(10).style(text::secondary),
-                            ]
-                            .spacing(5)
-                            .align_y(Alignment::Center),
+                                    },
+                                    ..Default::default()
+                                }
+                            }),
+                            text(conversation.subtitle).size(10).style(text::secondary),
                         ]
-                        .spacing(2),
+                        .spacing(5)
+                        .align_y(Alignment::Center),
                     ]
-                    .spacing(10)
-                    .align_y(Alignment::Center),
-                )
-                .width(Length::Fill)
-                .on_press(Message::Navigation(NavigationMessage::Navigate(Route::Messages {
-                    peer_id: Some(conversation.peer_id),
-                })))
-                .style(move |theme, status| {
-                    theme::sidebar_button_style(theme, status, is_selected)
-                }),
-            );
+                    .spacing(2),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .style(move |theme, status| theme::sidebar_button_style(theme, status, is_selected));
+
+            if messaging_available {
+                conversation_button = conversation_button.on_press(Message::Navigation(
+                    NavigationMessage::Navigate(Route::Messages { peer_id: Some(peer_id) }),
+                ));
+            }
+
+            conversations_list = conversations_list.push(conversation_button);
         }
     }
 
@@ -182,7 +200,7 @@ pub fn sidebar<'a>(
                 Route::Settings,
                 lucide::settings(),
                 "Settings",
-                Message::Navigation(NavigationMessage::Navigate(Route::Settings)),
+                Some(Message::Navigation(NavigationMessage::Navigate(Route::Settings))),
             ),
         ]
         .padding(10)
@@ -192,6 +210,14 @@ pub fn sidebar<'a>(
     .height(Length::Fill)
     .style(theme::sidebar_container)
     .into()
+}
+
+fn messaging_unavailable_text(ctx: AppContext<'_>) -> &'static str {
+    if !ctx.accepts_user_requests() {
+        "Messaging is unavailable while the app is shutting down"
+    } else {
+        "Messaging is unavailable until the service is ready"
+    }
 }
 
 fn build_sidebar_conversations(

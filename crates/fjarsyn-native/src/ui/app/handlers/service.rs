@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use fjarsyn_core::{
-    app::{self, ServiceAction},
+    executors::{AppEvent, ServiceAction},
     repositories::ContactsRepository,
     services::contacts_service::ContactsService,
 };
 use iced::Task;
 
 use crate::ui::{
-    app::{ActiveScreen, Fjarsyn, handlers::app_command},
+    app::{ActiveScreen, Fjarsyn, handlers::app_event},
     message::{CallServiceMessage, CaptureMessage, DatabaseMessage, Message, ScreenMessage},
 };
 
@@ -41,8 +41,7 @@ pub fn handle_call_service_msg(app: &mut Fjarsyn, message: CallServiceMessage) -
         CallServiceMessage::PeerFound(peer) => ServiceAction::PeerFound(peer),
     };
 
-    let commands = app::reduce_service(&mut app.ctx.core, action);
-    app_command::run_app_commands(app, commands)
+    app_event::execute_app_event(app, AppEvent::Service(action))
 }
 
 pub fn handle_capture_msg(app: &mut Fjarsyn, message: CaptureMessage) -> Task<Message> {
@@ -95,6 +94,5 @@ pub fn handle_database_msg(app: &mut Fjarsyn, message: DatabaseMessage) -> Task<
         },
     };
 
-    let commands = app::reduce_service(&mut app.ctx.core, action);
-    app_command::run_app_commands(app, commands)
+    app_event::execute_app_event(app, AppEvent::Service(action))
 }

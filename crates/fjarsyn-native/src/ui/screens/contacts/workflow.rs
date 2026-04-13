@@ -7,7 +7,10 @@ pub(crate) enum ContactsEffect {
 
 // Contacts UI state is mostly local form state. Emit an effect only when the
 // user has produced a valid contact payload to persist.
-pub(crate) fn reduce(screen: &mut ContactsScreen, message: ContactsMessage) -> Vec<ContactsEffect> {
+pub(crate) fn execute_contacts_message(
+    screen: &mut ContactsScreen,
+    message: ContactsMessage,
+) -> Vec<ContactsEffect> {
     match message {
         ContactsMessage::NameChanged(value) => {
             screen.new_contact_name = value;

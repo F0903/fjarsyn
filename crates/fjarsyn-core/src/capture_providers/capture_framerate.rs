@@ -1,1 +1,1 @@
-pub use crate::video::CaptureFramerate;
+pub use crate::media::CaptureFramerate;

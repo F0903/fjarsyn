@@ -1,7 +1,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-use fjarsyn_core::media::gpu_interop;
-use fjarsyn_native::{Result, ui::app::Fjarsyn};
+use fjarsyn_core::config::Config;
+use fjarsyn_native::{Result, ui::app::Fjarsyn, utils::wgpu};
 use tracing::Level;
 use tracing_subscriber::FmtSubscriber;
 
@@ -11,11 +11,10 @@ const LOG_LEVEL: Level = Level::TRACE;
 const LOG_LEVEL: Level = Level::INFO;
 
 fn main() -> Result<()> {
-    unsafe {
-        std::env::set_var("WGPU_POWER_PREF", "low");
-    }
+    let config = Config::load_or_overwrite()?;
 
-    gpu_interop::configure_default_wgpu_backend();
+    wgpu::apply_wgpu_power_pref(config.app.power_pref);
+    wgpu::configure_default_wgpu_backend();
 
     tracing::subscriber::set_global_default(
         FmtSubscriber::builder().with_max_level(LOG_LEVEL).finish(),
@@ -23,7 +22,7 @@ fn main() -> Result<()> {
     .expect("setting default subscriber failed");
 
     tracing::info!("Starting app...");
-    iced::daemon(Fjarsyn::init, Fjarsyn::update, Fjarsyn::view)
+    iced::daemon(move || Fjarsyn::init(config.clone()), Fjarsyn::update, Fjarsyn::view)
         .subscription(Fjarsyn::subscription)
         .title(Fjarsyn::title)
         .theme(Fjarsyn::theme)

@@ -1,6 +1,6 @@
 use std::{fmt::Display, time::Duration};
 
-use crate::geometry::Vector2;
+use crate::utils::vector2::Vector2;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, serde::Serialize, serde::Deserialize,

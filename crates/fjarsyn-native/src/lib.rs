@@ -1,4 +1,5 @@
 pub mod ui;
+pub mod utils;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -18,6 +19,8 @@ pub enum Error {
     IoError(#[from] std::io::Error),
     #[error("WebRTC error: {0}")]
     WebRtcError(#[from] fjarsyn_core::networking::webrtc::WebRTCError),
+    #[error("Config error: {0}")]
+    ConfigError(#[from] fjarsyn_core::config::ConfigError),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

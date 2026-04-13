@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use fjarsyn_core::{
     media::{frame::Frame, gpu_interop, pixel_format::PixelFormat},
-    text::truncate,
+    utils::text::truncate,
 };
 use iced::{
     Alignment, Border, Color, Element, Length, Shadow, Vector,

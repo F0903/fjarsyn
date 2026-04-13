@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use fjarsyn_core::{
-    app::{self, MessagingAction},
+    executors::{AppEvent, MessagingAction},
     services::messaging_service::MessagingEvent,
 };
 use iced::Task;
 
 use crate::ui::{
-    app::{Fjarsyn, handlers::app_command},
+    app::{Fjarsyn, handlers::app_event},
     message::{Message, MessagingServiceMessage},
 };
 
@@ -33,16 +33,14 @@ pub fn handle_messaging_msg(app: &mut Fjarsyn, message: MessagingServiceMessage)
         }
     };
 
-    let commands = app::reduce_messaging(&mut app.ctx.core, action);
-    app_command::run_app_commands(app, commands)
+    app_event::execute_app_event(app, AppEvent::Messaging(action))
 }
 
 pub fn sync_active_conversation(app: &mut Fjarsyn, peer_id: Option<String>) -> Task<Message> {
-    let commands = app::reduce_messaging(
-        &mut app.ctx.core,
-        MessagingAction::ActiveConversationSelected(peer_id),
-    );
-    app_command::run_app_commands(app, commands)
+    app_event::execute_app_event(
+        app,
+        AppEvent::Messaging(MessagingAction::ActiveConversationSelected(peer_id)),
+    )
 }
 
 fn messaging_event_action(app: &Fjarsyn, event: MessagingEvent) -> MessagingAction {

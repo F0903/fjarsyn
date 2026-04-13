@@ -1,4 +1,6 @@
-use fjarsyn_core::messaging::{ConversationMessage, MessageDirection, MessageStatus};
+use fjarsyn_core::communication::messaging::{
+    ConversationMessage, MessageDirection, MessageStatus,
+};
 use iced::{
     Alignment, Border, Color, Element, Length,
     widget::{button, column, container, row, scrollable, text, text_input},
@@ -23,7 +25,7 @@ impl MessagesScreen {
     }
 
     fn view_conversation_detail<'a>(&self, ctx: AppContext<'a>) -> Element<'a, Message> {
-        let Some(selected_peer_id) = self.selected_peer_id.as_deref() else {
+        let Some(selected_peer_id) = ctx.messaging.active_peer_id.as_deref() else {
             return container(
                 text("Choose a conversation from the sidebar or start one from Home or Contacts.")
                     .size(16)
@@ -157,5 +159,5 @@ fn peer_display_name(ctx: AppContext<'_>, peer_id: &str) -> String {
 }
 
 fn truncate_with_ellipsis(value: &str, max_chars: usize) -> String {
-    fjarsyn_core::text::truncate_with_ellipsis(value, max_chars)
+    fjarsyn_core::utils::text::truncate_with_ellipsis(value, max_chars)
 }

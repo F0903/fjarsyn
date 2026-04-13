@@ -15,10 +15,10 @@ pub(crate) enum CallEffect {
     EndCall,
 }
 
-// The call reducer owns screen-local state transitions and emits runtime work
+// The call workflow owns screen-local state transitions and emits runtime work
 // for the Iced layer to interpret. That keeps the update loop focused on
 // running effects instead of deciding what should happen next.
-pub(crate) fn reduce(
+pub(crate) fn execute_call_message(
     screen: &mut CallScreen,
     ctx: &mut AppContextMut<'_>,
     message: CallMessage,
@@ -56,8 +56,8 @@ pub(crate) fn reduce(
             screen.capture.pending_start = false;
             vec![CallEffect::EndCall]
         }
-        CallMessage::StartCapture => reduce_start_capture(screen, ctx),
-        CallMessage::PlatformUserPickedCaptureItem(result) => reduce_capture_item_picked(result),
+        CallMessage::StartCapture => execute_start_capture(screen, ctx),
+        CallMessage::PlatformUserPickedCaptureItem(result) => execute_capture_item_picked(result),
         CallMessage::TryStartCapture(capture_item) => {
             vec![CallEffect::RunCaptureStart { capture_item }]
         }
@@ -71,7 +71,7 @@ pub(crate) fn reduce(
     }
 }
 
-fn reduce_start_capture(screen: &mut CallScreen, ctx: &mut AppContextMut<'_>) -> Vec<CallEffect> {
+fn execute_start_capture(screen: &mut CallScreen, ctx: &mut AppContextMut<'_>) -> Vec<CallEffect> {
     if screen.capture.provider.is_none() {
         screen.capture.pending_start = true;
 
@@ -94,7 +94,7 @@ fn reduce_start_capture(screen: &mut CallScreen, ctx: &mut AppContextMut<'_>) ->
     }
 }
 
-fn reduce_capture_item_picked(
+fn execute_capture_item_picked(
     result: Result<Option<PlatformCaptureItem>, String>,
 ) -> Vec<CallEffect> {
     match result {

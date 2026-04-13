@@ -6,7 +6,7 @@ use super::{
 };
 use crate::ui::{
     app::AppContextMut,
-    message::{Message, ScreenMessage},
+    message::{ConfigMessage, Message, ScreenMessage},
 };
 
 impl SettingsScreen {
@@ -20,7 +20,7 @@ impl SettingsScreen {
             _ => return Task::none(),
         };
 
-        let effects = workflow::reduce(self, ctx.as_ref(), message);
+        let effects = workflow::execute_settings_message(self, ctx.as_ref(), message);
         self.run_effects(ctx, effects)
     }
 
@@ -38,22 +38,9 @@ impl SettingsScreen {
                 ctx.notify_error(message);
                 Task::none()
             }
-            SettingsEffect::PersistConfig(config) => {
-                ctx.config = config;
-                if let Err(err) = ctx.config.save() {
-                    ctx.notify_error(format!("Unable to save settings: {}", err));
-                }
-                Task::none()
-            }
-            SettingsEffect::ApplyCaptureReadback { enabled } => {
-                let Some(capture) = ctx.media.capture.clone() else {
-                    return Task::none();
-                };
-
-                Task::future(async move {
-                    capture.write().await.set_cpu_readback_enabled(enabled);
-                    Message::NoOp
-                })
+            SettingsEffect::SaveConfig(config) => {
+                self.working_config = config.clone();
+                Task::done(Message::Config(ConfigMessage::SaveRequested(config)))
             }
         }
     }

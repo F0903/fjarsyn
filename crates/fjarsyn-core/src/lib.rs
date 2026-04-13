@@ -1,21 +1,14 @@
 pub mod app;
-pub mod call;
 pub mod capture_providers;
+pub mod communication;
 pub mod config;
 pub mod database;
-pub mod discovery;
-pub mod geometry;
+pub mod executors;
 pub mod media;
-pub mod messaging;
-pub mod navigation;
 pub mod networking;
-pub mod protocol;
 pub mod repositories;
 pub mod services;
-pub mod text;
-pub mod transcoding;
 pub mod utils;
-pub mod video;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

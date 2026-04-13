@@ -1,4 +1,4 @@
-pub use crate::transcoding::{FFmpegTranscodeType, HWAccelType};
+pub use crate::media::transcoding::{FFmpegTranscodeType, HWAccelType};
 
 #[derive(Clone, Copy)]
 pub struct EncoderInfo {

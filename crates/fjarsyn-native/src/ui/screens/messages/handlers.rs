@@ -15,7 +15,13 @@ impl MessagesScreen {
         message: Message,
     ) -> Task<Message> {
         let effects = match message {
-            Message::Screen(ScreenMessage::Messages(message)) => workflow::reduce(self, message),
+            Message::Screen(ScreenMessage::Messages(message)) => {
+                workflow::execute_messages_message(
+                    self,
+                    ctx.messaging.active_peer_id.as_deref(),
+                    message,
+                )
+            }
             _ => return Task::none(),
         };
 

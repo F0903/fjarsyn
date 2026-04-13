@@ -13,7 +13,7 @@ impl HomeScreen {
         message: Message,
     ) -> Task<Message> {
         if let Message::Screen(ScreenMessage::Home(message)) = message {
-            workflow::reduce(self, message);
+            workflow::execute_home_message(self, message);
         }
 
         Task::none()

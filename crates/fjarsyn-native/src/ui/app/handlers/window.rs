@@ -1,16 +1,36 @@
+use fjarsyn_core::executors::{AppEvent, LifecycleAction};
 use iced::{Task, window as iced_window};
 
 use crate::ui::{
     app::{
         Fjarsyn,
+        handlers::app_event,
         workflows::window::{self, WindowEffect},
     },
     message::{Message, WindowControlMessage, WindowEventMessage},
 };
 
 pub fn handle_window_event_msg(app: &mut Fjarsyn, message: WindowEventMessage) -> Task<Message> {
+    let should_request_shutdown = matches!(
+        message,
+        WindowEventMessage::WindowClosed(id)
+            if app
+                .ctx
+                .ui
+                .main_window
+                .as_ref()
+                .map(|window| window.iced_id == id)
+                .unwrap_or(false)
+    );
+
     let effects = window::reduce_event(app, message);
-    Task::batch(effects.into_iter().map(run_effect))
+    let lifecycle_task = if should_request_shutdown {
+        app_event::execute_app_event(app, AppEvent::Lifecycle(LifecycleAction::ShutdownRequested))
+    } else {
+        Task::none()
+    };
+
+    Task::batch([lifecycle_task, Task::batch(effects.into_iter().map(run_effect))])
 }
 
 pub fn handle_window_control_msg(

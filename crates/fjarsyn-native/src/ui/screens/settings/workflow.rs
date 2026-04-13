@@ -1,6 +1,6 @@
-use fjarsyn_core::{
-    config::{Config, NetworkConfig},
-    media::{ffmpeg::FFmpegTranscodeTypeExt, gpu_interop, pixel_format::PixelFormat},
+use fjarsyn_core::config::{
+    Config, clamp_max_depacket_latency, parse_max_depacket_latency_input,
+    parse_target_bitrate_input,
 };
 
 use super::{SettingsMessage, SettingsScreen};
@@ -9,13 +9,12 @@ use crate::ui::app::AppContext;
 #[derive(Debug, Clone)]
 pub(crate) enum SettingsEffect {
     NotifyError(String),
-    PersistConfig(Config),
-    ApplyCaptureReadback { enabled: bool },
+    SaveConfig(Config),
 }
 
-// The settings reducer keeps UI field mutations local and emits only the work
+// The settings workflow keeps UI field mutations local and emits only the work
 // that needs runtime access, such as persistence or capture reconfiguration.
-pub(crate) fn reduce(
+pub(crate) fn execute_settings_message(
     screen: &mut SettingsScreen,
     ctx: AppContext<'_>,
     message: SettingsMessage,
@@ -57,21 +56,14 @@ pub(crate) fn reduce(
             Vec::new()
         }
         SettingsMessage::MaxDepacketLatencyChanged(value) => {
-            screen.working_config.network.max_depacket_latency =
-                value.clamp(0, NetworkConfig::MAX_DEPACKET_LATENCY_MS);
+            screen.working_config.network.max_depacket_latency = clamp_max_depacket_latency(value);
             Vec::new()
         }
         SettingsMessage::MaxDepacketLatencyInputChanged(value) => {
             parse_max_depacket_latency(screen, value).into_iter().collect()
         }
         SettingsMessage::SaveSettings => {
-            let config = screen.working_config.clone();
-            vec![
-                SettingsEffect::PersistConfig(config.clone()),
-                SettingsEffect::ApplyCaptureReadback {
-                    enabled: requires_capture_readback(&config),
-                },
-            ]
+            vec![SettingsEffect::SaveConfig(screen.working_config.clone())]
         }
         SettingsMessage::DiscardSettings => {
             screen.working_config = ctx.config.clone();
@@ -81,12 +73,12 @@ pub(crate) fn reduce(
 }
 
 fn parse_bitrate(screen: &mut SettingsScreen, value: String) -> Option<SettingsEffect> {
-    match value.parse::<u32>() {
-        Ok(kbps) => {
-            screen.working_config.video.target_bitrate = kbps * 1000;
+    match parse_target_bitrate_input(&value) {
+        Ok(target_bitrate) => {
+            screen.working_config.video.target_bitrate = target_bitrate;
             None
         }
-        Err(_) => Some(SettingsEffect::NotifyError(format!("Invalid bitrate value: '{}'", value))),
+        Err(message) => Some(SettingsEffect::NotifyError(message)),
     }
 }
 
@@ -94,23 +86,11 @@ fn parse_max_depacket_latency(
     screen: &mut SettingsScreen,
     value: String,
 ) -> Option<SettingsEffect> {
-    match value.parse::<u16>() {
+    match parse_max_depacket_latency_input(&value) {
         Ok(latency) => {
-            screen.working_config.network.max_depacket_latency =
-                latency.clamp(0, NetworkConfig::MAX_DEPACKET_LATENCY_MS);
+            screen.working_config.network.max_depacket_latency = latency;
             None
         }
-        Err(_) => Some(SettingsEffect::NotifyError(format!(
-            "Invalid max depacket latency value: '{}'",
-            value
-        ))),
+        Err(message) => Some(SettingsEffect::NotifyError(message)),
     }
-}
-
-fn requires_capture_readback(config: &Config) -> bool {
-    gpu_interop::requires_cpu_readback(
-        config.capture.enable_ui_preview,
-        PixelFormat::DEFAULT_CAPTURE,
-        config.video.transcoding_type.get_encoder_info().hw_accel,
-    )
 }

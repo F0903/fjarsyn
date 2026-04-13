@@ -4,9 +4,14 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    transcoding::FFmpegTranscodeType,
+    media::{
+        ffmpeg::FFmpegTranscodeTypeExt,
+        gpu_interop,
+        pixel_format::PixelFormat,
+        transcoding::FFmpegTranscodeType,
+        video::{CaptureFramerate, TargetResolution},
+    },
     utils::paths::CONFIG_DIR,
-    video::{CaptureFramerate, TargetResolution},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -71,6 +76,18 @@ impl Default for VideoConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+pub enum PowerPref {
+    #[default]
+    Low,
+    Max,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AppConfig {
+    pub power_pref: PowerPref,
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("Failed to read config file: {0}")]
@@ -84,6 +101,7 @@ pub enum ConfigError {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default)]
 pub struct Config {
+    pub app: AppConfig,
     pub identity: IdentityConfig,
     pub video: VideoConfig,
     pub capture: CaptureConfig,
@@ -117,6 +135,7 @@ impl From<LegacyConfig> for Config {
         let _ = legacy.pixel_format;
 
         let mut config = Self {
+            app: AppConfig { power_pref: PowerPref::Low },
             identity: IdentityConfig { peer_id: legacy.peer_id },
             video: VideoConfig {
                 target_bitrate: legacy.target_bitrate,
@@ -137,7 +156,7 @@ impl From<LegacyConfig> for Config {
 }
 
 impl Config {
-    fn normalize(mut self) -> Self {
+    pub fn normalized(mut self) -> Self {
         self.network.normalize();
         self
     }
@@ -146,7 +165,9 @@ impl Config {
         CONFIG_DIR.join("config.json")
     }
 
-    pub fn load() -> Result<Self, ConfigError> {
+    // Tries to load the config from disk. If unable to load, a default config is created and saved.
+    // If the default config is not able to be saved an error will be returned.
+    pub fn load_or_overwrite() -> Result<Self, ConfigError> {
         tracing::info!("Loading config");
         let path = Self::get_config_path();
         if path.exists() {
@@ -156,11 +177,11 @@ impl Config {
                 PersistedConfig::Current(config) => config,
                 PersistedConfig::Legacy(config) => config.into(),
             };
-            return Ok(config.normalize());
+            return Ok(config.normalized());
         }
 
         tracing::info!("No config file found, creating default config.");
-        let default = Self::default().normalize();
+        let default = Self::default().normalized();
         default.save().map_err(ConfigError::Save)?;
         Ok(default)
     }
@@ -170,9 +191,35 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let content = serde_json::to_string_pretty(&self.clone().normalize())?;
+        let content = serde_json::to_string_pretty(&self.clone().normalized())?;
         fs::write(path, content)?;
 
         Ok(())
     }
+}
+
+pub fn parse_target_bitrate_input(value: &str) -> Result<u32, String> {
+    value
+        .parse::<u32>()
+        .map(|kbps| kbps * 1000)
+        .map_err(|_| format!("Invalid bitrate value: '{}'", value))
+}
+
+pub fn clamp_max_depacket_latency(value: u16) -> u16 {
+    value.clamp(0, NetworkConfig::MAX_DEPACKET_LATENCY_MS)
+}
+
+pub fn parse_max_depacket_latency_input(value: &str) -> Result<u16, String> {
+    value
+        .parse::<u16>()
+        .map(clamp_max_depacket_latency)
+        .map_err(|_| format!("Invalid max depacket latency value: '{}'", value))
+}
+
+pub fn requires_capture_readback(config: &Config) -> bool {
+    gpu_interop::requires_cpu_readback(
+        config.capture.enable_ui_preview,
+        PixelFormat::DEFAULT_CAPTURE,
+        config.video.transcoding_type.get_encoder_info().hw_accel,
+    )
 }

@@ -3,8 +3,10 @@ use std::{collections::HashMap, net::IpAddr};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use tokio::sync::mpsc;
 
-use crate::discovery::address_priority;
-pub use crate::discovery::{DiscoveryEvent, PeerInfo};
+pub mod model;
+
+use model::address_priority;
+pub use model::{DiscoveryEvent, PeerInfo};
 
 pub struct Discovery {
     daemon: ServiceDaemon,

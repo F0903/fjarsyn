@@ -1,6 +1,8 @@
 use std::{collections::VecDeque, sync::Arc};
 
-use fjarsyn_core::{config::Config, services::notification_service::NotificationService};
+use fjarsyn_core::{
+    app::AppLifecycle, config::Config, services::notification_service::NotificationService,
+};
 use tokio::sync::mpsc;
 
 use super::{
@@ -17,15 +19,6 @@ pub(super) struct AppBootstrap {
 }
 
 impl AppBootstrap {
-    pub(super) fn load() -> Self {
-        let config = Config::load().unwrap_or_else(|e| {
-            tracing::error!("Failed to load config: {}", e);
-            Config::default()
-        });
-
-        Self::new(config)
-    }
-
     pub(super) fn new(config: Config) -> Self {
         // Build the long-lived runtime channels up front so startup tasks can
         // wire services together without mutating the UI state shape.
@@ -57,6 +50,7 @@ impl AppBootstrap {
                 contacts: ContactsState { contacts: Arc::new(Vec::new()) },
                 config,
                 services: ServicesState::default(),
+                lifecycle: AppLifecycle::Bootstrapping,
             },
             media: MediaState { capture: None, capture_initializing: false },
             ui: UIState {

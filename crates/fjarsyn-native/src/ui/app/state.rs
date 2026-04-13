@@ -6,7 +6,8 @@ use std::{
 
 use bytes::Bytes;
 pub use fjarsyn_core::app::{
-    AppState, ContactsState, MessagingState, NetworkingState, ServicesState, SessionState,
+    AppLifecycle, AppState, ContactsState, MessagingState, NetworkingState, ServicesState,
+    SessionState,
 };
 use fjarsyn_core::{
     capture_providers::PlatformCaptureProvider,
@@ -22,8 +23,10 @@ use fjarsyn_core::{
 use iced::window as iced_window;
 use tokio::sync::{RwLock, mpsc};
 
-use super::ActiveScreen;
-use crate::ui::subscription::EventReceiverRef;
+use crate::ui::{
+    screens::{ActiveScreen, ScreenEntry},
+    subscription::EventReceiverRef,
+};
 
 pub const APP_TITLE: &str = "Fjarsyn";
 
@@ -40,7 +43,7 @@ pub struct MediaState {
 
 pub struct UIState {
     pub main_window: Option<WindowInfo>,
-    pub back_queue: VecDeque<ActiveScreen>,
+    pub back_queue: VecDeque<ScreenEntry>,
     pub notifications: NotificationService,
     pub started_at: std::time::Instant,
     pub cursor_inside_window: bool,
@@ -107,12 +110,18 @@ pub struct Fjarsyn {
 }
 
 #[derive(Clone, Copy)]
-pub struct AppContext<'a> {
-    pub state: &'a ShellState,
-    pub runtime: &'a AppRuntime,
+pub struct AppContextBase<State, Runtime> {
+    pub state: State,
+    pub runtime: Runtime,
 }
 
-impl<'a> AppContext<'a> {
+pub type AppContext<'a> = AppContextBase<&'a ShellState, &'a AppRuntime>;
+pub type AppContextMut<'a> = AppContextBase<&'a mut ShellState, &'a mut AppRuntime>;
+
+impl<State, Runtime> AppContextBase<State, Runtime>
+where
+    Runtime: Deref<Target = AppRuntime>,
+{
     pub fn services(&self) -> &RuntimeServices {
         &self.runtime.services
     }
@@ -122,34 +131,24 @@ impl<'a> AppContext<'a> {
     }
 }
 
-impl Deref for AppContext<'_> {
+impl<State, Runtime> Deref for AppContextBase<State, Runtime>
+where
+    State: Deref<Target = ShellState>,
+{
     type Target = ShellState;
 
     fn deref(&self) -> &Self::Target {
-        self.state
+        self.state.deref()
     }
 }
 
-pub struct AppContextMut<'a> {
-    pub state: &'a mut ShellState,
-    pub runtime: &'a mut AppRuntime,
-}
-
-impl<'a> AppContextMut<'a> {
+impl<'a> AppContextBase<&'a mut ShellState, &'a mut AppRuntime> {
     pub fn as_ref(&self) -> AppContext<'_> {
-        AppContext { state: &*self.state, runtime: &*self.runtime }
-    }
-
-    pub fn services(&self) -> &RuntimeServices {
-        &self.runtime.services
+        AppContextBase { state: &*self.state, runtime: &*self.runtime }
     }
 
     pub fn services_mut(&mut self) -> &mut RuntimeServices {
         &mut self.runtime.services
-    }
-
-    pub fn db(&self) -> Option<&sqlx::SqlitePool> {
-        self.runtime.db.as_ref()
     }
 
     pub fn db_mut(&mut self) -> &mut Option<sqlx::SqlitePool> {
@@ -157,16 +156,11 @@ impl<'a> AppContextMut<'a> {
     }
 }
 
-impl Deref for AppContextMut<'_> {
-    type Target = ShellState;
-
-    fn deref(&self) -> &Self::Target {
-        self.state
-    }
-}
-
-impl DerefMut for AppContextMut<'_> {
+impl<State, Runtime> DerefMut for AppContextBase<State, Runtime>
+where
+    State: DerefMut<Target = ShellState>,
+{
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.state
+        self.state.deref_mut()
     }
 }

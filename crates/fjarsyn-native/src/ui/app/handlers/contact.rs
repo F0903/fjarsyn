@@ -1,8 +1,8 @@
-use fjarsyn_core::app::{self, ContactsAction};
+use fjarsyn_core::executors::{AppEvent, ContactsAction};
 use iced::Task;
 
 use crate::ui::{
-    app::{Fjarsyn, handlers::app_command},
+    app::{Fjarsyn, handlers::app_event},
     message::{ContactsServiceMessage, Message},
 };
 
@@ -30,6 +30,5 @@ pub fn handle_contact_msg(app: &mut Fjarsyn, message: ContactsServiceMessage) ->
         }
     };
 
-    let commands = app::reduce_contacts(&mut app.ctx.core, action);
-    app_command::run_app_commands(app, commands)
+    app_event::execute_app_event(app, AppEvent::Contacts(action))
 }

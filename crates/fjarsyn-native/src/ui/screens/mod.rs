@@ -32,6 +32,12 @@ pub enum ActiveScreen {
     Settings(settings::SettingsScreen),
 }
 
+#[derive(Debug, Clone)]
+pub struct ScreenEntry {
+    pub route: Route,
+    pub screen: ActiveScreen,
+}
+
 impl Screen for ActiveScreen {
     fn update(&mut self, ctx: &mut AppContextMut<'_>, message: Message) -> Task<Message> {
         match self {
@@ -65,10 +71,10 @@ impl Screen for ActiveScreen {
 }
 
 impl ActiveScreen {
-    pub fn get_route(&self) -> Route {
+    pub fn get_route(&self, ctx: AppContext<'_>) -> Route {
         match self {
             Self::Home(_) => Route::Home,
-            Self::Messages(screen) => Route::Messages { peer_id: screen.selected_peer_id.clone() },
+            Self::Messages(_) => Route::Messages { peer_id: ctx.messaging.active_peer_id.clone() },
             Self::Contacts(_) => Route::Contacts,
             Self::Call(_) => Route::Call,
             Self::Settings(_) => Route::Settings,
@@ -78,9 +84,7 @@ impl ActiveScreen {
     pub fn from_route(route: Route, ctx: AppContext<'_>) -> Self {
         match route {
             Route::Home => Self::Home(home::HomeScreen::new(ctx)),
-            Route::Messages { peer_id } => {
-                Self::Messages(messages::MessagesScreen::new(ctx, peer_id))
-            }
+            Route::Messages { .. } => Self::Messages(messages::MessagesScreen::new()),
             Route::Contacts => Self::Contacts(contacts::ContactsScreen::new(ctx)),
             Route::Call => Self::Call(call::CallScreen::new(ctx)),
             Route::Settings => Self::Settings(settings::SettingsScreen::new(&ctx.config)),

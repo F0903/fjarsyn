@@ -4,13 +4,6 @@ pub struct ImportedFrameTexture {
     pub texture: wgpu::Texture,
 }
 
-pub fn configure_default_wgpu_backend() {
-    #[cfg(target_os = "windows")]
-    {
-        dx12::configure_default_wgpu_backend();
-    }
-}
-
 pub fn supports_zero_copy_preview(format: PixelFormat) -> bool {
     #[cfg(target_os = "windows")]
     {
