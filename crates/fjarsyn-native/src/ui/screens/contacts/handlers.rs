@@ -3,13 +3,13 @@ use iced::Task;
 use super::{ContactsScreen, workflow};
 use crate::ui::{
     message::{Message, ScreenMessage},
-    shell::AppContextMut,
+    shell::ShellContextMut,
 };
 
 impl ContactsScreen {
     pub(crate) fn handle_message(
         &mut self,
-        _ctx: &mut AppContextMut<'_>,
+        _ctx: &mut ShellContextMut<'_>,
         message: Message,
     ) -> Task<Message> {
         let effects = match message {

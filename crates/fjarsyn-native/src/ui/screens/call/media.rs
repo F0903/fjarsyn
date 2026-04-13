@@ -4,7 +4,7 @@ use super::{
     CallScreen,
     workers::{CaptureWorker, CaptureWorkerConfig, EncoderWorker, EncoderWorkerConfig},
 };
-use crate::ui::shell::AppContextMut;
+use crate::ui::shell::ShellContextMut;
 
 impl CallScreen {
     pub(super) fn clear_media_pipeline(&mut self) {
@@ -22,7 +22,7 @@ impl CallScreen {
 
     pub(super) fn start_local_capture_pipeline(
         &mut self,
-        ctx: &mut AppContextMut<'_>,
+        ctx: &mut ShellContextMut<'_>,
     ) -> Result<(), String> {
         let Some(service) = &ctx.runtime.services.call_service else {
             return Err("Call service is not initialized yet.".into());

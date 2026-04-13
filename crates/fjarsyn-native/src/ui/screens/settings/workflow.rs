@@ -4,7 +4,7 @@ use fjarsyn_core::config::{
 };
 
 use super::{SettingsMessage, SettingsScreen};
-use crate::ui::shell::AppContext;
+use crate::ui::shell::ShellContext;
 
 #[derive(Debug, Clone)]
 pub(crate) enum SettingsEffect {
@@ -16,7 +16,7 @@ pub(crate) enum SettingsEffect {
 // that needs runtime access, such as persistence or capture reconfiguration.
 pub(crate) fn execute_settings_message(
     screen: &mut SettingsScreen,
-    ctx: AppContext<'_>,
+    ctx: ShellContext<'_>,
     message: SettingsMessage,
 ) -> Vec<SettingsEffect> {
     match message {

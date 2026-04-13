@@ -1,7 +1,7 @@
 use fjarsyn_core::capture_providers::PlatformCaptureItem;
 
 use super::{CallMessage, CallScreen, state::RemoteStreamStatus};
-use crate::ui::shell::AppContextMut;
+use crate::ui::shell::ShellContextMut;
 
 #[derive(Debug, Clone)]
 pub(crate) enum CallEffect {
@@ -20,7 +20,7 @@ pub(crate) enum CallEffect {
 // running effects instead of deciding what should happen next.
 pub(crate) fn execute_call_message(
     screen: &mut CallScreen,
-    ctx: &mut AppContextMut<'_>,
+    ctx: &mut ShellContextMut<'_>,
     message: CallMessage,
 ) -> Vec<CallEffect> {
     match message {
@@ -71,7 +71,10 @@ pub(crate) fn execute_call_message(
     }
 }
 
-fn execute_start_capture(screen: &mut CallScreen, ctx: &mut AppContextMut<'_>) -> Vec<CallEffect> {
+fn execute_start_capture(
+    screen: &mut CallScreen,
+    ctx: &mut ShellContextMut<'_>,
+) -> Vec<CallEffect> {
     if screen.capture.provider.is_none() {
         screen.capture.pending_start = true;
 

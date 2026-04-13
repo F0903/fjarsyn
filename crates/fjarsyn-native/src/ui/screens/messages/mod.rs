@@ -3,7 +3,7 @@ use iced::{Subscription, Task};
 use crate::ui::{
     message::Message,
     screens::Screen,
-    shell::{AppContext, AppContextMut},
+    shell::{ShellContext, ShellContextMut},
 };
 
 mod handlers;
@@ -29,15 +29,15 @@ impl MessagesScreen {
 }
 
 impl Screen for MessagesScreen {
-    fn subscription(&self, _ctx: AppContext<'_>) -> Subscription<Message> {
+    fn subscription(&self, _ctx: ShellContext<'_>) -> Subscription<Message> {
         Subscription::none()
     }
 
-    fn update(&mut self, ctx: &mut AppContextMut<'_>, message: Message) -> Task<Message> {
+    fn update(&mut self, ctx: &mut ShellContextMut<'_>, message: Message) -> Task<Message> {
         self.handle_message(ctx, message)
     }
 
-    fn view<'a>(&'a self, ctx: AppContext<'a>) -> iced::Element<'a, Message> {
+    fn view<'a>(&'a self, ctx: ShellContext<'a>) -> iced::Element<'a, Message> {
         self.render_view(ctx)
     }
 }

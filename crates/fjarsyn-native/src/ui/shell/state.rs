@@ -113,15 +113,15 @@ pub struct Fjarsyn {
 }
 
 #[derive(Clone, Copy)]
-pub struct AppContextBase<State, Runtime> {
+pub struct ShellContextBase<State, Runtime> {
     pub state: State,
     pub runtime: Runtime,
 }
 
-pub type AppContext<'a> = AppContextBase<&'a ShellState, &'a ShellRuntime>;
-pub type AppContextMut<'a> = AppContextBase<&'a mut ShellState, &'a mut ShellRuntime>;
+pub type ShellContext<'a> = ShellContextBase<&'a ShellState, &'a ShellRuntime>;
+pub type ShellContextMut<'a> = ShellContextBase<&'a mut ShellState, &'a mut ShellRuntime>;
 
-impl<State, Runtime> AppContextBase<State, Runtime>
+impl<State, Runtime> ShellContextBase<State, Runtime>
 where
     Runtime: Deref<Target = ShellRuntime>,
 {
@@ -134,7 +134,7 @@ where
     }
 }
 
-impl<State, Runtime> Deref for AppContextBase<State, Runtime>
+impl<State, Runtime> Deref for ShellContextBase<State, Runtime>
 where
     State: Deref<Target = ShellState>,
 {
@@ -145,9 +145,9 @@ where
     }
 }
 
-impl<'a> AppContextBase<&'a mut ShellState, &'a mut ShellRuntime> {
-    pub fn as_ref(&self) -> AppContext<'_> {
-        AppContextBase { state: &*self.state, runtime: &*self.runtime }
+impl<'a> ShellContextBase<&'a mut ShellState, &'a mut ShellRuntime> {
+    pub fn as_ref(&self) -> ShellContext<'_> {
+        ShellContextBase { state: &*self.state, runtime: &*self.runtime }
     }
 
     pub fn services_mut(&mut self) -> &mut Services {
@@ -159,7 +159,7 @@ impl<'a> AppContextBase<&'a mut ShellState, &'a mut ShellRuntime> {
     }
 }
 
-impl<State, Runtime> DerefMut for AppContextBase<State, Runtime>
+impl<State, Runtime> DerefMut for ShellContextBase<State, Runtime>
 where
     State: DerefMut<Target = ShellState>,
 {

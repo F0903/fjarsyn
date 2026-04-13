@@ -3,7 +3,7 @@ use iced::{Subscription, Task};
 use crate::ui::{
     message::Message,
     screens::Screen,
-    shell::{AppContext, AppContextMut},
+    shell::{ShellContext, ShellContextMut},
 };
 
 mod handlers;
@@ -21,21 +21,21 @@ pub struct HomeScreen {
 }
 
 impl HomeScreen {
-    pub fn new(_ctx: AppContext<'_>) -> Self {
+    pub fn new(_ctx: ShellContext<'_>) -> Self {
         Self { manual_target_address: String::new() }
     }
 }
 
 impl Screen for HomeScreen {
-    fn subscription(&self, _ctx: AppContext<'_>) -> Subscription<Message> {
+    fn subscription(&self, _ctx: ShellContext<'_>) -> Subscription<Message> {
         Subscription::none()
     }
 
-    fn update(&mut self, ctx: &mut AppContextMut<'_>, message: Message) -> Task<Message> {
+    fn update(&mut self, ctx: &mut ShellContextMut<'_>, message: Message) -> Task<Message> {
         self.handle_message(ctx, message)
     }
 
-    fn view<'a>(&'a self, ctx: AppContext<'a>) -> iced::Element<'a, Message> {
+    fn view<'a>(&'a self, ctx: ShellContext<'a>) -> iced::Element<'a, Message> {
         self.render_view(ctx)
     }
 }

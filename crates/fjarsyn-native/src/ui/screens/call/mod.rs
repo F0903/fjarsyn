@@ -10,7 +10,7 @@ use iced::{Subscription, Task};
 use crate::ui::{
     message::{Message, ScreenMessage},
     screens::Screen,
-    shell::{AppContext, AppContextMut},
+    shell::{ShellContext, ShellContextMut},
 };
 
 mod capture;
@@ -53,7 +53,7 @@ pub struct CallScreen {
 }
 
 impl CallScreen {
-    pub fn new(ctx: AppContext<'_>) -> Self {
+    pub fn new(ctx: ShellContext<'_>) -> Self {
         Self {
             capture: CaptureState::new(ctx.media.capture.clone()),
             local: LocalShareState::default(),
@@ -128,7 +128,7 @@ fn build_latest_frame_subscription(data: &FrameSubscriptionData) -> FrameSubscri
 }
 
 impl Screen for CallScreen {
-    fn subscription(&self, _ctx: AppContext<'_>) -> Subscription<Message> {
+    fn subscription(&self, _ctx: ShellContext<'_>) -> Subscription<Message> {
         let mut subscriptions = vec![];
 
         if let Some(receiver) = self.local.latest_frame_receiver() {
@@ -148,11 +148,11 @@ impl Screen for CallScreen {
         Subscription::batch(subscriptions)
     }
 
-    fn update(&mut self, ctx: &mut AppContextMut<'_>, message: Message) -> Task<Message> {
+    fn update(&mut self, ctx: &mut ShellContextMut<'_>, message: Message) -> Task<Message> {
         self.handle_update(ctx, message)
     }
 
-    fn view<'a>(&'a self, ctx: AppContext<'a>) -> iced::Element<'a, Message> {
+    fn view<'a>(&'a self, ctx: ShellContext<'a>) -> iced::Element<'a, Message> {
         self.render_view(ctx)
     }
 }

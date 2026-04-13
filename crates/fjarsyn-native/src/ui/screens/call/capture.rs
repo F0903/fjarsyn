@@ -8,11 +8,11 @@ use iced::Task;
 use super::{CallMessage, CallScreen};
 use crate::ui::{
     message::{Message, NavigationMessage, Route, ScreenMessage},
-    shell::{AppContext, AppContextMut, Fjarsyn},
+    shell::{Fjarsyn, ShellContext, ShellContextMut},
 };
 
 impl CallScreen {
-    pub(super) fn perform_end_call(&self, ctx: AppContext<'_>) -> Task<Message> {
+    pub(super) fn perform_end_call(&self, ctx: ShellContext<'_>) -> Task<Message> {
         let stop_capture_task = self
             .capture
             .provider
@@ -47,7 +47,7 @@ impl CallScreen {
         ])
     }
 
-    pub(super) fn perform_initialize_capture(&self, ctx: AppContext<'_>) -> Task<Message> {
+    pub(super) fn perform_initialize_capture(&self, ctx: ShellContext<'_>) -> Task<Message> {
         Fjarsyn::init_capture_task(&ctx.config)
     }
 
@@ -71,7 +71,7 @@ impl CallScreen {
 
     pub(super) fn perform_capture_start(
         &mut self,
-        ctx: &mut AppContextMut<'_>,
+        ctx: &mut ShellContextMut<'_>,
         capture_item: PlatformCaptureItem,
     ) -> Task<Message> {
         let capture_started =
@@ -129,7 +129,7 @@ impl CallScreen {
         }
     }
 
-    pub(super) fn perform_capture_stop(&mut self, ctx: &mut AppContextMut<'_>) -> Task<Message> {
+    pub(super) fn perform_capture_stop(&mut self, ctx: &mut ShellContextMut<'_>) -> Task<Message> {
         match self.capture.provider.as_ref() {
             None => Task::done(Message::Screen(ScreenMessage::Call(CallMessage::CaptureStopped))),
             Some(capture) => match capture.try_write() {

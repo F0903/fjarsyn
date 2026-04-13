@@ -4,7 +4,7 @@ use iced::{
     widget::{button, column, container, row, text},
 };
 
-use super::super::{AppContext, Fjarsyn};
+use super::super::{Fjarsyn, ShellContext};
 use crate::ui::{
     message::{Message, NavigationMessage, Route, WindowControlMessage},
     screens::Screen,
@@ -121,7 +121,7 @@ impl Fjarsyn {
 
     pub(super) fn failed_settings_shell<'a>(
         &'a self,
-        ctx: AppContext<'a>,
+        ctx: ShellContext<'a>,
         titlebar_size: f32,
     ) -> Element<'a, Message> {
         let screen_content = self.active_screen.view(ctx);

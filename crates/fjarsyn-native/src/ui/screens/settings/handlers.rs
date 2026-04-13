@@ -6,13 +6,13 @@ use super::{
 };
 use crate::ui::{
     message::{ConfigMessage, Message, ScreenMessage},
-    shell::AppContextMut,
+    shell::ShellContextMut,
 };
 
 impl SettingsScreen {
     pub(crate) fn handle_message(
         &mut self,
-        ctx: &mut AppContextMut<'_>,
+        ctx: &mut ShellContextMut<'_>,
         message: Message,
     ) -> Task<Message> {
         let message = match message {
@@ -26,13 +26,17 @@ impl SettingsScreen {
 
     fn run_effects(
         &mut self,
-        ctx: &mut AppContextMut<'_>,
+        ctx: &mut ShellContextMut<'_>,
         effects: Vec<SettingsEffect>,
     ) -> Task<Message> {
         Task::batch(effects.into_iter().map(|effect| self.run_effect(ctx, effect)))
     }
 
-    fn run_effect(&mut self, ctx: &mut AppContextMut<'_>, effect: SettingsEffect) -> Task<Message> {
+    fn run_effect(
+        &mut self,
+        ctx: &mut ShellContextMut<'_>,
+        effect: SettingsEffect,
+    ) -> Task<Message> {
         match effect {
             SettingsEffect::NotifyError(message) => {
                 ctx.notify_error(message);

@@ -6,18 +6,14 @@ use fjarsyn_core::{
 use tokio::sync::mpsc;
 
 use super::{
-    ActiveScreen, AppContext, AppState, ContactsState, Fjarsyn, MediaState, MessagingState,
-    NetworkingState, Services, ServicesState, SessionState, ShellRuntime, ShellState, UIState,
+    ActiveScreen, AppState, ContactsState, Fjarsyn, MediaState, MessagingState, NetworkingState,
+    Services, ServicesState, SessionState, ShellContext, ShellRuntime, ShellState, UIState,
 };
 use crate::ui::subscription::EventReceiverRef;
 
 const REMOTE_SAMPLE_QUEUE_CAPACITY: usize = 8;
 
-pub(super) struct AppBootstrap {
-    pub(super) app: Fjarsyn,
-}
-
-impl AppBootstrap {
+impl Fjarsyn {
     pub(super) fn new(config: Config) -> Self {
         // Build the long-lived runtime channels up front so startup tasks can
         // wire services together without mutating the UI state shape.
@@ -80,11 +76,11 @@ impl AppBootstrap {
         };
 
         let active_screen =
-            ActiveScreen::Home(crate::ui::screens::home::HomeScreen::new(AppContext {
+            ActiveScreen::Home(crate::ui::screens::home::HomeScreen::new(ShellContext {
                 state: &ctx,
                 runtime: &runtime,
             }));
 
-        Self { app: Fjarsyn { ctx, runtime, active_screen } }
+        Self { ctx, runtime, active_screen }
     }
 }

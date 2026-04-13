@@ -15,7 +15,7 @@ use iced_fonts::lucide;
 
 use crate::ui::{
     message::{Message, NavigationMessage, Route},
-    shell::AppContext,
+    shell::ShellContext,
     theme,
 };
 
@@ -52,7 +52,7 @@ pub fn sidebar_button<'a>(
     nav_button
 }
 
-pub fn sidebar<'a>(ctx: AppContext<'a>, current_route: Route) -> Element<'a, Message> {
+pub fn sidebar<'a>(ctx: ShellContext<'a>, current_route: Route) -> Element<'a, Message> {
     let selected_peer_id = ctx.messaging.active_peer_id.as_deref();
     let conversations = build_sidebar_conversations(ctx, selected_peer_id);
     let contacts_available = ctx.can_use_contacts();
@@ -212,7 +212,7 @@ pub fn sidebar<'a>(ctx: AppContext<'a>, current_route: Route) -> Element<'a, Mes
     .into()
 }
 
-fn messaging_unavailable_text(ctx: AppContext<'_>) -> &'static str {
+fn messaging_unavailable_text(ctx: ShellContext<'_>) -> &'static str {
     if !ctx.accepts_user_requests() {
         "Messaging is unavailable while the app is shutting down"
     } else {
@@ -221,7 +221,7 @@ fn messaging_unavailable_text(ctx: AppContext<'_>) -> &'static str {
 }
 
 fn build_sidebar_conversations(
-    ctx: AppContext<'_>,
+    ctx: ShellContext<'_>,
     selected_peer_id: Option<&str>,
 ) -> Vec<SidebarConversation> {
     let contacts = ctx.contacts.contacts.as_slice();
@@ -258,7 +258,7 @@ fn build_sidebar_conversations(
 }
 
 fn build_sidebar_conversation(
-    ctx: AppContext<'_>,
+    ctx: ShellContext<'_>,
     contacts: &[Contact],
     peer_id: String,
     summary: Option<&ConversationSummary>,

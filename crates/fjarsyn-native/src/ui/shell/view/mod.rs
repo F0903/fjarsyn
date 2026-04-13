@@ -9,7 +9,7 @@ use iced::{
 
 use super::{APP_TITLE, Fjarsyn};
 use crate::ui::{
-    components, message::Message, screens::Screen, shell::AppContext, subscription, theme,
+    components, message::Message, screens::Screen, shell::ShellContext, subscription, theme,
 };
 
 impl Fjarsyn {
@@ -30,13 +30,13 @@ impl Fjarsyn {
         let shell_body = if matches!(self.ctx.lifecycle, fjarsyn_core::app::AppLifecycle::Failed) {
             match self.active_screen {
                 super::ActiveScreen::Settings(_) => {
-                    let ctx = AppContext { state: &self.ctx, runtime: &self.runtime };
+                    let ctx = ShellContext { state: &self.ctx, runtime: &self.runtime };
                     self.failed_settings_shell(ctx, titlebar_size)
                 }
                 _ => self.failed_shell(),
             }
         } else {
-            let ctx = AppContext { state: &self.ctx, runtime: &self.runtime };
+            let ctx = ShellContext { state: &self.ctx, runtime: &self.runtime };
             let screen_content = self.active_screen.view(ctx);
             let current_route = self.active_screen.get_route(ctx);
 

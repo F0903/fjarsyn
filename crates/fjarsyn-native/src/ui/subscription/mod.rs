@@ -8,14 +8,14 @@ pub use receiver::EventReceiverRef;
 
 use crate::ui::{
     message::{Message, WindowEventMessage},
-    shell::{AppContext, Fjarsyn},
+    shell::{Fjarsyn, ShellContext},
 };
 
 pub fn subscription(app: &Fjarsyn) -> Subscription<Message> {
     use crate::ui::screens::Screen;
 
     let screen_subscriptions =
-        app.active_screen.subscription(AppContext { state: &app.ctx, runtime: &app.runtime });
+        app.active_screen.subscription(ShellContext { state: &app.ctx, runtime: &app.runtime });
 
     let call_event_subscription =
         events::call_event_subscription(app.runtime.call_event_rx.clone());

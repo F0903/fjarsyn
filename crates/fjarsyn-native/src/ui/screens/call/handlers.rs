@@ -7,13 +7,13 @@ use super::{
 };
 use crate::ui::{
     message::{CallServiceMessage, Message, ScreenMessage},
-    shell::AppContextMut,
+    shell::ShellContextMut,
 };
 
 impl CallScreen {
     pub(crate) fn handle_update(
         &mut self,
-        ctx: &mut AppContextMut<'_>,
+        ctx: &mut ShellContextMut<'_>,
         message: Message,
     ) -> Task<Message> {
         match message {
@@ -39,13 +39,13 @@ impl CallScreen {
 
     fn run_effects(
         &mut self,
-        ctx: &mut AppContextMut<'_>,
+        ctx: &mut ShellContextMut<'_>,
         effects: Vec<CallEffect>,
     ) -> Task<Message> {
         Task::batch(effects.into_iter().map(|effect| self.run_effect(ctx, effect)))
     }
 
-    fn run_effect(&mut self, ctx: &mut AppContextMut<'_>, effect: CallEffect) -> Task<Message> {
+    fn run_effect(&mut self, ctx: &mut ShellContextMut<'_>, effect: CallEffect) -> Task<Message> {
         match effect {
             CallEffect::NotifyError(message) => {
                 ctx.notify_error(message);

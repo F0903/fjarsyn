@@ -11,12 +11,12 @@ use super::{MessagesMessage, MessagesScreen};
 use crate::ui::{
     fonts,
     message::{Message, ScreenMessage},
-    shell::AppContext,
+    shell::ShellContext,
     theme,
 };
 
 impl MessagesScreen {
-    pub fn render_view<'a>(&'a self, ctx: AppContext<'a>) -> Element<'a, Message> {
+    pub fn render_view<'a>(&'a self, ctx: ShellContext<'a>) -> Element<'a, Message> {
         container(self.view_conversation_detail(ctx))
             .width(Length::Fill)
             .height(Length::Fill)
@@ -24,7 +24,7 @@ impl MessagesScreen {
             .into()
     }
 
-    fn view_conversation_detail<'a>(&self, ctx: AppContext<'a>) -> Element<'a, Message> {
+    fn view_conversation_detail<'a>(&self, ctx: ShellContext<'a>) -> Element<'a, Message> {
         let Some(selected_peer_id) = ctx.messaging.active_peer_id.as_deref() else {
             return container(
                 text("Choose a conversation from the sidebar or start one from Home or Contacts.")
@@ -149,7 +149,7 @@ impl MessagesScreen {
     }
 }
 
-fn peer_display_name(ctx: AppContext<'_>, peer_id: &str) -> String {
+fn peer_display_name(ctx: ShellContext<'_>, peer_id: &str) -> String {
     fjarsyn_core::app::peer_display_name(
         &ctx.contacts.contacts,
         &ctx.networking.discovered_peers,

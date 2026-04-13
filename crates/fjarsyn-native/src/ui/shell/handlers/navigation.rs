@@ -3,7 +3,7 @@ use iced::Task;
 use crate::ui::{
     message::{Message, NavigationMessage, Route},
     screens::ScreenEntry,
-    shell::{ActiveScreen, AppContext, Fjarsyn, handlers::messaging},
+    shell::{ActiveScreen, Fjarsyn, ShellContext, handlers::messaging},
 };
 
 pub fn handle_navigation_msg(app: &mut Fjarsyn, message: NavigationMessage) -> Task<Message> {
@@ -13,7 +13,7 @@ pub fn handle_navigation_msg(app: &mut Fjarsyn, message: NavigationMessage) -> T
             let messaging_task = messaging::sync_active_conversation(app, selected_peer_id);
             app.active_screen = ActiveScreen::from_route(
                 route,
-                AppContext { state: &app.ctx, runtime: &app.runtime },
+                ShellContext { state: &app.ctx, runtime: &app.runtime },
             );
             app.ctx.ui.back_queue.clear();
             messaging_task
@@ -21,11 +21,12 @@ pub fn handle_navigation_msg(app: &mut Fjarsyn, message: NavigationMessage) -> T
         NavigationMessage::NavigateWithBack(route) => {
             let selected_peer_id = route_selected_peer_id(app, &route);
             let messaging_task = messaging::sync_active_conversation(app, selected_peer_id);
-            let current_route =
-                app.active_screen.get_route(AppContext { state: &app.ctx, runtime: &app.runtime });
+            let current_route = app
+                .active_screen
+                .get_route(ShellContext { state: &app.ctx, runtime: &app.runtime });
             let mut next_screen = ActiveScreen::from_route(
                 route,
-                AppContext { state: &app.ctx, runtime: &app.runtime },
+                ShellContext { state: &app.ctx, runtime: &app.runtime },
             );
             std::mem::swap(&mut app.active_screen, &mut next_screen);
             app.ctx

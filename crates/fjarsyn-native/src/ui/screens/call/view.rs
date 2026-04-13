@@ -16,7 +16,7 @@ use crate::ui::{
     components::{CpuFrameViewer, GpuFrameViewer},
     fonts,
     message::{Message, ScreenMessage},
-    shell::AppContext,
+    shell::ShellContext,
 };
 
 const LOCAL_PREVIEW_WIDTH: f32 = 320.0;
@@ -44,7 +44,7 @@ struct ControlSpec<'a> {
 }
 
 impl CallScreen {
-    pub fn render_view<'a>(&'a self, ctx: AppContext<'a>) -> Element<'a, Message> {
+    pub fn render_view<'a>(&'a self, ctx: ShellContext<'a>) -> Element<'a, Message> {
         let content = stack![
             self.view_remote_video(ctx),
             self.view_local_preview(ctx),
@@ -67,7 +67,7 @@ impl CallScreen {
             .into()
     }
 
-    fn view_remote_video(&self, ctx: AppContext<'_>) -> Element<'_, Message> {
+    fn view_remote_video(&self, ctx: ShellContext<'_>) -> Element<'_, Message> {
         match self.remote.latest_frame.clone() {
             Some(frame) => {
                 let viewer = self
@@ -84,7 +84,7 @@ impl CallScreen {
         }
     }
 
-    fn view_waiting_state(&self, ctx: AppContext<'_>) -> Element<'_, Message> {
+    fn view_waiting_state(&self, ctx: ShellContext<'_>) -> Element<'_, Message> {
         let remote_name = self.remote_name(ctx);
         let waiting_state = self.waiting_state_copy(ctx);
 
@@ -118,7 +118,7 @@ impl CallScreen {
         .into()
     }
 
-    fn view_local_preview(&self, ctx: AppContext<'_>) -> Element<'_, Message> {
+    fn view_local_preview(&self, ctx: ShellContext<'_>) -> Element<'_, Message> {
         if let Some(local_frame) = self.local.latest_frame.clone()
             && self.local.preview_visible
             && ctx.config.capture.enable_ui_preview
@@ -165,7 +165,7 @@ impl CallScreen {
         }
     }
 
-    fn view_controls(&self, ctx: AppContext<'_>) -> Element<'_, Message> {
+    fn view_controls(&self, ctx: ShellContext<'_>) -> Element<'_, Message> {
         let controls_row = self
             .control_specs(ctx)
             .into_iter()
@@ -212,7 +212,7 @@ impl CallScreen {
         }
     }
 
-    fn waiting_state_copy(&self, ctx: AppContext<'_>) -> WaitingStateCopy {
+    fn waiting_state_copy(&self, ctx: ShellContext<'_>) -> WaitingStateCopy {
         if ctx.session.call_connected {
             WaitingStateCopy {
                 title: "Connected",
@@ -228,7 +228,7 @@ impl CallScreen {
         }
     }
 
-    fn remote_name(&self, ctx: AppContext<'_>) -> String {
+    fn remote_name(&self, ctx: ShellContext<'_>) -> String {
         let peer_id = ctx.session.target_id.as_deref().or(ctx.session.incoming_call_id.as_deref());
 
         if let Some(peer_id) = peer_id
@@ -250,7 +250,7 @@ impl CallScreen {
             .unwrap_or_else(|| "Call in Progress".into())
     }
 
-    fn control_specs(&self, ctx: AppContext<'_>) -> Vec<ControlSpec<'static>> {
+    fn control_specs(&self, ctx: ShellContext<'_>) -> Vec<ControlSpec<'static>> {
         let capture_busy = ctx.media.capture_initializing || self.capture.pending_start;
         let mut controls = vec![];
 

@@ -9,8 +9,8 @@ mod workflows;
 pub mod handlers;
 
 pub use state::{
-    APP_TITLE, AppContext, AppContextMut, AppLifecycle, AppState, ContactsState, Fjarsyn,
-    MediaState, MessagingState, NetworkingState, Services, ServicesState, SessionState,
+    APP_TITLE, AppLifecycle, AppState, ContactsState, Fjarsyn, MediaState, MessagingState,
+    NetworkingState, Services, ServicesState, SessionState, ShellContext, ShellContextMut,
     ShellRuntime, ShellState, UIState, WindowInfo,
 };
 

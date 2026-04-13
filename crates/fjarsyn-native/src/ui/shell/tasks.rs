@@ -11,7 +11,7 @@ use fjarsyn_core::{
 use iced::{Task, window as iced_window};
 use tokio::sync::{RwLock, mpsc};
 
-use super::{Fjarsyn, bootstrap::AppBootstrap};
+use super::Fjarsyn;
 use crate::ui::message::Message;
 
 impl Fjarsyn {
@@ -46,8 +46,7 @@ impl Fjarsyn {
     }
 
     pub fn init(config: Config) -> (Self, Task<Message>) {
-        let bootstrap = AppBootstrap::new(config);
-        let app = bootstrap.app;
+        let app = Self::new(config);
         let startup_services = Self::startup_service_tasks(&app);
 
         (app, Task::batch([startup_services, Self::open_window_task(), Self::load_fonts_task()]))

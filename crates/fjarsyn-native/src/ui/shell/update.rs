@@ -1,6 +1,6 @@
 use iced::Task;
 
-use super::{AppContextMut, Fjarsyn, Screen, global};
+use super::{Fjarsyn, Screen, ShellContextMut, global};
 use crate::ui::message::Message;
 
 impl Fjarsyn {
@@ -9,7 +9,7 @@ impl Fjarsyn {
         // orchestration that the message implies.
         let screen_task = {
             let active_screen = &mut self.active_screen;
-            let mut ctx = AppContextMut { state: &mut self.ctx, runtime: &mut self.runtime };
+            let mut ctx = ShellContextMut { state: &mut self.ctx, runtime: &mut self.runtime };
             active_screen.update(&mut ctx, message.clone())
         };
         let global_task = global::handle_global_message(self, message);

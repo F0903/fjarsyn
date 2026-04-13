@@ -12,7 +12,7 @@ use crate::{
     ui::{
         message::Message,
         screens::{Screen, settings::tabs::SettingsTab},
-        shell::{AppContext, AppContextMut},
+        shell::{ShellContext, ShellContextMut},
     },
 };
 
@@ -52,15 +52,15 @@ impl SettingsScreen {
 }
 
 impl Screen for SettingsScreen {
-    fn subscription(&self, _ctx: AppContext<'_>) -> Subscription<Message> {
+    fn subscription(&self, _ctx: ShellContext<'_>) -> Subscription<Message> {
         Subscription::none()
     }
 
-    fn update(&mut self, ctx: &mut AppContextMut<'_>, message: Message) -> Task<Message> {
+    fn update(&mut self, ctx: &mut ShellContextMut<'_>, message: Message) -> Task<Message> {
         self.handle_message(ctx, message)
     }
 
-    fn view<'a>(&'a self, ctx: AppContext<'a>) -> iced::Element<'a, Message> {
+    fn view<'a>(&'a self, ctx: ShellContext<'a>) -> iced::Element<'a, Message> {
         self.render_view(ctx)
     }
 }

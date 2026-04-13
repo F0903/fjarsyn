@@ -9,7 +9,7 @@ use crate::ui::{
     fonts,
     message::{Message, ScreenMessage},
     screens::settings::tabs,
-    shell::AppContext,
+    shell::ShellContext,
     theme,
 };
 
@@ -59,7 +59,7 @@ impl SettingsScreen {
         .into()
     }
 
-    pub fn render_view<'a>(&'a self, ctx: AppContext<'a>) -> Element<'a, Message> {
+    pub fn render_view<'a>(&'a self, ctx: ShellContext<'a>) -> Element<'a, Message> {
         let title = text("Settings").size(32).font(fonts::outfit::BOLD).style(text::primary);
 
         let tab_content = scrollable(

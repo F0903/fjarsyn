@@ -12,12 +12,12 @@ use crate::ui::{
         CallActionMessage, CallTarget, ContactsServiceMessage, Message, NavigationMessage, Route,
         ScreenMessage,
     },
-    shell::AppContext,
+    shell::ShellContext,
     theme,
 };
 
 impl ContactsScreen {
-    pub fn render_view<'a>(&'a self, ctx: AppContext<'a>) -> Element<'a, Message> {
+    pub fn render_view<'a>(&'a self, ctx: ShellContext<'a>) -> Element<'a, Message> {
         let mut content = column![self.view_header()].spacing(30);
 
         if self.show_add_form {

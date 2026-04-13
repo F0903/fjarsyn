@@ -5,13 +5,13 @@ use iced::Task;
 use super::{MessagesScreen, workflow};
 use crate::ui::{
     message::{Message, MessagingServiceMessage, NotificationMessage, ScreenMessage},
-    shell::{AppContext, AppContextMut},
+    shell::{ShellContext, ShellContextMut},
 };
 
 impl MessagesScreen {
     pub(crate) fn handle_message(
         &mut self,
-        ctx: &mut AppContextMut<'_>,
+        ctx: &mut ShellContextMut<'_>,
         message: Message,
     ) -> Task<Message> {
         let effects = match message {
@@ -44,7 +44,7 @@ impl MessagesScreen {
     }
 }
 
-fn resolve_peer_address(ctx: AppContext<'_>, peer_id: &str) -> Result<SocketAddr, String> {
+fn resolve_peer_address(ctx: ShellContext<'_>, peer_id: &str) -> Result<SocketAddr, String> {
     if let Some(peer) = ctx.networking.discovered_peers.iter().find(|peer| peer.id == peer_id)
         && let Some(address) = peer.addresses.first()
     {

@@ -11,12 +11,12 @@ use crate::ui::{
         CallActionMessage, CallTarget, ContactsServiceMessage, Message, NavigationMessage, Route,
         ScreenMessage,
     },
-    shell::{AppContext, NetworkingState},
+    shell::{NetworkingState, ShellContext},
     theme,
 };
 
 impl HomeScreen {
-    pub fn render_view<'a>(&'a self, ctx: AppContext<'a>) -> Element<'a, Message> {
+    pub fn render_view<'a>(&'a self, ctx: ShellContext<'a>) -> Element<'a, Message> {
         let content = column![
             self.view_header(),
             self.view_manual_call(),
