@@ -2,7 +2,7 @@ use fjarsyn_core::media::pixel_format::PixelFormat;
 
 use super::{
     CallScreen,
-    workers::{CaptureWorker, CaptureWorkerConfig, EncoderWorker, EncoderWorkerConfig},
+    pipeline::{CaptureWorker, CaptureWorkerConfig, EncoderWorker, EncoderWorkerConfig},
 };
 use crate::ui::shell::ShellContextMut;
 

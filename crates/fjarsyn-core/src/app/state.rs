@@ -61,11 +61,11 @@ pub struct ServicesState {
 }
 
 pub struct AppState {
+    pub config: Config,
+    pub lifecycle: AppLifecycle,
+    pub services: ServicesState,
     pub networking: NetworkingState,
     pub session: SessionState,
     pub messaging: MessagingState,
     pub contacts: ContactsState,
-    pub config: Config,
-    pub services: ServicesState,
-    pub lifecycle: AppLifecycle,
 }

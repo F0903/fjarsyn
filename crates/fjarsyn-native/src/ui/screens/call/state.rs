@@ -6,7 +6,7 @@ use fjarsyn_core::{
 };
 use tokio::sync::RwLock;
 
-use super::workers::{CaptureWorker, DecoderWorker, EncoderWorker, LatestFrameReceiverRef};
+use super::pipeline::{CaptureWorker, DecoderWorker, EncoderWorker, LatestFrameReceiverRef};
 use crate::ui::subscription::EventReceiverRef;
 
 #[derive(Clone, Debug)]
@@ -74,7 +74,7 @@ impl RemoteVideoState {
         Self {
             latest_frame: None,
             decoder: Some(DecoderWorker::start(
-                super::workers::DecoderWorkerConfig { transcoding_type, pixel_format },
+                super::pipeline::DecoderWorkerConfig { transcoding_type, pixel_format },
                 packet_receiver,
             )),
             stream_status: RemoteStreamStatus::Unknown,
