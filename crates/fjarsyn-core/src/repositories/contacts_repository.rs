@@ -29,8 +29,9 @@ impl ContactsStore for ContactsRepository {
         peer_id: String,
         name: String,
         address: Option<String>,
+        trusted_public_key: Option<String>,
     ) -> Result<i64, Error> {
-        ContactModel::create(&self.db, peer_id, name, address).await
+        ContactModel::create(&self.db, peer_id, name, address, trusted_public_key).await
     }
 
     async fn delete(&self, id: i64) -> Result<(), Error> {
@@ -43,7 +44,8 @@ impl ContactsStore for ContactsRepository {
         peer_id: String,
         name: String,
         address: Option<String>,
+        trusted_public_key: Option<String>,
     ) -> Result<(), Error> {
-        ContactModel::update(&self.db, id, peer_id, name, address).await
+        ContactModel::update(&self.db, id, peer_id, name, address, trusted_public_key).await
     }
 }

@@ -37,12 +37,13 @@ impl ContactsStore for FakeContactsStore {
         peer_id: String,
         name: String,
         address: Option<String>,
+        trusted_public_key: Option<String>,
     ) -> Result<i64, crate::Error> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.contacts
-            .lock()
-            .unwrap()
-            .insert(0, ContactModel { id, peer_id, name, address, created_at: Utc::now() });
+        self.contacts.lock().unwrap().insert(
+            0,
+            ContactModel { id, peer_id, name, address, trusted_public_key, created_at: Utc::now() },
+        );
         Ok(id)
     }
 
@@ -57,6 +58,7 @@ impl ContactsStore for FakeContactsStore {
         peer_id: String,
         name: String,
         address: Option<String>,
+        trusted_public_key: Option<String>,
     ) -> Result<(), crate::Error> {
         if let Some(contact) =
             self.contacts.lock().unwrap().iter_mut().find(|contact| contact.id == id)
@@ -64,6 +66,7 @@ impl ContactsStore for FakeContactsStore {
             contact.peer_id = peer_id;
             contact.name = name;
             contact.address = address;
+            contact.trusted_public_key = trusted_public_key;
         }
         Ok(())
     }
@@ -75,6 +78,7 @@ fn model(id: i64, peer_id: &str, name: &str) -> ContactModel {
         peer_id: peer_id.to_string(),
         name: name.to_string(),
         address: Some("127.0.0.1:9000".into()),
+        trusted_public_key: Some(format!("trusted-key-{peer_id}")),
         created_at: Utc::now(),
     }
 }
@@ -96,12 +100,14 @@ async fn refresh_uses_fake_store() {
                 peer_id: "peer-b".into(),
                 name: "B".into(),
                 address: Some("127.0.0.1:9000".into()),
+                trusted_public_key: Some("trusted-key-peer-b".into()),
             },
             Contact {
                 id: 1,
                 peer_id: "peer-a".into(),
                 name: "A".into(),
                 address: Some("127.0.0.1:9000".into()),
+                trusted_public_key: Some("trusted-key-peer-a".into()),
             },
         ]
     );
@@ -112,7 +118,7 @@ async fn create_updates_cache_without_database_pool() {
     let service = ContactsService::new(Arc::new(FakeContactsStore::default()));
 
     let id = service
-        .create("peer-new".into(), "New Contact".into(), Some("10.0.0.1:9999".into()))
+        .create("peer-new".into(), "New Contact".into(), Some("10.0.0.1:9999".into()), None)
         .await
         .unwrap();
 

@@ -15,6 +15,11 @@ pub enum ContactsMessage {
     NameChanged(String),
     PeerIdChanged(String),
     AddressChanged(String),
+    TrustedPublicKeyChanged(String),
+    StartTrustedPublicKeyEdit { id: i64, current_key: Option<String> },
+    ExistingTrustedPublicKeyChanged(String),
+    SaveTrustedPublicKeyEdit,
+    CancelTrustedPublicKeyEdit,
     AddNewContact,
     ToggleAddForm,
 }
@@ -24,6 +29,9 @@ pub struct ContactsScreen {
     pub(crate) new_contact_name: String,
     pub(crate) new_contact_peer_id: String,
     pub(crate) new_contact_address: String,
+    pub(crate) new_contact_trusted_public_key: String,
+    pub(crate) editing_contact_id: Option<i64>,
+    pub(crate) editing_trusted_public_key: String,
     pub(crate) show_add_form: bool,
 }
 
@@ -33,6 +41,9 @@ impl ContactsScreen {
             new_contact_name: String::new(),
             new_contact_peer_id: String::new(),
             new_contact_address: String::new(),
+            new_contact_trusted_public_key: String::new(),
+            editing_contact_id: None,
+            editing_trusted_public_key: String::new(),
             show_add_form: false,
         }
     }

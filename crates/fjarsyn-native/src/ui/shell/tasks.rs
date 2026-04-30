@@ -20,6 +20,7 @@ impl Fjarsyn {
         let call_event_tx = app.runtime.call_event_tx.clone();
         let max_depacket_latency = app.ctx.config.network.max_depacket_latency;
         let peer_id = app.ctx.config.identity.peer_id.clone();
+        let identity_keypair = app.ctx.config.identity.signing_key.clone();
 
         Task::batch([
             Task::future(async {
@@ -33,6 +34,7 @@ impl Fjarsyn {
                 call_event_tx,
                 max_depacket_latency,
                 peer_id,
+                identity_keypair,
             ),
         ])
     }
@@ -57,10 +59,16 @@ impl Fjarsyn {
         call_event_tx: mpsc::Sender<CallEvent>,
         max_depacket_latency: u16,
         peer_id: Option<String>,
+        identity_keypair: Option<fjarsyn_core::networking::signaling::auth::StoredIdentityKeypair>,
     ) -> Task<Message> {
         Task::future(async move {
-            let config =
-                CallServiceConfig { frame_packet_tx, call_event_tx, max_depacket_latency, peer_id };
+            let config = CallServiceConfig {
+                frame_packet_tx,
+                call_event_tx,
+                max_depacket_latency,
+                peer_id,
+                identity_keypair,
+            };
             let res = CallService::init(config).await;
             use crate::ui::message::CallServiceMessage;
             Message::CallService(CallServiceMessage::CallServiceInitialized(

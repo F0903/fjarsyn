@@ -5,11 +5,14 @@ use tokio::{
 };
 use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Message};
 
-use super::transport::send_signaling_message;
+use super::transport::{
+    SignalingAuthContext, send_signaling_message, verify_incoming_signaling_message,
+};
 use crate::networking::protocol::SignalingMessage;
 
 pub(super) async fn manage_dialer_connection<S>(
     mut ws_stream: WebSocketStream<S>,
+    auth: SignalingAuthContext,
     mut to_peer_rx: mpsc::Receiver<SignalingMessage>,
     to_webrtc_tx: mpsc::Sender<SignalingMessage>,
 ) where
@@ -20,7 +23,7 @@ pub(super) async fn manage_dialer_connection<S>(
             msg = to_peer_rx.recv() => {
                 match msg {
                     Some(message) => {
-                        if send_signaling_message(&mut ws_stream, &message).await.is_err() {
+                        if send_signaling_message(&mut ws_stream, &auth, &message).await.is_err() {
                             break;
                         }
                     }
@@ -34,11 +37,15 @@ pub(super) async fn manage_dialer_connection<S>(
             msg = ws_stream.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(signaling_message) =
-                            serde_json::from_str::<SignalingMessage>(&text)
-                            && to_webrtc_tx.send(signaling_message).await.is_err()
-                        {
-                            break;
+                        match verify_incoming_signaling_message(&auth, &text) {
+                            Ok(signaling_message) => {
+                                if to_webrtc_tx.send(signaling_message).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                tracing::warn!("Rejected signed signaling message on dialer: {}", err);
+                            }
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => {

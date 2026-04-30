@@ -122,6 +122,7 @@ impl HomeScreen {
                                                 .addresses
                                                 .first()
                                                 .map(|ip| format!("{}:{}", ip, peer.port)),
+                                            trusted_public_key: None,
                                         }),
                                         true
                                     ),

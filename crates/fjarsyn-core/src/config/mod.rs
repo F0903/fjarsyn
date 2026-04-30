@@ -11,6 +11,7 @@ use crate::{
         transcoding::FFmpegTranscodeType,
         video::{CaptureFramerate, TargetResolution},
     },
+    networking::signaling::auth::{LocalPeerIdentity, StoredIdentityKeypair},
     utils::paths::CONFIG_DIR,
 };
 
@@ -32,6 +33,7 @@ impl Default for CaptureConfig {
 #[serde(default)]
 pub struct IdentityConfig {
     pub peer_id: Option<String>,
+    pub signing_key: Option<StoredIdentityKeypair>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -136,7 +138,7 @@ impl From<LegacyConfig> for Config {
 
         let mut config = Self {
             app: AppConfig { power_pref: PowerPref::Low },
-            identity: IdentityConfig { peer_id: legacy.peer_id },
+            identity: IdentityConfig { peer_id: legacy.peer_id, signing_key: None },
             video: VideoConfig {
                 target_bitrate: legacy.target_bitrate,
                 target_framerate: legacy.target_framerate,
@@ -156,6 +158,15 @@ impl From<LegacyConfig> for Config {
 }
 
 impl Config {
+    fn ensure_signing_key(&mut self) -> bool {
+        if self.identity.signing_key.is_some() {
+            return false;
+        }
+
+        self.identity.signing_key = Some(LocalPeerIdentity::generate().to_stored());
+        true
+    }
+
     pub fn normalized(mut self) -> Self {
         self.network.normalize();
         self
@@ -173,15 +184,20 @@ impl Config {
         if path.exists() {
             let content = fs::read(&path).map_err(ConfigError::Read)?;
             let persisted: PersistedConfig = serde_json::from_slice(&content)?;
-            let config = match persisted {
+            let mut config = match persisted {
                 PersistedConfig::Current(config) => config,
                 PersistedConfig::Legacy(config) => config.into(),
-            };
+            }
+            .normalized();
+            if config.ensure_signing_key() {
+                config.save().map_err(ConfigError::Save)?;
+            }
             return Ok(config.normalized());
         }
 
         tracing::info!("No config file found, creating default config.");
-        let default = Self::default().normalized();
+        let mut default = Self::default().normalized();
+        default.ensure_signing_key();
         default.save().map_err(ConfigError::Save)?;
         Ok(default)
     }

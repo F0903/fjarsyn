@@ -1,4 +1,4 @@
-use crate::networking::signaling_error::SignalingError;
+use crate::networking::{signaling::auth::SignalingAuthError, signaling_error::SignalingError};
 
 pub type WebRTCResult<T> = Result<T, WebRTCError>;
 
@@ -16,6 +16,8 @@ pub enum WebRTCError {
     DeserializeError(serde_json::Error),
     #[error("Signaling error: {0}")]
     SignalingError(#[from] SignalingError),
+    #[error("Signaling auth error: {0}")]
+    SignalingAuthError(#[from] SignalingAuthError),
     #[error("Media error: {0}")]
     MediaError(#[from] webrtc::media::Error),
     #[error("Write RTP error: {0}")]

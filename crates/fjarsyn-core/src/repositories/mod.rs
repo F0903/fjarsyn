@@ -17,6 +17,7 @@ pub trait ContactsStore: Send + Sync {
         peer_id: String,
         name: String,
         address: Option<String>,
+        trusted_public_key: Option<String>,
     ) -> Result<i64, crate::Error>;
     async fn delete(&self, id: i64) -> Result<(), crate::Error>;
     async fn update(
@@ -25,6 +26,7 @@ pub trait ContactsStore: Send + Sync {
         peer_id: String,
         name: String,
         address: Option<String>,
+        trusted_public_key: Option<String>,
     ) -> Result<(), crate::Error>;
 }
 

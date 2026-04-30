@@ -10,6 +10,17 @@ use super::{ResourcePool, Result, WgcCaptureProvider};
 use crate::{capture_providers::windows::WindowsCaptureError, media::frame::GpuImportHandle};
 
 impl WgcCaptureProvider {
+    pub(super) fn reset_resource_pool(pool_arc: &Arc<std::sync::RwLock<ResourcePool>>) {
+        let mut pool = pool_arc.write().unwrap();
+        pool.shared_textures.clear();
+        pool.shared_handles.clear();
+        pool.staging_textures.clear();
+        pool.width = 0;
+        pool.height = 0;
+        pool.frame_count = 0;
+        pool.last_emitted_timestamp_100ns = None;
+    }
+
     pub(super) fn ensure_resource_pool<'a>(
         device: &'a ID3D11Device,
         pool_arc: &'a Arc<std::sync::RwLock<ResourcePool>>,
@@ -104,5 +115,29 @@ impl WgcCaptureProvider {
         }
 
         Ok(pool)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_resource_pool_clears_size_and_counters() {
+        let pool = Arc::new(std::sync::RwLock::new(ResourcePool {
+            width: 1920,
+            height: 1080,
+            frame_count: 42,
+            last_emitted_timestamp_100ns: Some(100),
+            ..Default::default()
+        }));
+
+        WgcCaptureProvider::reset_resource_pool(&pool);
+
+        let pool = pool.read().unwrap();
+        assert_eq!(pool.width, 0);
+        assert_eq!(pool.height, 0);
+        assert_eq!(pool.frame_count, 0);
+        assert!(pool.last_emitted_timestamp_100ns.is_none());
     }
 }

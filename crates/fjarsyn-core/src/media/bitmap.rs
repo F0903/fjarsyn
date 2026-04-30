@@ -3,13 +3,15 @@ use crate::media::pixel_format::PixelFormat;
 #[inline]
 pub fn ensure_rgba8(bitmap: &mut [u8], src_format: &mut PixelFormat) {
     match src_format {
-        PixelFormat::RGBA16 => (), // TODO: Support RGBA16 conversion
-        PixelFormat::RGBA10 => (), // TODO: Support RGBA10 conversion
         PixelFormat::RGBA8 => (),
-        PixelFormat::BGRA8 => bgra8_to_rgba8(bitmap),
-        PixelFormat::NV12 => (), // TODO: Support NV12 conversion
+        PixelFormat::BGRA8 => {
+            bgra8_to_rgba8(bitmap);
+            *src_format = PixelFormat::RGBA8;
+        }
+        PixelFormat::RGBA16 | PixelFormat::RGBA10 | PixelFormat::NV12 => {
+            tracing::debug!("Skipping unsupported software preview conversion for {src_format:?}");
+        }
     };
-    *src_format = PixelFormat::RGBA8;
 }
 
 // TODO: SIMD
@@ -45,4 +47,30 @@ fn swap_first_channel(bitmap: &mut [u8]) {
 #[inline]
 pub fn bgra8_to_rgba8(bgra8: &mut [u8]) {
     swap_first_channel(bgra8);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bgra8_is_converted_and_relabelled_as_rgba8() {
+        let mut pixels = [10, 20, 30, 255, 40, 50, 60, 255];
+        let mut format = PixelFormat::BGRA8;
+
+        ensure_rgba8(&mut pixels, &mut format);
+
+        assert_eq!(format, PixelFormat::RGBA8);
+        assert_eq!(pixels, [30, 20, 10, 255, 60, 50, 40, 255]);
+    }
+
+    #[test]
+    fn unsupported_formats_are_not_relabelled_as_rgba8() {
+        let mut pixels = [0; 8];
+        let mut format = PixelFormat::NV12;
+
+        ensure_rgba8(&mut pixels, &mut format);
+
+        assert_eq!(format, PixelFormat::NV12);
+    }
 }

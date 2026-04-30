@@ -107,6 +107,26 @@ impl ContactsScreen {
                     ]
                     .spacing(5)
                     .width(Length::FillPortion(1)),
+                ]
+                .spacing(15)
+                .align_y(Alignment::Start),
+                row![
+                    column![
+                        text("Trusted Public Key").size(12).style(text::secondary),
+                        text_input(
+                            "Paste peer signaling public key",
+                            &self.new_contact_trusted_public_key
+                        )
+                        .on_input(|val| {
+                            Message::Screen(ScreenMessage::Contacts(
+                                ContactsMessage::TrustedPublicKeyChanged(val),
+                            ))
+                        })
+                        .padding(10)
+                        .style(theme::text_input_style),
+                    ]
+                    .spacing(5)
+                    .width(Length::Fill),
                     container(
                         button(row![lucide::user_plus().size(16), text("Save")].spacing(10))
                             .on_press(Message::Screen(ScreenMessage::Contacts(
@@ -129,7 +149,7 @@ impl ContactsScreen {
         .into()
     }
 
-    fn view_contacts_list<'a>(&self, contacts: &[Contact]) -> Element<'a, Message> {
+    fn view_contacts_list<'a>(&'a self, contacts: &[Contact]) -> Element<'a, Message> {
         let mut list = column![text("Saved Contacts").size(18)].spacing(15);
 
         if contacts.is_empty() {
@@ -144,6 +164,7 @@ impl ContactsScreen {
                 let contact_id = contact.id;
                 let contact_peer_id = contact.peer_id.clone();
                 let contact_name = contact.name.clone();
+                let trusted_key_editor = self.view_trusted_key_editor(contact);
 
                 let contact_card = container(
                     row![
@@ -155,6 +176,7 @@ impl ContactsScreen {
                             text(format!("ID: {}", contact_peer_id))
                                 .size(12)
                                 .style(text::secondary),
+                            trusted_key_editor,
                         ]
                         .spacing(2)
                         .width(Length::Fill),
@@ -192,4 +214,53 @@ impl ContactsScreen {
 
         list.into()
     }
+
+    fn view_trusted_key_editor<'a>(&'a self, contact: &Contact) -> Element<'a, Message> {
+        if self.editing_contact_id == Some(contact.id) {
+            return row![
+                text_input("Paste peer signaling public key", &self.editing_trusted_public_key)
+                    .on_input(|val| {
+                        Message::Screen(ScreenMessage::Contacts(
+                            ContactsMessage::ExistingTrustedPublicKeyChanged(val),
+                        ))
+                    })
+                    .padding(8)
+                    .style(theme::text_input_style)
+                    .width(Length::Fill),
+                button(row![lucide::save().size(14), text("Save").size(13)])
+                    .on_press(Message::Screen(ScreenMessage::Contacts(
+                        ContactsMessage::SaveTrustedPublicKeyEdit,
+                    )))
+                    .padding(8)
+                    .style(|theme, status| theme::button_style(theme, status, true)),
+                button(lucide::x().size(14))
+                    .on_press(Message::Screen(ScreenMessage::Contacts(
+                        ContactsMessage::CancelTrustedPublicKeyEdit,
+                    )))
+                    .padding(8)
+                    .style(|theme, status| theme::button_style(theme, status, false)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into();
+        }
+
+        let current_key = contact.trusted_public_key.clone();
+        row![
+            text(trusted_key_status(current_key.as_deref())).size(12).style(text::secondary),
+            button(text("Edit Key").size(12))
+                .on_press(Message::Screen(ScreenMessage::Contacts(
+                    ContactsMessage::StartTrustedPublicKeyEdit { id: contact.id, current_key },
+                )))
+                .padding([4, 8])
+                .style(|theme, status| theme::button_style(theme, status, false)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
+    }
+}
+
+fn trusted_key_status(trusted_public_key: Option<&str>) -> &'static str {
+    if trusted_public_key.is_some() { "trusted key saved" } else { "missing trusted key" }
 }

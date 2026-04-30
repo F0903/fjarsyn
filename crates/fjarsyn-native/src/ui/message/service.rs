@@ -28,12 +28,24 @@ pub enum CallServiceMessage {
 pub enum ContactsServiceMessage {
     LoadContacts,
     ContactsLoaded(Result<Arc<Vec<Contact>>, Arc<fjarsyn_core::Error>>),
-    SaveContact { peer_id: String, name: String, address: Option<String> },
+    SaveContact {
+        peer_id: String,
+        name: String,
+        address: Option<String>,
+        trusted_public_key: Option<String>,
+    },
     DeleteContact(i64),
     ContactSaved(Result<Arc<Vec<Contact>>, Arc<fjarsyn_core::Error>>),
     ContactDeleted(Result<Arc<Vec<Contact>>, Arc<fjarsyn_core::Error>>),
     ContactUpdated(Result<Arc<Vec<Contact>>, Arc<fjarsyn_core::Error>>),
-    UpdateContactAddress { id: i64, new_address: String },
+    UpdateContactAddress {
+        id: i64,
+        new_address: String,
+    },
+    UpdateContactTrustedPublicKey {
+        id: i64,
+        trusted_public_key: String,
+    },
 }
 
 #[derive(Debug, Clone)]

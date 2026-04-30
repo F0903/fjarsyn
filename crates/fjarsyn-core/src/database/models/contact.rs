@@ -7,13 +7,14 @@ define_model!(
         peer_id: String,
         name: String,
         address: Option<String>,
+        trusted_public_key: Option<String>,
     },
     create: {
-        sql: "INSERT INTO contacts (peer_id, name, address) VALUES (?, ?, ?)",
-        params: [peer_id, name, address]
+        sql: "INSERT INTO contacts (peer_id, name, address, trusted_public_key) VALUES (?, ?, ?, ?)",
+        params: [peer_id, name, address, trusted_public_key]
     },
     update: {
-        sql: "UPDATE contacts SET peer_id = ?, name = ?, address = ? WHERE id = ?",
-        params: [peer_id, name, address]
+        sql: "UPDATE contacts SET peer_id = ?, name = ?, address = ?, trusted_public_key = ? WHERE id = ?",
+        params: [peer_id, name, address, trusted_public_key]
     }
 );

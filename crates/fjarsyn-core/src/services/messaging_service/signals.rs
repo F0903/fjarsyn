@@ -1,23 +1,28 @@
-use chrono::Utc;
-use tokio::sync::mpsc;
-
-use super::{
-    ConversationCache, DirectRouteMap, MessagingError, MessagingEvent, MessagingService,
-    SummaryCache,
+use std::{
+    collections::HashMap,
+    sync::{Arc, RwLock},
 };
+
+use chrono::Utc;
+use tokio::sync::{Mutex, mpsc};
+
+use super::{MessagingError, MessagingEvent, MessagingService};
 use crate::{
-    communication::messaging::ConversationMessage,
-    networking::{protocol::ChatReceiptPayload, webrtc::MessagingSignalEvent},
+    communication::messaging::{ConversationMap, ConversationMessage, ConversationSummary},
+    networking::{
+        protocol::{ChatReceiptPayload, SignalingMessage},
+        webrtc::{MessagingSignalEvent, WebRTC},
+    },
     repositories::MessagesStore,
 };
 
 impl MessagingService {
     pub(super) fn spawn_signal_task(
-        repository: std::sync::Arc<dyn MessagesStore>,
-        webrtc: std::sync::Arc<crate::networking::webrtc::WebRTC>,
-        conversations: ConversationCache,
-        summaries: SummaryCache,
-        direct_routes: DirectRouteMap,
+        repository: Arc<dyn MessagesStore>,
+        webrtc: Arc<WebRTC>,
+        conversations: Arc<RwLock<ConversationMap>>,
+        summaries: Arc<RwLock<Arc<Vec<ConversationSummary>>>>,
+        direct_routes: Arc<Mutex<HashMap<String, mpsc::Sender<SignalingMessage>>>>,
         event_tx: mpsc::Sender<MessagingEvent>,
         mut signal_rx: mpsc::Receiver<MessagingSignalEvent>,
     ) -> tokio::task::JoinHandle<()> {
@@ -41,11 +46,11 @@ impl MessagingService {
     }
 
     async fn handle_signal_event(
-        repository: &std::sync::Arc<dyn MessagesStore>,
-        webrtc: &std::sync::Arc<crate::networking::webrtc::WebRTC>,
-        conversations: &ConversationCache,
-        summaries: &SummaryCache,
-        direct_routes: &DirectRouteMap,
+        repository: &Arc<dyn MessagesStore>,
+        webrtc: &Arc<WebRTC>,
+        conversations: &Arc<RwLock<ConversationMap>>,
+        summaries: &Arc<RwLock<Arc<Vec<ConversationSummary>>>>,
+        direct_routes: &Arc<Mutex<HashMap<String, mpsc::Sender<SignalingMessage>>>>,
         event_tx: &mpsc::Sender<MessagingEvent>,
         event: MessagingSignalEvent,
     ) -> Result<(), MessagingError> {

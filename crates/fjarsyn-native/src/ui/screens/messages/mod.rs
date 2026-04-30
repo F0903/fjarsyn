@@ -17,14 +17,14 @@ pub enum MessagesMessage {
     ClearDraft(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MessagesScreen {
     pub(crate) draft: String,
 }
 
 impl MessagesScreen {
     pub fn new() -> Self {
-        Self { draft: String::new() }
+        Self::default()
     }
 }
 

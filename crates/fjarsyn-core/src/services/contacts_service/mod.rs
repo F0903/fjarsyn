@@ -8,6 +8,7 @@ pub struct Contact {
     pub peer_id: String,
     pub name: String,
     pub address: Option<String>,
+    pub trusted_public_key: Option<String>,
 }
 
 #[derive(Clone)]
@@ -27,10 +28,7 @@ impl ContactsService {
 
     pub async fn refresh(&self) -> Result<(), Arc<Error>> {
         let models = self.repository.list().await.map_err(Arc::new)?;
-        let contacts = models
-            .into_iter()
-            .map(|m| Contact { id: m.id, peer_id: m.peer_id, name: m.name, address: m.address })
-            .collect();
+        let contacts = models.into_iter().map(Self::contact_from_model).collect();
         let mut lock = self.cache.write().unwrap();
         *lock = Arc::new(contacts);
         Ok(())
@@ -41,13 +39,17 @@ impl ContactsService {
         peer_id: String,
         name: String,
         address: Option<String>,
+        trusted_public_key: Option<String>,
     ) -> Result<i64, Arc<Error>> {
-        let id = self.repository.create(peer_id, name, address).await.map_err(Arc::new)?;
+        let id = self
+            .repository
+            .create(peer_id, name, address, trusted_public_key)
+            .await
+            .map_err(Arc::new)?;
         let contact_model = self.repository.get_by_id(id).await.ok().flatten();
 
         if let Some(m) = contact_model {
-            let contact =
-                Contact { id: m.id, peer_id: m.peer_id, name: m.name, address: m.address };
+            let contact = Self::contact_from_model(m);
             let mut lock = self.cache.write().unwrap();
             let mut new_vec = (**lock).clone();
             new_vec.insert(0, contact);
@@ -78,9 +80,10 @@ impl ContactsService {
         peer_id: String,
         name: String,
         address: Option<String>,
+        trusted_public_key: Option<String>,
     ) -> Result<(), Arc<Error>> {
         self.repository
-            .update(id, peer_id.clone(), name.clone(), address.clone())
+            .update(id, peer_id.clone(), name.clone(), address.clone(), trusted_public_key.clone())
             .await
             .map_err(Arc::new)?;
 
@@ -91,6 +94,7 @@ impl ContactsService {
                 contact.peer_id = peer_id;
                 contact.name = name;
                 contact.address = address;
+                contact.trusted_public_key = trusted_public_key;
                 *lock = Arc::new(new_vec);
                 false
             } else {
@@ -103,6 +107,16 @@ impl ContactsService {
         }
 
         Ok(())
+    }
+
+    fn contact_from_model(model: crate::database::ContactModel) -> Contact {
+        Contact {
+            id: model.id,
+            peer_id: model.peer_id,
+            name: model.name,
+            address: model.address,
+            trusted_public_key: model.trusted_public_key,
+        }
     }
 }
 

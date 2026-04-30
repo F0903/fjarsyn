@@ -32,9 +32,90 @@ struct CaptureOptions {
     cpu_readback_enabled: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CaptureSessionSettings {
+    record_cursor: bool,
+    border_indicator: bool,
+    min_update_interval: std::time::Duration,
+}
+
+#[derive(Debug, Clone)]
+struct SendableWgcDevice(IDirect3DDevice);
+
+// WGC's free-threaded frame pool invokes callbacks off the UI thread. The
+// provider already opts into Send/Sync for the capture stack; these handle
+// wrappers keep that unsafe boundary attached to the specific WinRT COM values
+// that recovery shares across threads.
+unsafe impl Send for SendableWgcDevice {}
+unsafe impl Sync for SendableWgcDevice {}
+
+impl SendableWgcDevice {
+    fn handle(&self) -> IDirect3DDevice {
+        self.0.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WgcDeviceState {
+    inner: Arc<RwLock<SendableWgcDevice>>,
+}
+
+impl WgcDeviceState {
+    fn new(device: IDirect3DDevice) -> Self {
+        Self { inner: Arc::new(RwLock::new(SendableWgcDevice(device))) }
+    }
+
+    fn get(&self) -> IDirect3DDevice {
+        self.inner.read().unwrap().handle()
+    }
+
+    fn replace(&self, device: IDirect3DDevice) {
+        *self.inner.write().unwrap() = SendableWgcDevice(device);
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SendableWgcSession(GraphicsCaptureSession);
+
+unsafe impl Send for SendableWgcSession {}
+unsafe impl Sync for SendableWgcSession {}
+
+impl SendableWgcSession {
+    fn handle(&self) -> GraphicsCaptureSession {
+        self.0.clone()
+    }
+
+    fn into_inner(self) -> GraphicsCaptureSession {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WgcSessionState {
+    inner: Arc<RwLock<Option<SendableWgcSession>>>,
+}
+
+impl WgcSessionState {
+    fn new() -> Self {
+        Self { inner: Arc::new(RwLock::new(None)) }
+    }
+
+    fn get(&self) -> Option<GraphicsCaptureSession> {
+        self.inner.read().unwrap().as_ref().map(SendableWgcSession::handle)
+    }
+
+    fn replace(&self, session: GraphicsCaptureSession) {
+        *self.inner.write().unwrap() = Some(SendableWgcSession(session));
+    }
+
+    fn take(&self) -> Option<GraphicsCaptureSession> {
+        self.inner.write().unwrap().take().map(SendableWgcSession::into_inner)
+    }
+}
+
 #[derive(Debug)]
 pub struct WgcCaptureProvider {
-    device: IDirect3DDevice,
+    device: WgcDeviceState,
     capture_item: Option<GraphicsCaptureItem>,
     pixel_format: PixelFormat,
     resource_state: Arc<RwLock<ResourcePool>>,
@@ -42,7 +123,7 @@ pub struct WgcCaptureProvider {
     buffer_pool: BufferPool,
 
     frame_pool: Option<Direct3D11CaptureFramePool>,
-    session: Option<GraphicsCaptureSession>,
+    session: WgcSessionState,
     stream_tokens: Vec<windows::Foundation::EventRegistrationToken>,
     capturing: bool,
 
@@ -64,14 +145,14 @@ impl WgcCaptureProvider {
         cpu_readback_enabled: bool,
     ) -> Self {
         Self {
-            device,
+            device: WgcDeviceState::new(device),
             capture_item: None,
             pixel_format,
             resource_state: Arc::new(RwLock::new(ResourcePool::default())),
             capture_options: Arc::new(RwLock::new(CaptureOptions { cpu_readback_enabled })),
             buffer_pool: BufferPool::init(Self::BUFFER_SIZE, Self::BUFFER_MAX_COUNT),
             frame_pool: None,
-            session: None,
+            session: WgcSessionState::new(),
             stream_tokens: Vec::new(),
             capturing: false,
             record_cursor,

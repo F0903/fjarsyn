@@ -33,17 +33,12 @@ pub struct ContactsState {
     pub contacts: Arc<Vec<Contact>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ServicePhase {
+    #[default]
     Pending,
     Ready,
     Failed,
-}
-
-impl Default for ServicePhase {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 impl ServicePhase {

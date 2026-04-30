@@ -1,10 +1,119 @@
+use std::sync::{Arc, Mutex, RwLock};
+
 use windows::{
     Foundation::TypedEventHandler,
-    Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem},
+    Graphics::{
+        Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession},
+        SizeInt32,
+    },
 };
 
-use super::{Result, WgcCaptureProvider};
-use crate::capture_providers::{CaptureFramerate, CaptureProvider};
+use super::{
+    super::WindowsCaptureError, CaptureSessionSettings, ResourcePool, Result, WgcCaptureProvider,
+    WgcDeviceState, WgcSessionState,
+};
+use crate::{
+    capture_providers::{
+        CaptureFramerate, CaptureProvider,
+        windows::d3d11_utils::{create_d3d_device, native_to_winrt_d3d11device},
+    },
+    media::pixel_format::PixelFormat,
+};
+
+impl WgcDeviceState {
+    fn resize_frame_pool(
+        &self,
+        frame_pool: &Direct3D11CaptureFramePool,
+        pixel_format: PixelFormat,
+        size: SizeInt32,
+    ) -> windows_core::Result<()> {
+        let device = self.get();
+        frame_pool.Recreate(
+            &device,
+            pixel_format.to_directx_pixel_format(),
+            WgcCaptureProvider::WGC_FRAME_BUFFERS,
+            size,
+        )
+    }
+
+    fn rebuild_capture_stack(
+        &self,
+        frame_pool: &Direct3D11CaptureFramePool,
+        capture_item: &GraphicsCaptureItem,
+        active_session: &WgcSessionState,
+        pixel_format: PixelFormat,
+        size: SizeInt32,
+        settings: CaptureSessionSettings,
+    ) -> Result<()> {
+        let d3d_device =
+            create_d3d_device().map_err(WindowsCaptureError::FailedToRecreateDevice)?;
+        let winrt_device = native_to_winrt_d3d11device(&d3d_device)
+            .map_err(WindowsCaptureError::FailedToRecreateDevice)?;
+
+        frame_pool
+            .Recreate(
+                &winrt_device,
+                pixel_format.to_directx_pixel_format(),
+                WgcCaptureProvider::WGC_FRAME_BUFFERS,
+                size,
+            )
+            .map_err(WindowsCaptureError::FailedToRecreateFramePool)?;
+
+        if let Some(session) = active_session.take() {
+            session.Close().ok();
+        }
+
+        let session = frame_pool
+            .CreateCaptureSession(capture_item)
+            .map_err(WindowsCaptureError::FailedToRecreateCaptureSession)?;
+        configure_capture_session(&session, settings)?;
+        session
+            .StartCapture()
+            .map_err(WindowsCaptureError::FailedToStartRecreatedCaptureSession)?;
+        active_session.replace(session);
+        self.replace(winrt_device);
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct DeviceLossRecoveryContext {
+    device: WgcDeviceState,
+    capture_item: GraphicsCaptureItem,
+    active_session: WgcSessionState,
+    pixel_format: PixelFormat,
+    settings: CaptureSessionSettings,
+    resource_state: Arc<RwLock<ResourcePool>>,
+    recovery_lock: Arc<Mutex<()>>,
+}
+
+impl DeviceLossRecoveryContext {
+    fn recover(&self, frame_pool: &Direct3D11CaptureFramePool, size: SizeInt32) -> bool {
+        let Ok(_guard) = self.recovery_lock.try_lock() else {
+            tracing::debug!(
+                "Skipping WGC device-loss recovery because another recovery is active."
+            );
+            return false;
+        };
+
+        let result = self.device.rebuild_capture_stack(
+            frame_pool,
+            &self.capture_item,
+            &self.active_session,
+            self.pixel_format,
+            size,
+            self.settings,
+        );
+        WgcCaptureProvider::reset_resource_pool(&self.resource_state);
+        match result {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::error!("Failed to recreate WGC device resources: {}", err);
+                false
+            }
+        }
+    }
+}
 
 impl CaptureProvider for WgcCaptureProvider {
     type Result<T> = Result<T>;
@@ -21,7 +130,7 @@ impl CaptureProvider for WgcCaptureProvider {
             super::super::WindowsCaptureError::NoCaptureItem
         })?;
 
-        let device = self.device.clone();
+        let device = self.device.get();
         let resource_state_arc = self.resource_state.clone();
 
         let size = capture_item.Size().map_err(|e| {
@@ -44,23 +153,26 @@ impl CaptureProvider for WgcCaptureProvider {
             tracing::error!("Failed to create capture session! {}", e);
             super::super::WindowsCaptureError::FailedToCreateCaptureSession(e)
         })?;
-
-        if let Err(err) = session.SetIsCursorCaptureEnabled(self.record_cursor) {
-            tracing::warn!("Failed to set IsCursorCaptureEnabled: {}", err);
-        }
-        if let Err(err) = session.SetIsBorderRequired(self.border_indicator) {
-            tracing::warn!("Failed to set IsBorderRequired: {}", err);
-        }
-
-        session.SetMinUpdateInterval(framerate.to_frametime().into()).map_err(|e| {
-            tracing::error!("Failed to set MinUpdateInterval: {}", e);
-            super::super::WindowsCaptureError::FailedToSetMinUpdateInterval(e)
-        })?;
+        let session_settings = CaptureSessionSettings {
+            record_cursor: self.record_cursor,
+            border_indicator: self.border_indicator,
+            min_update_interval: framerate.to_frametime(),
+        };
+        configure_capture_session(&session, session_settings)?;
 
         let buffer_pool = self.buffer_pool.clone();
-        let resource_state_arc_inner = resource_state_arc.clone();
         let capture_options = self.capture_options.clone();
         let pixel_format = self.pixel_format;
+        let recovery = DeviceLossRecoveryContext {
+            device: self.device.clone(),
+            capture_item: capture_item.clone(),
+            active_session: self.session.clone(),
+            pixel_format,
+            settings: session_settings,
+            resource_state: resource_state_arc.clone(),
+            recovery_lock: Arc::new(Mutex::new(())),
+        };
+        let mut frame_pool_size = size;
 
         let token = frame_pool
             .FrameArrived(&TypedEventHandler::new(move |sender, _| {
@@ -76,6 +188,12 @@ impl CaptureProvider for WgcCaptureProvider {
                 let mut frame = match sender.TryGetNextFrame() {
                     Ok(frame) => frame,
                     Err(err) => {
+                        if WindowsCaptureError::is_recoverable_device_loss_error(&err) {
+                            tracing::warn!(
+                                "Capture device/access lost while getting the next frame; recreating WGC device resources."
+                            );
+                            let _ = recovery.recover(sender, frame_pool_size);
+                        }
                         tracing::error!("Failed to get next frame: {}", err);
                         return Ok(());
                     }
@@ -94,7 +212,39 @@ impl CaptureProvider for WgcCaptureProvider {
                     );
                 }
 
-                let content_size = frame.ContentSize().unwrap_or(size);
+                let content_size = frame.ContentSize().unwrap_or(frame_pool_size);
+                if !same_capture_size(content_size, frame_pool_size) {
+                    tracing::info!(
+                        "Capture content resized from {}x{} to {}x{}; recreating frame pool.",
+                        frame_pool_size.Width,
+                        frame_pool_size.Height,
+                        content_size.Width,
+                        content_size.Height
+                    );
+
+                    if let Err(err) =
+                        recovery.device.resize_frame_pool(sender, pixel_format, content_size)
+                    {
+                        if WindowsCaptureError::is_recoverable_device_loss_error(&err) {
+                            tracing::warn!(
+                                "Capture device/access lost while recreating the frame pool; recreating WGC device resources."
+                            );
+                            if recovery.recover(sender, content_size) {
+                                frame_pool_size = content_size;
+                            } else {
+                                tracing::error!("Failed to recreate capture frame pool: {}", err);
+                            }
+                        } else {
+                            tracing::error!("Failed to recreate capture frame pool: {}", err);
+                        }
+                        return Ok(());
+                    }
+
+                    Self::reset_resource_pool(&recovery.resource_state);
+                    frame_pool_size = content_size;
+                    return Ok(());
+                }
+
                 let mut buffer = None;
                 let capture_options = *capture_options.read().unwrap();
 
@@ -115,12 +265,18 @@ impl CaptureProvider for WgcCaptureProvider {
                 match Self::process_frame(
                     buffer,
                     frame,
-                    resource_state_arc_inner.clone(),
+                    recovery.resource_state.clone(),
                     pixel_format,
                     framerate.to_frametime(),
                     tx.clone(),
                 ) {
                     Ok(()) | Err(super::super::WindowsCaptureError::FrameSenderClosed) => {}
+                    Err(err) if err.is_recoverable_device_loss() => {
+                        tracing::warn!(
+                            "Capture device/access lost while processing a frame; recreating WGC device resources."
+                        );
+                        let _ = recovery.recover(sender, content_size);
+                    }
                     Err(err) => {
                         tracing::error!("Failed to process frame: {}", err);
                     }
@@ -142,7 +298,7 @@ impl CaptureProvider for WgcCaptureProvider {
 
         self.capturing = true;
         self.frame_pool = Some(frame_pool);
-        self.session = Some(session);
+        self.session.replace(session);
 
         Ok(super::WindowsCaptureStream::new(rx))
     }
@@ -153,15 +309,7 @@ impl CaptureProvider for WgcCaptureProvider {
             capture_item.DisplayName().unwrap_or("<no name>".into())
         );
         self.capture_item = Some(capture_item);
-
-        {
-            let mut state = self.resource_state.write().unwrap();
-            state.shared_textures.clear();
-            state.shared_handles.clear();
-            state.staging_textures.clear();
-            state.frame_count = 0;
-            state.last_emitted_timestamp_100ns = None;
-        }
+        Self::reset_resource_pool(&self.resource_state);
 
         Ok(())
     }
@@ -177,7 +325,7 @@ impl CaptureProvider for WgcCaptureProvider {
             return Err(super::super::WindowsCaptureError::NoCaptureItem);
         }
 
-        if let Some(session) = &self.session {
+        if let Some(session) = self.session.get() {
             session.StartCapture().map_err(|e| {
                 tracing::error!("Failed to start capture! {}", e);
                 super::super::WindowsCaptureError::FailedToStartCapture(e)
@@ -195,7 +343,7 @@ impl CaptureProvider for WgcCaptureProvider {
             return Ok(());
         }
 
-        if let Some(session) = &self.session {
+        if let Some(session) = self.session.take() {
             tracing::info!("Closing GraphicsCaptureSession");
             session.Close().ok();
         }
@@ -208,7 +356,6 @@ impl CaptureProvider for WgcCaptureProvider {
             frame_pool.Close().ok();
         }
 
-        self.session = None;
         self.frame_pool = None;
         self.capturing = false;
         tracing::info!("Capture session stopped successfully.");
@@ -220,15 +367,54 @@ impl CaptureProvider for WgcCaptureProvider {
     }
 
     fn raw_device_handle(&self) -> Option<*mut std::ffi::c_void> {
-        super::super::d3d11_utils::winrt_to_native_d3d11device(&self.device).ok().map(|device| {
+        let device = self.device.get();
+        super::super::d3d11_utils::winrt_to_native_d3d11device(&device).ok().map(|device| {
             let device = std::mem::ManuallyDrop::new(device);
             windows_core::Interface::as_raw(&*device)
         })
     }
 }
 
+fn configure_capture_session(
+    session: &GraphicsCaptureSession,
+    settings: CaptureSessionSettings,
+) -> Result<()> {
+    if let Err(err) = session.SetIsCursorCaptureEnabled(settings.record_cursor) {
+        tracing::warn!("Failed to set IsCursorCaptureEnabled: {}", err);
+    }
+    if let Err(err) = session.SetIsBorderRequired(settings.border_indicator) {
+        tracing::warn!("Failed to set IsBorderRequired: {}", err);
+    }
+
+    session.SetMinUpdateInterval(settings.min_update_interval.into()).map_err(|e| {
+        tracing::error!("Failed to set MinUpdateInterval: {}", e);
+        super::super::WindowsCaptureError::FailedToSetMinUpdateInterval(e)
+    })
+}
+
+fn same_capture_size(left: SizeInt32, right: SizeInt32) -> bool {
+    left.Width == right.Width && left.Height == right.Height
+}
+
 impl Drop for WgcCaptureProvider {
     fn drop(&mut self) {
         self.stop_capture().ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_capture_size_compares_dimensions() {
+        assert!(same_capture_size(
+            SizeInt32 { Width: 1920, Height: 1080 },
+            SizeInt32 { Width: 1920, Height: 1080 },
+        ));
+        assert!(!same_capture_size(
+            SizeInt32 { Width: 1920, Height: 1080 },
+            SizeInt32 { Width: 1280, Height: 720 },
+        ));
     }
 }

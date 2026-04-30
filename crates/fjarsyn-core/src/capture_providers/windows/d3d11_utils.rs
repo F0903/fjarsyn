@@ -1,4 +1,4 @@
-use std::mem::MaybeUninit;
+use std::{future::Future, mem::MaybeUninit, pin::Pin};
 
 use windows::{
     Graphics::{
@@ -17,7 +17,7 @@ use windows::{
                 D3D11_TEXTURE2D_DESC, D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
                 ID3D11Texture2D,
             },
-            Dxgi::IDXGIDevice,
+            Dxgi::{Common::DXGI_FORMAT, IDXGIDevice},
             Gdi::{MONITOR_DEFAULTTOPRIMARY, MonitorFromWindow},
         },
         System::WinRT::{
@@ -120,9 +120,10 @@ impl IntoHWND for u64 {
 
 /// Shows a dialog in the specified window to pick an item to capture.
 /// Returned future completes when the user picks an item or cancels the dialog.
-pub fn user_pick_capture_item(
-    window: impl IntoHWND,
-) -> Result<impl std::future::Future<Output = Result<Option<GraphicsCaptureItem>>>> {
+pub type PickCaptureItemFuture =
+    Pin<Box<dyn Future<Output = Result<Option<GraphicsCaptureItem>>> + Send>>;
+
+pub fn user_pick_capture_item(window: impl IntoHWND) -> Result<PickCaptureItemFuture> {
     tracing::info!("Initializing GraphicsCapturePicker...");
     let picker = GraphicsCapturePicker::new()?;
     let init_with_window: IInitializeWithWindow = picker.cast()?;
@@ -153,7 +154,7 @@ pub fn user_pick_capture_item(
         }
         result.map(Some)
     };
-    Ok(item_future)
+    Ok(Box::pin(item_future))
 }
 
 pub fn create_capture_item_for_primary_monitor() -> Result<GraphicsCaptureItem> {
@@ -177,6 +178,38 @@ pub(super) fn copy_texture(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReadbackLayout {
+    height: usize,
+    bytes_per_row: usize,
+    total_bytes: usize,
+}
+
+fn readback_layout(
+    width: u32,
+    height: u32,
+    format: DXGI_FORMAT,
+    bytes_per_pixel: u32,
+) -> ReadbackLayout {
+    debug_assert!(
+        format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12 || bytes_per_pixel > 0
+    );
+
+    let height = height as usize;
+    let bytes_per_row = match format {
+        windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12 => width as usize,
+        _ => width as usize * bytes_per_pixel as usize,
+    };
+    let total_bytes = match format {
+        windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12 => {
+            (width as usize * height * 3) / 2
+        }
+        _ => bytes_per_row * height,
+    };
+
+    ReadbackLayout { height, bytes_per_row, total_bytes }
+}
+
 // Map the staging texture for reading and copy the data to memory.
 // This operation happens on the CPU.
 pub(super) fn map_read_texture(
@@ -187,54 +220,58 @@ pub(super) fn map_read_texture(
     bytes_per_pixel: u32,
 ) -> super::Result<()> {
     let start = std::time::Instant::now();
+    let layout = readback_layout(tex_desc.Width, tex_desc.Height, tex_desc.Format, bytes_per_pixel);
+
+    if memory.len() < layout.total_bytes {
+        return Err(super::WindowsCaptureError::ReadbackBufferTooSmall {
+            expected: layout.total_bytes,
+            actual: memory.len(),
+        });
+    }
+
     unsafe {
         let map_start = std::time::Instant::now();
         let mut mapped = MaybeUninit::uninit();
-        context.Map(staging_tex, 0, D3D11_MAP_READ, 0, Some(mapped.as_mut_ptr()))?;
+        context
+            .Map(staging_tex, 0, D3D11_MAP_READ, 0, Some(mapped.as_mut_ptr()))
+            .map_err(super::WindowsCaptureError::FailedToMapTexture)?;
         let mapped = mapped.assume_init_ref();
         let map_duration = map_start.elapsed();
 
-        let height = tex_desc.Height as usize;
-        let bytes_per_row = match tex_desc.Format {
-            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12 => tex_desc.Width as usize,
-            _ => tex_desc.Width as usize * bytes_per_pixel as usize,
-        };
         let row_pitch = mapped.RowPitch as usize;
-        let total_bytes = match tex_desc.Format {
-            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12 => {
-                (tex_desc.Width as usize * tex_desc.Height as usize * 3) / 2
-            }
-            _ => bytes_per_row * height,
-        };
 
         let copy_start = std::time::Instant::now();
-        if row_pitch == bytes_per_row
+        if row_pitch == layout.bytes_per_row
             && tex_desc.Format != windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12
         {
             // If the pitch matches the width and it's a simple packed format, we can copy the entire buffer in one go.
-            std::ptr::copy_nonoverlapping(mapped.pData.cast(), memory.as_mut_ptr(), total_bytes);
+            std::ptr::copy_nonoverlapping(
+                mapped.pData.cast(),
+                memory.as_mut_ptr(),
+                layout.total_bytes,
+            );
         } else if tex_desc.Format == windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12 {
             // NV12 Copy
             // Y Plane
-            for y in 0..height {
+            for y in 0..layout.height {
                 let src_row = mapped.pData.add(y * row_pitch);
-                let dst_row = memory.as_mut_ptr().add(y * bytes_per_row);
-                std::ptr::copy_nonoverlapping(src_row.cast(), dst_row, bytes_per_row);
+                let dst_row = memory.as_mut_ptr().add(y * layout.bytes_per_row);
+                std::ptr::copy_nonoverlapping(src_row.cast(), dst_row, layout.bytes_per_row);
             }
             // UV Plane
-            let uv_src_base = mapped.pData.add(height * row_pitch);
-            let uv_dst_base = memory.as_mut_ptr().add(height * bytes_per_row);
-            for y in 0..height / 2 {
+            let uv_src_base = mapped.pData.add(layout.height * row_pitch);
+            let uv_dst_base = memory.as_mut_ptr().add(layout.height * layout.bytes_per_row);
+            for y in 0..layout.height / 2 {
                 let src_row = uv_src_base.add(y * row_pitch);
-                let dst_row = uv_dst_base.add(y * bytes_per_row);
-                std::ptr::copy_nonoverlapping(src_row.cast(), dst_row, bytes_per_row);
+                let dst_row = uv_dst_base.add(y * layout.bytes_per_row);
+                std::ptr::copy_nonoverlapping(src_row.cast(), dst_row, layout.bytes_per_row);
             }
         } else {
             // Strided copy (handling padding bytes) for packed formats
-            for y in 0..height {
+            for y in 0..layout.height {
                 let src_row = mapped.pData.add(y * row_pitch);
-                let dst_row = memory.as_mut_ptr().add(y * bytes_per_row);
-                std::ptr::copy_nonoverlapping(src_row.cast(), dst_row, bytes_per_row);
+                let dst_row = memory.as_mut_ptr().add(y * layout.bytes_per_row);
+                std::ptr::copy_nonoverlapping(src_row.cast(), dst_row, layout.bytes_per_row);
             }
         }
         let copy_duration = copy_start.elapsed();
@@ -267,4 +304,27 @@ pub(super) fn fetch_texture(
 ) -> super::Result<()> {
     copy_texture(context, &source_tex, &staging_tex);
     map_read_texture(dest, context, &staging_tex, tex_desc, bytes_per_pixel)
+}
+
+#[cfg(test)]
+mod tests {
+    use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_FORMAT_R8G8B8A8_UNORM};
+
+    use super::*;
+
+    #[test]
+    fn readback_layout_uses_packed_format_stride() {
+        assert_eq!(
+            readback_layout(1920, 1080, DXGI_FORMAT_R8G8B8A8_UNORM, 4),
+            ReadbackLayout { height: 1080, bytes_per_row: 7680, total_bytes: 8_294_400 }
+        );
+    }
+
+    #[test]
+    fn readback_layout_uses_nv12_plane_size() {
+        assert_eq!(
+            readback_layout(1920, 1080, DXGI_FORMAT_NV12, 2),
+            ReadbackLayout { height: 1080, bytes_per_row: 1920, total_bytes: 3_110_400 }
+        );
+    }
 }

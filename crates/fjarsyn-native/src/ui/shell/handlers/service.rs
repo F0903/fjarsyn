@@ -17,9 +17,11 @@ pub fn handle_call_service_msg(app: &mut Fjarsyn, message: CallServiceMessage) -
         CallServiceMessage::CallServiceInitialized(result) => match result {
             Ok(service) => {
                 let local_peer_id = service.local_id().to_string();
+                tracing::info!("Local signaling public key: {}", service.local_public_key());
                 let signaling_port = service.signaling_port();
                 let persist_local_peer_id = app.ctx.config.identity.peer_id.is_none()
                     && std::env::var_os("FJARSYN_PEER_ID").is_none();
+                service.replace_trusted_contacts(app.ctx.core.contacts.contacts.iter());
                 app.runtime.services.call_service = Some(service);
                 ServiceAction::CallServiceReady {
                     local_peer_id,

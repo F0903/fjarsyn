@@ -33,6 +33,15 @@ impl WebRTC {
     }
 
     async fn handle_signaling_message(&self, msg: SignalingMessage) -> WebRTCResult<()> {
+        if !msg.targets_peer(&self.local_peer_id) {
+            tracing::debug!(
+                "Ignoring signaling message from {} addressed to {:?}",
+                msg.from,
+                msg.to
+            );
+            return Ok(());
+        }
+
         match msg.sig_type {
             SignalingType::Offer => {
                 if self.is_busy_for_incoming_offer().await {
@@ -102,7 +111,9 @@ impl WebRTC {
     }
 
     pub async fn dial_direct(&self, addr: std::net::SocketAddr) -> WebRTCResult<()> {
-        let tx = signaling::dial(addr, self.internal_signal_tx.clone()).await?;
+        let tx =
+            signaling::dial(addr, self.signaling_auth.clone(), self.internal_signal_tx.clone())
+                .await?;
         *self.signaling_tx.write().await = Some(tx);
         Ok(())
     }

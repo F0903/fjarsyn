@@ -36,12 +36,12 @@ pub fn run_app_command(app: &mut Fjarsyn, command: AppCommand) -> Task<Message> 
             Task::done(Message::Navigation(NavigationMessage::Navigate(route)))
         }
         AppCommand::LoadContacts => contacts::run_load_contacts(app),
-        AppCommand::SaveContact { peer_id, name, address } => {
-            contacts::run_save_contact(app, peer_id, name, address)
+        AppCommand::SaveContact { peer_id, name, address, trusted_public_key } => {
+            contacts::run_save_contact(app, peer_id, name, address, trusted_public_key)
         }
         AppCommand::DeleteContact { id } => contacts::run_delete_contact(app, id),
-        AppCommand::UpdateContactAddress { id, peer_id, name, address } => {
-            contacts::run_update_contact_address(app, id, peer_id, name, address)
+        AppCommand::UpdateContact { id, peer_id, name, address, trusted_public_key } => {
+            contacts::run_update_contact(app, id, peer_id, name, address, trusted_public_key)
         }
         AppCommand::AcceptCall => call::run_accept_call(app),
         AppCommand::DeclineCall => call::run_decline_call(app),

@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use super::{MessagingError, MessagingService, SummaryCache};
+use super::{MessagingError, MessagingService};
 use crate::{
     communication::messaging::{
         ConversationMap, ConversationMessage, ConversationSummary, build_conversation_caches,
@@ -35,8 +35,8 @@ impl MessagingService {
     }
 
     pub(super) fn cache_message_snapshot(
-        conversations: &super::ConversationCache,
-        summaries: &SummaryCache,
+        conversations: &Arc<RwLock<ConversationMap>>,
+        summaries: &Arc<RwLock<Arc<Vec<ConversationSummary>>>>,
         message: ConversationMessage,
     ) {
         let mut conversations_lock = conversations.write().unwrap();

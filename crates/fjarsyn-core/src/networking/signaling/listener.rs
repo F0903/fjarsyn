@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use futures_util::StreamExt;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
@@ -6,22 +8,36 @@ use tokio::{
 use tokio_tungstenite::{WebSocketStream, tungstenite::protocol::Message};
 
 use super::{
-    PeerRouteMap,
-    routing::{register_peer_route, unregister_peer_route},
-    transport::send_signaling_message,
+    routing::{PeerRoutes, register_peer_route, unregister_peer_route},
+    transport::{SignalingAuthContext, send_signaling_message, verify_incoming_signaling_message},
 };
 use crate::networking::protocol::SignalingMessage;
 
-pub(super) async fn manage_listener_connection<S>(
-    mut ws_stream: WebSocketStream<S>,
-    connection_id: u64,
-    connection_tx: mpsc::Sender<SignalingMessage>,
-    mut to_peer_rx: mpsc::Receiver<SignalingMessage>,
-    peer_routes: PeerRouteMap,
-    to_webrtc_tx: mpsc::Sender<SignalingMessage>,
-) where
+pub(super) struct ListenerConnection<S> {
+    pub(super) ws_stream: WebSocketStream<S>,
+    pub(super) connection_id: u64,
+    pub(super) auth: SignalingAuthContext,
+    pub(super) local_peer_id: String,
+    pub(super) connection_tx: mpsc::Sender<SignalingMessage>,
+    pub(super) to_peer_rx: mpsc::Receiver<SignalingMessage>,
+    pub(super) peer_routes: Arc<PeerRoutes>,
+    pub(super) to_webrtc_tx: mpsc::Sender<SignalingMessage>,
+}
+
+pub(super) async fn manage_listener_connection<S>(connection: ListenerConnection<S>)
+where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
+    let ListenerConnection {
+        mut ws_stream,
+        connection_id,
+        auth,
+        local_peer_id,
+        connection_tx,
+        mut to_peer_rx,
+        peer_routes,
+        to_webrtc_tx,
+    } = connection;
     let mut registered_peer_id: Option<String> = None;
 
     loop {
@@ -29,7 +45,7 @@ pub(super) async fn manage_listener_connection<S>(
             msg = to_peer_rx.recv() => {
                 match msg {
                     Some(message) => {
-                        if send_signaling_message(&mut ws_stream, &message).await.is_err() {
+                        if send_signaling_message(&mut ws_stream, &auth, &message).await.is_err() {
                             break;
                         }
                     }
@@ -43,19 +59,37 @@ pub(super) async fn manage_listener_connection<S>(
             msg = ws_stream.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(signaling_message) = serde_json::from_str::<SignalingMessage>(&text) {
-                            register_peer_route(
-                                &peer_routes,
-                                connection_id,
-                                connection_tx.clone(),
-                                &signaling_message.from,
-                                &mut registered_peer_id,
-                            )
-                            .await;
-
-                            if to_webrtc_tx.send(signaling_message).await.is_err() {
-                                break;
+                        let signaling_message = match verify_incoming_signaling_message(&auth, &text) {
+                            Ok(signaling_message) => signaling_message,
+                            Err(err) => {
+                                tracing::warn!("Rejected signed signaling message on listener: {}", err);
+                                continue;
                             }
+                        };
+
+                        if !signaling_message.targets_peer(&local_peer_id) {
+                            tracing::debug!(
+                                "Ignoring signaling message from {} addressed to {:?}.",
+                                signaling_message.from,
+                                signaling_message.to
+                            );
+                            continue;
+                        }
+
+                        if !register_peer_route(
+                            &peer_routes,
+                            connection_id,
+                            connection_tx.clone(),
+                            &signaling_message.from,
+                            &mut registered_peer_id,
+                        )
+                        .await
+                        {
+                            continue;
+                        }
+
+                        if to_webrtc_tx.send(signaling_message).await.is_err() {
+                            break;
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => {

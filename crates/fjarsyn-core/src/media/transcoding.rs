@@ -6,16 +6,11 @@ pub enum HWAccelType {
     D3D11VA,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub enum FFmpegTranscodeType {
+    #[default]
     H264Software,
     H264Nvenc,
-}
-
-impl Default for FFmpegTranscodeType {
-    fn default() -> Self {
-        Self::H264Software
-    }
 }
 
 impl FFmpegTranscodeType {

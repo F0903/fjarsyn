@@ -1,8 +1,8 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
-use super::{DirectRouteMap, MessagingError, MessagingService};
+use super::{MessagingError, MessagingService};
 use crate::networking::{
     protocol::{ChatMessagePayload, ChatReceiptPayload, SignalingMessage, SignalingType},
     signaling,
@@ -52,7 +52,12 @@ impl MessagingService {
             return Ok(route);
         }
 
-        let route = signaling::dial(addr, self.webrtc.internal_signal_tx.clone()).await?;
+        let route = signaling::dial(
+            addr,
+            self.webrtc.signaling_auth_context(),
+            self.webrtc.internal_signal_tx.clone(),
+        )
+        .await?;
 
         let mut routes = self.direct_routes.lock().await;
         routes.insert(peer_id.to_string(), route.clone());
@@ -61,7 +66,7 @@ impl MessagingService {
 
     pub(super) async fn send_receipt(
         webrtc: &Arc<WebRTC>,
-        direct_routes: &DirectRouteMap,
+        direct_routes: &Arc<Mutex<HashMap<String, mpsc::Sender<SignalingMessage>>>>,
         peer_id: String,
         payload: ChatReceiptPayload,
     ) -> Result<(), MessagingError> {

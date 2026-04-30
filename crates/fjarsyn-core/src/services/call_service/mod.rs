@@ -3,7 +3,10 @@ use std::sync::{Arc, RwLock};
 use bytes::Bytes;
 use tokio::sync::mpsc;
 
-use crate::networking::webrtc::{WebRTC, WebRTCError};
+use crate::networking::{
+    signaling::auth::{StoredIdentityKeypair, TrustedPeerIdentity},
+    webrtc::{WebRTC, WebRTCError},
+};
 
 mod dial;
 mod state;
@@ -23,6 +26,8 @@ pub struct CallServiceConfig {
     pub max_depacket_latency: u16,
     /// Optional peer ID (generated if None).
     pub peer_id: Option<String>,
+    /// Optional persisted signaling identity keypair (generated if None).
+    pub identity_keypair: Option<StoredIdentityKeypair>,
 }
 
 /// Service managing calls. Owns WebRTC and handles all call-related logic internally.
@@ -43,6 +48,7 @@ impl CallService {
             webrtc_event_tx,
             config.max_depacket_latency,
             config.peer_id,
+            config.identity_keypair,
         )
         .await?;
 
@@ -83,6 +89,10 @@ impl CallService {
         &self.webrtc.local_peer_id
     }
 
+    pub fn local_public_key(&self) -> String {
+        self.webrtc.local_public_key()
+    }
+
     pub fn signaling_port(&self) -> u16 {
         self.webrtc.direct_signaling_port
     }
@@ -90,6 +100,17 @@ impl CallService {
     // TODO: in the future we could abstract this further by just returning an abstract Writer or something similar.
     pub fn webrtc(&self) -> Arc<WebRTC> {
         Arc::clone(&self.webrtc)
+    }
+
+    pub fn replace_trusted_contacts<'a>(
+        &self,
+        contacts: impl IntoIterator<Item = &'a crate::services::contacts_service::Contact>,
+    ) {
+        self.webrtc.replace_trusted_peers(contacts.into_iter().filter_map(|contact| {
+            contact.trusted_public_key.as_ref().map(|public_key| {
+                TrustedPeerIdentity::new(contact.peer_id.clone(), public_key.clone())
+            })
+        }));
     }
 
     pub async fn accept(&self) -> Result<(), WebRTCError> {

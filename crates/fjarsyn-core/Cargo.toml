@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 async-trait = { workspace = true }
+base64 = { workspace = true }
 bytemuck = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
@@ -18,7 +19,9 @@ ffmpeg-next = { version = "8.1.0", default-features = false, features = [
 ] }
 futures = { workspace = true }
 futures-util = "0.3"
+ed25519-dalek = { workspace = true }
 mdns-sd = "0.13"
+rand_core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 smallvec = { workspace = true }

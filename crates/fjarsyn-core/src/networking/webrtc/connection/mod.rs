@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 
 use bytes::Bytes;
 use tokio::sync::{RwLock, mpsc};
@@ -10,7 +10,12 @@ use webrtc::{
 
 use crate::networking::{
     protocol::SignalingMessage,
-    signaling,
+    signaling::{
+        self, SignalingAuthContext,
+        auth::{
+            LocalPeerIdentity, StoredIdentityKeypair, TrustedPeerDirectory, TrustedPeerIdentity,
+        },
+    },
     webrtc::{WebRTCError, webrtc_error::WebRTCResult},
 };
 
@@ -48,6 +53,9 @@ pub struct WebRTC {
     pub message_signal_tx: Arc<RwLock<Option<mpsc::Sender<MessagingSignalEvent>>>>,
     pub local_peer_id: String,
     pub direct_signaling_port: u16,
+    local_identity: LocalPeerIdentity,
+    trusted_peers: Arc<StdRwLock<TrustedPeerDirectory>>,
+    signaling_auth: SignalingAuthContext,
     packet_sink: mpsc::Sender<Bytes>,
     event_tx: mpsc::Sender<WebRTCEvent>,
     max_depacket_latency: u16,
@@ -72,8 +80,17 @@ impl WebRTC {
         event_tx: mpsc::Sender<WebRTCEvent>,
         max_depacket_latency: u16,
         peer_id: Option<String>,
+        identity_keypair: Option<StoredIdentityKeypair>,
     ) -> WebRTCResult<Arc<Self>> {
         let (signal_tx, signal_rx) = mpsc::channel(100);
+        let local_identity = match identity_keypair.as_ref() {
+            Some(identity) => LocalPeerIdentity::from_stored(identity)?,
+            None => LocalPeerIdentity::generate(),
+        };
+        let trusted_peers: Arc<StdRwLock<TrustedPeerDirectory>> =
+            Arc::new(StdRwLock::new(TrustedPeerDirectory::default()));
+        let signaling_auth =
+            SignalingAuthContext::new(local_identity.clone(), trusted_peers.clone());
 
         let local_peer_id = match std::env::var("FJARSYN_PEER_ID") {
             Ok(val) if val == "random" => uuid::Uuid::new_v4().to_string(),
@@ -81,7 +98,9 @@ impl WebRTC {
             Err(_) => peer_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
         };
 
-        let (listener_tx, direct_port) = signaling::listen(0, signal_tx.clone()).await?;
+        let (listener_tx, direct_port) =
+            signaling::listen(0, signaling_auth.clone(), local_peer_id.clone(), signal_tx.clone())
+                .await?;
         let signaling_tx = Arc::new(RwLock::new(Some(listener_tx.clone())));
 
         let peer_connection = Arc::new(Self::create_pc().await?);
@@ -115,6 +134,9 @@ impl WebRTC {
             message_signal_tx,
             local_peer_id,
             direct_signaling_port: direct_port,
+            local_identity,
+            trusted_peers,
+            signaling_auth,
             packet_sink,
             event_tx,
             max_depacket_latency,
@@ -125,6 +147,19 @@ impl WebRTC {
         webrtc.setup_pc_handlers(&peer_connection).await;
 
         Ok(webrtc)
+    }
+
+    pub fn local_public_key(&self) -> String {
+        self.local_identity.public_key_base64()
+    }
+
+    pub fn replace_trusted_peers(&self, peers: impl IntoIterator<Item = TrustedPeerIdentity>) {
+        let mut trusted_peers = self.trusted_peers.write().unwrap();
+        *trusted_peers = TrustedPeerDirectory::new(peers);
+    }
+
+    pub(crate) fn signaling_auth_context(&self) -> SignalingAuthContext {
+        self.signaling_auth.clone()
     }
 }
 

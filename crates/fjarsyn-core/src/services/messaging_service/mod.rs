@@ -24,10 +24,6 @@ use crate::{
     repositories::MessagesStore,
 };
 
-type ConversationCache = Arc<RwLock<ConversationMap>>;
-type SummaryCache = Arc<RwLock<Arc<Vec<ConversationSummary>>>>;
-type DirectRouteMap = Arc<Mutex<HashMap<String, mpsc::Sender<SignalingMessage>>>>;
-
 pub struct MessagingServiceConfig {
     pub repository: Arc<dyn MessagesStore>,
     pub webrtc: Arc<WebRTC>,
@@ -57,9 +53,9 @@ pub enum MessagingError {
 pub struct MessagingService {
     repository: Arc<dyn MessagesStore>,
     webrtc: Arc<WebRTC>,
-    conversations: ConversationCache,
-    summaries: SummaryCache,
-    direct_routes: DirectRouteMap,
+    conversations: Arc<RwLock<ConversationMap>>,
+    summaries: Arc<RwLock<Arc<Vec<ConversationSummary>>>>,
+    direct_routes: Arc<Mutex<HashMap<String, mpsc::Sender<SignalingMessage>>>>,
     event_tx: mpsc::Sender<MessagingEvent>,
     signal_task: Option<tokio::task::JoinHandle<()>>,
 }
