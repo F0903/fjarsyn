@@ -1,101 +1,89 @@
-mod lifecycle;
 mod overlay;
 
 use iced::{
-    Alignment, Element, Length, Padding, Subscription, Theme, padding,
-    widget::{column, container, row, stack},
+    Alignment, Element, Length, Subscription, Theme, padding,
+    widget::{column, container, row, stack, text},
     window as iced_window,
 };
 
-use super::{APP_TITLE, Fjarsyn};
+use super::{APP_TITLE, AppLifecycle, Fjarsyn};
 use crate::ui::{
-    components, message::Message, screens::Screen, shell::ShellContext, subscription, theme,
+    components,
+    message::{LifecycleMessage, Message, NavigationMessage, Route},
+    screens::Screen,
+    shell::ShellContext,
+    subscription, theme,
 };
 
 impl Fjarsyn {
-    fn retry_startup_message() -> Message {
-        Message::Lifecycle(crate::ui::message::LifecycleMessage::RetryStartup)
-    }
-
     pub fn view<'a>(&'a self, _window: iced_window::Id) -> Element<'a, Message> {
         let titlebar = components::titlebar();
         let titlebar_size = match titlebar.as_widget().size().height {
-            Length::Fixed(s) => s,
-            _ => {
-                tracing::warn!("Could not get titlebar_size in pixels!");
-                0.0
-            }
+            Length::Fixed(size) => size,
+            _ => 0.0,
         };
 
-        let shell_body = if matches!(self.ctx.lifecycle, fjarsyn_core::app::AppLifecycle::Failed) {
-            match self.active_screen {
-                super::ActiveScreen::Settings(_) => {
-                    let ctx = ShellContext { state: &self.ctx, runtime: &self.runtime };
-                    self.failed_settings_shell(ctx, titlebar_size)
+        let body: Element<'_, Message> = match &self.ctx.lifecycle {
+            AppLifecycle::Starting => container(
+                column![
+                    text("Starting Fjarsyn").size(24),
+                    text("Initializing contacts, authenticated peer sessions, presence, and messaging...")
+                        .size(13)
+                        .style(text::secondary),
+                ]
+                .spacing(10)
+                .align_x(Alignment::Center),
+            )
+            .center(Length::Fill)
+            .into(),
+            AppLifecycle::Failed(error) => container(
+                column![
+                    text("Fjarsyn could not start").size(24),
+                    text(error.clone()).size(12).style(text::secondary),
+                    row![
+                        iced::widget::button("Retry")
+                            .on_press(Message::Lifecycle(LifecycleMessage::RetryStartup)),
+                        iced::widget::button("Settings").on_press(Message::Navigation(
+                            NavigationMessage::Navigate(Route::Settings),
+                        )),
+                    ]
+                    .spacing(10),
+                ]
+                .spacing(14)
+                .align_x(Alignment::Center),
+            )
+            .center(Length::Fill)
+            .into(),
+            AppLifecycle::Ready | AppLifecycle::ShuttingDown => {
+                let ctx = ShellContext::new(&self.ctx);
+                let route = self.active_screen.route();
+                let content = container(self.active_screen.view(ctx))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(theme::main_content_container);
+                let shell = row![components::sidebar(ctx, route), content]
+                    .padding(padding::top(titlebar_size))
+                    .width(Length::Fill)
+                    .height(Length::Fill);
+                let mut layers = stack![shell];
+                if let Some(incoming) = self.incoming_session_popup() {
+                    layers = layers.push(incoming);
                 }
-                _ => self.failed_shell(),
+                layers.into()
             }
-        } else {
-            let ctx = ShellContext { state: &self.ctx, runtime: &self.runtime };
-            let screen_content = self.active_screen.view(ctx);
-            let current_route = self.active_screen.get_route(ctx);
-
-            let main_content = container(screen_content)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(theme::main_content_container);
-
-            let sidebar = match self.active_screen {
-                super::ActiveScreen::Call(_) => None,
-                _ => Some(components::sidebar(ctx, current_route)),
-            };
-
-            let mut main_layout = row![]
-                .padding(padding::top(titlebar_size))
-                .width(Length::Fill)
-                .height(Length::Fill);
-            if let Some(sidebar) = sidebar {
-                main_layout = main_layout.push(sidebar);
-            }
-            let main_layout = main_layout.push(main_content);
-
-            let mut shell_content = column![].width(Length::Fill).height(Length::Fill).spacing(10);
-            if let Some(panel) = self.lifecycle_panel() {
-                shell_content =
-                    shell_content.push(container(panel).padding(Padding::from([0, 12])));
-            }
-            shell_content = shell_content.push(main_layout);
-
-            let call_popup =
-                self.ctx.session.incoming_call_id.is_some().then(|| self.incoming_call_popup());
-            let mut call_popup_stack = stack![shell_content];
-            if let Some(popup) = call_popup {
-                call_popup_stack = call_popup_stack.push(popup);
-            }
-
-            call_popup_stack.into()
         };
 
         let notifications =
             components::notifications_view(self.ctx.ui.notifications.notifications());
-        let is_maximized = self.ctx.ui.main_window.as_ref().map(|w| w.maximized).unwrap_or(false);
-
-        let controls = container(components::window_controls(is_maximized))
+        let maximized = self.ctx.ui.main_window.as_ref().is_some_and(|window| window.maximized);
+        let controls = container(components::window_controls(maximized))
             .width(Length::Fill)
             .height(Length::Fixed(40.0))
-            .padding(Padding::from([0, 15]))
+            .padding([0, 15])
             .align_x(Alignment::End)
             .align_y(Alignment::Center);
-
-        let content_stack = stack![shell_body, notifications, titlebar, controls];
-
-        let final_stack = if is_maximized {
-            content_stack
-        } else {
-            stack![content_stack, components::resize_grid()]
-        };
-
-        final_stack.into()
+        let content = stack![body, notifications, titlebar, controls];
+        if maximized { content.into() } else { stack![content, components::resize_grid()].into() }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {

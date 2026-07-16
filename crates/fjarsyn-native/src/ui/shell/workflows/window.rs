@@ -13,7 +13,6 @@ pub(crate) enum WindowEffect {
     Close(iced_window::Id),
     Drag(iced_window::Id),
     Resize(iced_window::Id, iced_window::Direction),
-    Exit,
 }
 
 // Window workflows keep UI state mutations and platform-window side effects
@@ -31,7 +30,7 @@ pub(crate) fn reduce_event(app: &mut Fjarsyn, message: WindowEventMessage) -> Ve
         WindowEventMessage::WindowClosed(id) => {
             if app.ctx.ui.main_window.as_ref().map(|window| window.iced_id == id).unwrap_or(false) {
                 app.ctx.ui.main_window = None;
-                vec![WindowEffect::Exit]
+                Vec::new()
             } else {
                 Vec::new()
             }

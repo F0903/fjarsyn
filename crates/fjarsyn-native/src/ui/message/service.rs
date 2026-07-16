@@ -1,58 +1,64 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use fjarsyn_core::{
-    networking::{
-        discovery::{DiscoveryEvent, PeerInfo},
-        webrtc::WebRTCError,
-    },
-    services::{
-        call_service::{CallEvent, CallService},
-        contacts_service::Contact,
-        discovery_service::{DiscoveryService, DiscoveryServiceError},
-        messaging_service::{
-            ConversationMessage, MessagingError, MessagingEvent, MessagingService,
-        },
+    pairing::VerifiedPeerIdentity,
+    services::contact_trust_service::{
+        ContactRefreshOutcome, ContactTrustError, ContactTrustOutcome,
     },
 };
 
+use crate::ui::runtime::{RuntimeEvent, RuntimeSlot};
+
+/// Process-unique correlation token for a contact service request and result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContactOperationId(u64);
+
+impl ContactOperationId {
+    pub(crate) fn next() -> Self {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 #[derive(Debug, Clone)]
-pub enum CallServiceMessage {
-    CallServiceInitialized(Result<Arc<CallService>, Arc<WebRTCError>>),
-    DiscoveryServiceInitialized(Result<Arc<DiscoveryService>, Arc<DiscoveryServiceError>>),
-    CallEvent(CallEvent),
-    DiscoveryEvent(DiscoveryEvent),
-    PeerFound(PeerInfo),
+pub enum RuntimeMessage {
+    Initialized(Result<RuntimeSlot, Arc<String>>),
+    Event(RuntimeEvent),
+    ShutdownFinished(Result<(), Arc<String>>),
 }
 
 #[derive(Debug, Clone)]
 pub enum ContactsServiceMessage {
     LoadContacts,
-    ContactsLoaded(Result<Arc<Vec<Contact>>, Arc<fjarsyn_core::Error>>),
+    ContactsLoaded(Result<ContactRefreshOutcome, Arc<ContactTrustError>>),
     SaveContact {
-        peer_id: String,
+        operation_id: ContactOperationId,
         name: String,
-        address: Option<String>,
-        trusted_public_key: Option<String>,
+        identity: VerifiedPeerIdentity,
     },
-    DeleteContact(i64),
-    ContactSaved(Result<Arc<Vec<Contact>>, Arc<fjarsyn_core::Error>>),
-    ContactDeleted(Result<Arc<Vec<Contact>>, Arc<fjarsyn_core::Error>>),
-    ContactUpdated(Result<Arc<Vec<Contact>>, Arc<fjarsyn_core::Error>>),
-    UpdateContactAddress {
+    DeleteContact {
+        operation_id: ContactOperationId,
         id: i64,
-        new_address: String,
     },
-    UpdateContactTrustedPublicKey {
+    ContactSaved {
+        operation_id: ContactOperationId,
+        result: Result<ContactTrustOutcome, Arc<ContactTrustError>>,
+    },
+    ContactDeleted {
+        operation_id: ContactOperationId,
         id: i64,
-        trusted_public_key: String,
+        result: Result<ContactTrustOutcome, Arc<ContactTrustError>>,
     },
-}
-
-#[derive(Debug, Clone)]
-pub enum MessagingServiceMessage {
-    ServiceInitialized(Result<Arc<MessagingService>, Arc<MessagingError>>),
-    Event(MessagingEvent),
-    SendMessage { peer_id: String, address: SocketAddr, body: String },
-    MessageSent(Result<String, Arc<MessagingError>>),
-    ActiveConversationLoaded(Arc<Vec<ConversationMessage>>),
+    ContactUpdated {
+        operation_id: ContactOperationId,
+        result: Result<ContactTrustOutcome, Arc<ContactTrustError>>,
+    },
+    UpdateContactVerifiedIdentity {
+        operation_id: ContactOperationId,
+        id: i64,
+        identity: VerifiedPeerIdentity,
+    },
 }

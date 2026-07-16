@@ -29,7 +29,7 @@ define_tab! {
                 column![
                     setting_row(
                         "Jitter Buffer",
-                        "Maximum time to wait for out-of-order video packets",
+                        "Maximum wait for out-of-order video packets (applies after restart)",
                         row![
                             slider(
                                 0..=NetworkConfig::MAX_DEPACKET_LATENCY_MS,

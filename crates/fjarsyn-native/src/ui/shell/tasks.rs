@@ -1,97 +1,31 @@
 use std::sync::Arc;
 
-use bytes::Bytes;
-use fjarsyn_core::{
-    capture_providers::windows::WgcCaptureProviderBuilder,
-    config::Config,
-    database,
-    media::{ffmpeg::FFmpegTranscodeTypeExt, gpu_interop, pixel_format::PixelFormat},
-    services::call_service::{CallEvent, CallService, CallServiceConfig},
-};
+use fjarsyn_core::config::Config;
 use iced::{Task, window as iced_window};
-use tokio::sync::{RwLock, mpsc};
 
 use super::Fjarsyn;
-use crate::ui::message::Message;
+use crate::ui::{
+    message::{Message, RuntimeMessage},
+    runtime::{RuntimeSlot, start_application_runtime},
+};
 
 impl Fjarsyn {
-    pub(crate) fn startup_service_tasks(app: &Fjarsyn) -> Task<Message> {
-        let frame_packet_tx = app.runtime.frame_packet_tx.clone();
-        let call_event_tx = app.runtime.call_event_tx.clone();
-        let max_depacket_latency = app.ctx.config.network.max_depacket_latency;
-        let peer_id = app.ctx.config.identity.peer_id.clone();
-        let identity_keypair = app.ctx.config.identity.signing_key.clone();
-
-        Task::batch([
-            Task::future(async {
-                use crate::ui::message::DatabaseMessage;
-                Message::Database(DatabaseMessage::DatabaseInitialized(
-                    database::init().await.map_err(Arc::new),
-                ))
-            }),
-            Self::init_call_service_task(
-                frame_packet_tx,
-                call_event_tx,
-                max_depacket_latency,
-                peer_id,
-                identity_keypair,
-            ),
-        ])
-    }
-
-    fn capture_cpu_readback_enabled(config: &Config) -> bool {
-        gpu_interop::requires_cpu_readback(
-            config.capture.enable_ui_preview,
-            PixelFormat::DEFAULT_CAPTURE,
-            config.video.transcoding_type.get_encoder_info().hw_accel,
-        )
-    }
-
     pub fn init(config: Config) -> (Self, Task<Message>) {
-        let app = Self::new(config);
-        let startup_services = Self::startup_service_tasks(&app);
-
-        (app, Task::batch([startup_services, Self::open_window_task(), Self::load_fonts_task()]))
+        let app = Self::new(config.clone());
+        let runtime = Self::start_runtime_task(config, app.runtime.event_tx.clone());
+        (app, Task::batch([runtime, Self::open_window_task(), Self::load_fonts_task()]))
     }
 
-    fn init_call_service_task(
-        frame_packet_tx: mpsc::Sender<Bytes>,
-        call_event_tx: mpsc::Sender<CallEvent>,
-        max_depacket_latency: u16,
-        peer_id: Option<String>,
-        identity_keypair: Option<fjarsyn_core::networking::signaling::auth::StoredIdentityKeypair>,
+    pub(crate) fn start_runtime_task(
+        config: Config,
+        event_tx: tokio::sync::mpsc::Sender<crate::ui::runtime::RuntimeEvent>,
     ) -> Task<Message> {
         Task::future(async move {
-            let config = CallServiceConfig {
-                frame_packet_tx,
-                call_event_tx,
-                max_depacket_latency,
-                peer_id,
-                identity_keypair,
-            };
-            let res = CallService::init(config).await;
-            use crate::ui::message::CallServiceMessage;
-            Message::CallService(CallServiceMessage::CallServiceInitialized(
-                res.map(Arc::new).map_err(Arc::new),
-            ))
-        })
-    }
-
-    pub(crate) fn init_capture_task(config: &Config) -> Task<Message> {
-        let fmt = PixelFormat::DEFAULT_CAPTURE;
-        let cursor = config.capture.record_cursor;
-        let border = config.capture.recording_border_indicator;
-        let cpu_readback_enabled = Self::capture_cpu_readback_enabled(config);
-        Task::future(async move {
-            let res = WgcCaptureProviderBuilder::new(fmt, cursor, border, cpu_readback_enabled)
-                .with_default_device()
-                .and_then(|b| b.with_default_capture_item())
-                .and_then(|b| b.build())
-                .map(|p| Arc::new(RwLock::new(p)));
-            use crate::ui::message::CaptureMessage;
-            Message::Capture(CaptureMessage::CaptureInitialized(
-                res.map_err(|e| Arc::new(crate::Error::from(e))),
-            ))
+            let result = start_application_runtime(config, event_tx)
+                .await
+                .map(RuntimeSlot::new)
+                .map_err(Arc::new);
+            Message::Runtime(RuntimeMessage::Initialized(result))
         })
     }
 
@@ -99,6 +33,7 @@ impl Fjarsyn {
         use crate::ui::message::WindowEventMessage;
         iced_window::open(iced_window::Settings {
             decorations: false,
+            min_size: Some(iced::Size::new(800.0, 600.0)),
             #[cfg(target_os = "windows")]
             platform_specific: iced_window::settings::PlatformSpecific {
                 undecorated_shadow: true,

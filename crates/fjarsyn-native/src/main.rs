@@ -11,7 +11,7 @@ const LOG_LEVEL: Level = Level::TRACE;
 const LOG_LEVEL: Level = Level::INFO;
 
 fn main() -> Result<()> {
-    let config = Config::load_or_overwrite()?;
+    let config = Config::load_or_create()?;
 
     wgpu::apply_wgpu_power_pref(config.app.power_pref);
     wgpu::configure_default_wgpu_backend();

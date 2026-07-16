@@ -8,59 +8,68 @@ pub use messages_repository::MessagesRepository;
 #[async_trait]
 pub trait ContactsStore: Send + Sync {
     async fn list(&self) -> Result<Vec<crate::database::ContactModel>, crate::Error>;
-    async fn get_by_id(
-        &self,
-        id: i64,
-    ) -> Result<Option<crate::database::ContactModel>, crate::Error>;
     async fn create(
         &self,
         peer_id: String,
         name: String,
-        address: Option<String>,
-        trusted_public_key: Option<String>,
-    ) -> Result<i64, crate::Error>;
+        trusted_public_key: String,
+    ) -> Result<crate::database::ContactModel, crate::Error>;
     async fn delete(&self, id: i64) -> Result<(), crate::Error>;
     async fn update(
         &self,
         id: i64,
         peer_id: String,
         name: String,
-        address: Option<String>,
-        trusted_public_key: Option<String>,
-    ) -> Result<(), crate::Error>;
+        trusted_public_key: String,
+    ) -> Result<crate::database::ContactModel, crate::Error>;
 }
 
 #[async_trait]
 pub trait MessagesStore: Send + Sync {
     async fn list(&self) -> Result<Vec<crate::database::MessageModel>, crate::Error>;
-    async fn get_by_id(
-        &self,
-        id: i64,
-    ) -> Result<Option<crate::database::MessageModel>, crate::Error>;
-    async fn get_by_message_id_and_direction(
-        &self,
-        message_id: String,
-        direction: String,
-    ) -> Result<Option<crate::database::MessageModel>, crate::Error>;
     async fn create_outgoing(
         &self,
-        message_id: String,
-        peer_id: String,
+        session_id: crate::peer_session::SessionId,
+        message_id: crate::peer_session::MessageId,
+        peer_id: crate::peer_session::PeerId,
         body: String,
         created_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<i64, crate::Error>;
+    ) -> Result<crate::database::MessageModel, crate::Error>;
     async fn create_incoming_if_missing(
         &self,
-        message_id: String,
-        peer_id: String,
+        session_id: crate::peer_session::SessionId,
+        message_id: crate::peer_session::MessageId,
+        peer_id: crate::peer_session::PeerId,
         body: String,
         created_at: chrono::DateTime<chrono::Utc>,
-        delivered_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<bool, crate::Error>;
+        received_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<crate::database::MessageModel>, crate::Error>;
+    async fn mark_sent(
+        &self,
+        session_id: crate::peer_session::SessionId,
+        peer_id: crate::peer_session::PeerId,
+        message_id: crate::peer_session::MessageId,
+    ) -> Result<Option<crate::database::MessageModel>, crate::Error>;
     async fn mark_delivered(
         &self,
-        message_id: String,
+        session_id: crate::peer_session::SessionId,
+        peer_id: crate::peer_session::PeerId,
+        message_id: crate::peer_session::MessageId,
         delivered_at: chrono::DateTime<chrono::Utc>,
-    ) -> Result<bool, crate::Error>;
-    async fn mark_failed(&self, message_id: String) -> Result<bool, crate::Error>;
+    ) -> Result<Option<crate::database::MessageModel>, crate::Error>;
+    async fn mark_failed(
+        &self,
+        session_id: crate::peer_session::SessionId,
+        peer_id: crate::peer_session::PeerId,
+        message_id: crate::peer_session::MessageId,
+    ) -> Result<Option<crate::database::MessageModel>, crate::Error>;
+    async fn mark_unknown(
+        &self,
+        session_id: crate::peer_session::SessionId,
+        peer_id: crate::peer_session::PeerId,
+        message_id: crate::peer_session::MessageId,
+    ) -> Result<Option<crate::database::MessageModel>, crate::Error>;
+    async fn mark_all_pending_unknown(
+        &self,
+    ) -> Result<Vec<crate::database::MessageModel>, crate::Error>;
 }

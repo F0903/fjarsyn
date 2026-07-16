@@ -20,6 +20,7 @@ macro_rules! define_model {
             pub id: i64,
             $(pub $field: $type,)*
             pub created_at: chrono::DateTime<chrono::Utc>,
+            pub updated_at: chrono::DateTime<chrono::Utc>,
         }
 
         impl $name {
@@ -42,40 +43,40 @@ macro_rules! define_model {
             }
 
             pub async fn delete(pool: &sqlx::SqlitePool, id: i64) -> Result<(), $crate::Error> {
-                sqlx::query(concat!("DELETE FROM ", $table, " WHERE id = ?"))
+                let result = sqlx::query(concat!("DELETE FROM ", $table, " WHERE id = ?"))
                     .bind(id)
                     .execute(pool)
                     .await
                     .map_err($crate::Error::DatabaseError)?;
+                if result.rows_affected() == 0 {
+                    return Err($crate::Error::RecordNotFound { entity: $table, id });
+                }
                 Ok(())
             }
 
             pub async fn create(
                 pool: &sqlx::SqlitePool,
                 $($c_param: impl Into<$type>),*
-            ) -> Result<i64, $crate::Error> {
-                let result = sqlx::query($create_sql)
+            ) -> Result<Self, $crate::Error> {
+                sqlx::query_as::<_, Self>($create_sql)
                     $(.bind($c_param.into()))*
-                    .execute(pool)
+                    .fetch_one(pool)
                     .await
-                    .map_err($crate::Error::DatabaseError)?;
-
-                Ok(result.last_insert_rowid())
+                    .map_err($crate::Error::DatabaseError)
             }
 
             pub async fn update(
                 pool: &sqlx::SqlitePool,
                 id: i64,
                 $($u_param: impl Into<$type>),*
-            ) -> Result<(), $crate::Error> {
-                sqlx::query($update_sql)
+            ) -> Result<Self, $crate::Error> {
+                let updated = sqlx::query_as::<_, Self>($update_sql)
                     $(.bind($u_param.into()))*
                     .bind(id)
-                    .execute(pool)
+                    .fetch_optional(pool)
                     .await
                     .map_err($crate::Error::DatabaseError)?;
-
-                Ok(())
+                updated.ok_or($crate::Error::RecordNotFound { entity: $table, id })
             }
         }
     };

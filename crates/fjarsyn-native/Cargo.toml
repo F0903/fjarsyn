@@ -13,6 +13,7 @@ winres = "0.1"
 
 [dependencies]
 fjarsyn-core = { path = "../fjarsyn-core" }
+async-trait = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
 sqlx = { workspace = true }

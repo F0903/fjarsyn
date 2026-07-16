@@ -6,23 +6,14 @@ use crate::ui::{
     shell::{ShellContext, ShellContextMut},
 };
 
-mod handlers;
 mod view;
-mod workflow;
 
-#[derive(Debug, Clone)]
-pub enum HomeMessage {
-    TargetAddressChanged(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct HomeScreen {
-    pub(crate) manual_target_address: String,
-}
+#[derive(Debug, Clone, Default)]
+pub struct HomeScreen;
 
 impl HomeScreen {
-    pub fn new(_ctx: ShellContext<'_>) -> Self {
-        Self { manual_target_address: String::new() }
+    pub fn new() -> Self {
+        Self
     }
 }
 
@@ -31,8 +22,8 @@ impl Screen for HomeScreen {
         Subscription::none()
     }
 
-    fn update(&mut self, ctx: &mut ShellContextMut<'_>, message: Message) -> Task<Message> {
-        self.handle_message(ctx, message)
+    fn update(&mut self, _ctx: &mut ShellContextMut<'_>, _message: Message) -> Task<Message> {
+        Task::none()
     }
 
     fn view<'a>(&'a self, ctx: ShellContext<'a>) -> iced::Element<'a, Message> {

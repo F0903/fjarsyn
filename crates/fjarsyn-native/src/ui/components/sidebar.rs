@@ -1,11 +1,7 @@
-use std::collections::HashSet;
-
 use fjarsyn_core::{
-    services::{
-        contacts_service::Contact,
-        messaging_service::{ConversationSummary, MessageDirection},
-    },
-    utils::text::{abbreviate_middle, truncate},
+    communication::messaging::MessageDirection,
+    pairing::PairingInvite,
+    peer_session::{PeerId, PeerSessionPhase},
 };
 use iced::{
     Alignment, Element, Length,
@@ -19,172 +15,170 @@ use crate::ui::{
     theme,
 };
 
-#[derive(Debug, Clone)]
-struct SidebarConversation {
-    peer_id: String,
-    title: String,
-    subtitle: String,
-    online: bool,
-}
-
 pub fn sidebar_button<'a>(
-    active_route: Route,
+    active_route: &Route,
     target_route: Route,
     icon: iced::widget::Text<'a>,
     label: &'a str,
-    msg: Option<Message>,
 ) -> iced::widget::Button<'a, Message> {
     let is_active = active_route.same_screen(&target_route);
-
-    let mut nav_button = button(
+    button(
         row![icon.size(16), text(label).size(14)]
             .spacing(10)
             .align_y(Alignment::Center)
             .width(Length::Fill),
     )
+    .on_press(Message::Navigation(NavigationMessage::Navigate(target_route)))
     .width(Length::Fill)
-    .style(move |theme, status| theme::sidebar_button_style(theme, status, is_active));
-
-    if let Some(msg) = msg {
-        nav_button = nav_button.on_press(msg);
-    }
-
-    nav_button
+    .style(move |theme, status| theme::sidebar_button_style(theme, status, is_active))
 }
 
 pub fn sidebar<'a>(ctx: ShellContext<'a>, current_route: Route) -> Element<'a, Message> {
-    let selected_peer_id = ctx.messaging.active_peer_id.as_deref();
-    let conversations = build_sidebar_conversations(ctx, selected_peer_id);
-    let contacts_available = ctx.can_use_contacts();
-    let messaging_available = ctx.can_use_messaging();
-
-    let sidebar_nav = column![
-        sidebar_button(
-            current_route.clone(),
-            Route::Home,
-            lucide::house(),
-            "Home",
-            Some(Message::Navigation(NavigationMessage::Navigate(Route::Home)))
-        ),
-        sidebar_button(
-            current_route.clone(),
-            Route::Contacts,
-            lucide::users(),
-            "Contacts",
-            contacts_available
-                .then(|| { Message::Navigation(NavigationMessage::Navigate(Route::Contacts)) })
-        ),
+    let navigation = column![
+        sidebar_button(&current_route, Route::Home, lucide::house(), "Home"),
+        sidebar_button(&current_route, Route::Contacts, lucide::users(), "Contacts"),
     ]
     .spacing(5);
 
-    let mut add_contact_button = button(lucide::user_plus().size(14)).style(button::text);
-    if contacts_available {
-        add_contact_button = add_contact_button
-            .on_press(Message::Navigation(NavigationMessage::Navigate(Route::Contacts)));
-    }
-
-    let conversations_header = row![
-        text("CONVERSATIONS")
-            .size(12)
-            .style(text::secondary)
-            .font(crate::ui::fonts::outfit::BOLD)
-            .width(Length::Fill),
-        add_contact_button
-    ]
-    .spacing(10)
-    .align_y(Alignment::Center);
-
-    let mut conversations_list = column![conversations_header].spacing(8);
-    if !messaging_available {
-        conversations_list = conversations_list.push(
-            text(messaging_unavailable_text(ctx))
-                .size(12)
+    let mut peers = column![
+        row![
+            text("CONTACTS")
+                .size(11)
                 .style(text::secondary)
-                .width(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Center),
-        );
-    } else if conversations.is_empty() {
-        conversations_list = conversations_list.push(
-            text("No conversations yet")
+                .font(crate::ui::fonts::outfit::BOLD)
+                .width(Length::Fill),
+            button(lucide::user_plus().size(14))
+                .on_press(Message::Navigation(NavigationMessage::Navigate(Route::Contacts)))
+                .style(button::text),
+        ]
+        .align_y(Alignment::Center),
+    ]
+    .spacing(8);
+
+    if ctx.contacts.is_empty() {
+        peers = peers.push(
+            text("No trusted contacts")
                 .size(12)
                 .style(text::secondary)
                 .width(Length::Fill)
                 .align_x(iced::alignment::Horizontal::Center),
         );
     } else {
-        for conversation in conversations {
-            let is_selected = matches!(&current_route, Route::Messages { .. })
-                && selected_peer_id == Some(conversation.peer_id.as_str());
-            let peer_id = conversation.peer_id.clone();
-            let mut conversation_button = button(
-                row![
-                    container(lucide::user().size(16))
-                        .padding(8)
-                        .style(theme::icon_bubble_container),
-                    column![
-                        text(conversation.title).size(14),
-                        row![
-                            container(Space::new().width(6)).width(6).height(6).style(move |_| {
-                                container::Style {
-                                    background: Some(
-                                        if conversation.online {
-                                            iced::Color::from_rgb(0.2, 0.8, 0.2)
-                                        } else {
-                                            iced::Color::from_rgb(0.5, 0.5, 0.5)
-                                        }
-                                        .into(),
-                                    ),
-                                    border: iced::Border {
-                                        radius: 3.0.into(),
+        for contact in ctx.contacts.iter() {
+            let peer_id = contact.peer_id.clone();
+            let target = Route::Peer { peer_id: peer_id.clone() };
+            let selected = current_route.same_screen(&target);
+            let nearby = ctx.is_nearby(&peer_id);
+            let phase = ctx.sessions.session_for_peer(&peer_id).map(|session| session.phase);
+            let subtitle = sidebar_subtitle(ctx, &peer_id, nearby, phase);
+            let indicator = match phase {
+                Some(PeerSessionPhase::Connected) => iced::Color::from_rgb(0.18, 0.72, 0.34),
+                Some(PeerSessionPhase::Incoming) => iced::Color::from_rgb(0.92, 0.66, 0.20),
+                Some(PeerSessionPhase::Requesting | PeerSessionPhase::Negotiating) => {
+                    iced::Color::from_rgb(0.28, 0.55, 0.92)
+                }
+                Some(PeerSessionPhase::Disconnecting) => iced::Color::from_rgb(0.55, 0.55, 0.58),
+                None if nearby => iced::Color::from_rgb(0.28, 0.55, 0.92),
+                None => iced::Color::from_rgb(0.45, 0.45, 0.48),
+            };
+
+            peers = peers.push(
+                button(
+                    row![
+                        container(lucide::user().size(16))
+                            .padding(8)
+                            .style(theme::icon_bubble_container),
+                        column![
+                            text(contact.name.clone()).size(14),
+                            row![
+                                container(Space::new()).width(6).height(6).style(move |_| {
+                                    container::Style {
+                                        background: Some(indicator.into()),
+                                        border: iced::Border {
+                                            radius: 3.0.into(),
+                                            ..Default::default()
+                                        },
                                         ..Default::default()
-                                    },
-                                    ..Default::default()
-                                }
-                            }),
-                            text(conversation.subtitle).size(10).style(text::secondary),
+                                    }
+                                }),
+                                text(subtitle).size(10).style(text::secondary),
+                            ]
+                            .spacing(5)
+                            .align_y(Alignment::Center),
                         ]
-                        .spacing(5)
-                        .align_y(Alignment::Center),
+                        .spacing(2),
                     ]
-                    .spacing(2),
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center),
-            )
-            .width(Length::Fill)
-            .style(move |theme, status| theme::sidebar_button_style(theme, status, is_selected));
-
-            if messaging_available {
-                conversation_button = conversation_button.on_press(Message::Navigation(
-                    NavigationMessage::Navigate(Route::Messages { peer_id: Some(peer_id) }),
-                ));
-            }
-
-            conversations_list = conversations_list.push(conversation_button);
+                    .spacing(10)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::Navigation(NavigationMessage::Navigate(target)))
+                .width(Length::Fill)
+                .style(move |theme, status| theme::sidebar_button_style(theme, status, selected)),
+            );
         }
     }
 
-    let my_id = {
-        let local_id =
-            ctx.networking.local_peer_id.clone().or_else(|| ctx.config.identity.peer_id.clone());
-        let local_id_display = local_id
-            .as_deref()
-            .map(|id| format!("{}...", truncate(id, 12)))
-            .unwrap_or("Initializing...".to_owned());
-
+    let identity = {
+        let pairing_invite =
+            ctx.local_peer_id.as_ref().zip(ctx.local_public_key.as_ref()).and_then(
+                |(peer_id, public_key)| {
+                    PairingInvite::new(peer_id.clone(), public_key.clone()).ok()
+                },
+            );
+        let id = ctx.local_peer_id.as_ref().map(ToString::to_string);
+        let id_text = id.clone().unwrap_or_else(|| "Starting...".into());
+        let display = fjarsyn_core::utils::text::truncate_with_ellipsis(&id_text, 18);
+        let fingerprint = pairing_invite.as_ref().map(|invite| invite.fingerprint().to_string());
+        let fingerprint_display =
+            fingerprint.as_deref().map(fingerprint_grid).unwrap_or_else(|| "Starting...".into());
+        let invite_text = pairing_invite.map(|invite| invite.to_string());
+        let mut copy_id = button(lucide::copy().size(14)).style(button::text);
+        if let Some(id) = id {
+            copy_id = copy_id.on_press(Message::CopyId(id));
+        }
+        let mut copy_invite = button(
+            row![lucide::clipboard_copy().size(14), text("Copy pairing invite").size(11)]
+                .spacing(7)
+                .align_y(Alignment::Center),
+        )
+        .style(button::text);
+        if let Some(invite) = invite_text {
+            copy_invite = copy_invite.on_press(Message::CopyInvite(invite));
+        }
+        let mut copy_fingerprint = button(lucide::copy().size(14)).style(button::text);
+        if let Some(fingerprint) = fingerprint {
+            copy_fingerprint = copy_fingerprint.on_press(Message::CopyFingerprint(fingerprint));
+        }
         container(
-            row![
-                column![
-                    text("YOUR ID").size(10).style(text::secondary),
-                    text(local_id_display.clone()).size(12).style(text::primary),
+            column![
+                row![
+                    column![
+                        text("YOUR ID").size(10).style(text::secondary),
+                        text(display).size(12).style(text::primary),
+                    ]
+                    .width(Length::Fill),
+                    copy_id,
                 ]
-                .width(Length::Fill),
-                button(lucide::copy().size(14))
-                    .on_press(Message::CopyId(local_id.unwrap_or(local_id_display)))
-                    .style(button::text)
+                .align_y(Alignment::Center),
+                row![
+                    text("FULL IDENTITY FINGERPRINT")
+                        .size(10)
+                        .style(text::secondary)
+                        .width(Length::Fill),
+                    copy_fingerprint,
+                ]
+                .align_y(Alignment::Center),
+                text(fingerprint_display)
+                    .size(12)
+                    .font(iced::Font::MONOSPACE)
+                    .style(text::primary)
+                    .width(Length::Fill),
+                copy_invite,
+                text("Copying is convenient, but compare through a separate trusted channel. Pairing is mutual: import theirs too.")
+                    .size(10)
+                    .style(text::secondary),
             ]
-            .align_y(Alignment::Center)
-            .spacing(5),
+            .spacing(8),
         )
         .padding(10)
         .style(theme::id_card_container)
@@ -192,16 +186,10 @@ pub fn sidebar<'a>(ctx: ShellContext<'a>, current_route: Route) -> Element<'a, M
 
     container(
         column![
-            sidebar_nav,
-            container(scrollable(conversations_list)).height(Length::Fill),
-            my_id,
-            sidebar_button(
-                current_route,
-                Route::Settings,
-                lucide::settings(),
-                "Settings",
-                Some(Message::Navigation(NavigationMessage::Navigate(Route::Settings))),
-            ),
+            navigation,
+            container(scrollable(peers)).height(Length::Fill),
+            identity,
+            sidebar_button(&current_route, Route::Settings, lucide::settings(), "Settings"),
         ]
         .padding(10)
         .spacing(15),
@@ -212,88 +200,72 @@ pub fn sidebar<'a>(ctx: ShellContext<'a>, current_route: Route) -> Element<'a, M
     .into()
 }
 
-fn messaging_unavailable_text(ctx: ShellContext<'_>) -> &'static str {
-    if !ctx.accepts_user_requests() {
-        "Messaging is unavailable while the app is shutting down"
-    } else {
-        "Messaging is unavailable until the service is ready"
-    }
+fn fingerprint_grid(fingerprint: &str) -> String {
+    fingerprint
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .chunks(4)
+        .map(|groups| groups.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-fn build_sidebar_conversations(
+fn sidebar_subtitle(
     ctx: ShellContext<'_>,
-    selected_peer_id: Option<&str>,
-) -> Vec<SidebarConversation> {
-    let contacts = ctx.contacts.contacts.as_slice();
-    let summaries = ctx.messaging.summaries.as_slice();
-
-    let mut conversations = Vec::new();
-    let mut seen = HashSet::new();
-
-    for summary in summaries {
-        if !seen.insert(summary.peer_id.clone()) {
-            continue;
-        }
-
-        conversations.push(build_sidebar_conversation(
-            ctx,
-            contacts,
-            summary.peer_id.clone(),
-            Some(summary),
-        ));
+    peer_id: &PeerId,
+    nearby: bool,
+    phase: Option<PeerSessionPhase>,
+) -> String {
+    if let Some(status) = session_status(phase) {
+        return status.into();
     }
-
-    if let Some(selected_peer_id) = selected_peer_id
-        && seen.insert(selected_peer_id.to_string())
+    if let Some(summary) =
+        ctx.messaging.summaries.iter().find(|summary| &summary.peer_id == peer_id)
     {
-        conversations.push(build_sidebar_conversation(
-            ctx,
-            contacts,
-            selected_peer_id.to_string(),
-            None,
-        ));
+        let prefix =
+            if summary.last_message_direction == MessageDirection::Outgoing { "You: " } else { "" };
+        return format!(
+            "{}{}",
+            prefix,
+            fjarsyn_core::utils::text::truncate_with_ellipsis(&summary.last_message_body, 18)
+        );
     }
-
-    conversations
+    if nearby { "Nearby".into() } else { "Away".into() }
 }
 
-fn build_sidebar_conversation(
-    ctx: ShellContext<'_>,
-    contacts: &[Contact],
-    peer_id: String,
-    summary: Option<&ConversationSummary>,
-) -> SidebarConversation {
-    let discovered = ctx.networking.discovered_peers.iter().find(|peer| peer.id == peer_id);
-    let contact = contacts.iter().find(|contact| contact.peer_id == peer_id);
-
-    SidebarConversation {
-        title: contact
-            .map(|contact| contact.name.clone())
-            .or_else(|| {
-                discovered
-                    .map(|peer| peer.instance_name.trim().to_string())
-                    .filter(|name| !name.is_empty())
-            })
-            .unwrap_or_else(|| abbreviate_middle(&peer_id, 14, 6)),
-        subtitle: summary.map(sidebar_preview).unwrap_or_else(|| {
-            if discovered.is_some() { "Online" } else { "No messages yet" }.into()
-        }),
-        online: discovered.is_some(),
-        peer_id,
+fn session_status(phase: Option<PeerSessionPhase>) -> Option<&'static str> {
+    match phase {
+        Some(PeerSessionPhase::Requesting | PeerSessionPhase::Negotiating) => Some("Connecting"),
+        Some(PeerSessionPhase::Incoming) => Some("Incoming request"),
+        Some(PeerSessionPhase::Connected) => Some("Connected"),
+        Some(PeerSessionPhase::Disconnecting) => Some("Disconnecting"),
+        None => None,
     }
 }
 
-fn sidebar_preview(summary: &ConversationSummary) -> String {
-    let prefix = if matches!(summary.last_message_direction, MessageDirection::Outgoing) {
-        "You: "
-    } else {
-        ""
-    };
-    let body = if summary.last_message_body.chars().count() <= 22 {
-        summary.last_message_body.clone()
-    } else {
-        format!("{}...", summary.last_message_body.chars().take(22).collect::<String>())
-    };
+#[cfg(test)]
+mod tests {
+    use fjarsyn_core::peer_session::PeerSessionPhase;
 
-    format!("{}{}", prefix, body)
+    use super::{fingerprint_grid, session_status};
+
+    #[test]
+    fn live_session_phase_takes_precedence_in_sidebar() {
+        assert_eq!(session_status(Some(PeerSessionPhase::Incoming)), Some("Incoming request"));
+        assert_eq!(session_status(Some(PeerSessionPhase::Negotiating)), Some("Connecting"));
+        assert_eq!(session_status(Some(PeerSessionPhase::Connected)), Some("Connected"));
+        assert_eq!(session_status(Some(PeerSessionPhase::Disconnecting)), Some("Disconnecting"));
+        assert_eq!(session_status(None), None);
+    }
+
+    #[test]
+    fn full_fingerprint_uses_a_fixed_readable_four_by_four_grid() {
+        let fingerprint =
+            "0001 0203 0405 0607 0809 0A0B 0C0D 0E0F 1011 1213 1415 1617 1819 1A1B 1C1D 1E1F";
+        let grid = fingerprint_grid(fingerprint);
+
+        assert_eq!(grid.lines().count(), 4);
+        assert!(grid.lines().all(|line| line.split_whitespace().count() == 4));
+        assert_eq!(grid.split_whitespace().collect::<Vec<_>>().join(" "), fingerprint);
+    }
 }

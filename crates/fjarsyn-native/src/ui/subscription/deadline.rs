@@ -1,7 +1,6 @@
 use futures::stream::once;
 use iced::Subscription;
 
-use super::Fjarsyn;
 use crate::ui::message::Message;
 
 #[derive(Clone, Copy)]
@@ -23,14 +22,6 @@ impl PartialEq for DeadlineSubData {
 }
 
 impl Eq for DeadlineSubData {}
-
-pub(super) fn next_deadline(app: &Fjarsyn) -> Option<std::time::Instant> {
-    match (app.ctx.ui.notifications.next_deadline(), app.ctx.session.incoming_call_timeout) {
-        (Some(left), Some(right)) => Some(left.min(right)),
-        (Some(deadline), None) | (None, Some(deadline)) => Some(deadline),
-        (None, None) => None,
-    }
-}
 
 pub(super) fn deadline_subscription(
     started_at: std::time::Instant,

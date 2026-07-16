@@ -20,18 +20,13 @@ impl ContactsStore for ContactsRepository {
         ContactModel::list(&self.db).await
     }
 
-    async fn get_by_id(&self, id: i64) -> Result<Option<ContactModel>, Error> {
-        ContactModel::get_by_id(&self.db, id).await
-    }
-
     async fn create(
         &self,
         peer_id: String,
         name: String,
-        address: Option<String>,
-        trusted_public_key: Option<String>,
-    ) -> Result<i64, Error> {
-        ContactModel::create(&self.db, peer_id, name, address, trusted_public_key).await
+        trusted_public_key: String,
+    ) -> Result<ContactModel, Error> {
+        ContactModel::create(&self.db, peer_id, name, trusted_public_key).await
     }
 
     async fn delete(&self, id: i64) -> Result<(), Error> {
@@ -43,9 +38,8 @@ impl ContactsStore for ContactsRepository {
         id: i64,
         peer_id: String,
         name: String,
-        address: Option<String>,
-        trusted_public_key: Option<String>,
-    ) -> Result<(), Error> {
-        ContactModel::update(&self.db, id, peer_id, name, address, trusted_public_key).await
+        trusted_public_key: String,
+    ) -> Result<ContactModel, Error> {
+        ContactModel::update(&self.db, id, peer_id, name, trusted_public_key).await
     }
 }

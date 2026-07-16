@@ -2,7 +2,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::SqlitePool;
 
-use crate::{Error, database::MessageModel, repositories::MessagesStore};
+use crate::{
+    Error,
+    database::MessageModel,
+    peer_session::{MessageId, PeerId, SessionId},
+    repositories::MessagesStore,
+};
 
 #[derive(Clone, Debug)]
 pub struct MessagesRepository {
@@ -21,56 +26,109 @@ impl MessagesStore for MessagesRepository {
         MessageModel::list(&self.db).await
     }
 
-    async fn get_by_id(&self, id: i64) -> Result<Option<MessageModel>, Error> {
-        MessageModel::get_by_id(&self.db, id).await
-    }
-
-    async fn get_by_message_id_and_direction(
-        &self,
-        message_id: String,
-        direction: String,
-    ) -> Result<Option<MessageModel>, Error> {
-        MessageModel::get_by_message_id_and_direction(&self.db, message_id, direction).await
-    }
-
     async fn create_outgoing(
         &self,
-        message_id: String,
-        peer_id: String,
+        session_id: SessionId,
+        message_id: MessageId,
+        peer_id: PeerId,
         body: String,
         created_at: DateTime<Utc>,
-    ) -> Result<i64, Error> {
-        MessageModel::create_outgoing(&self.db, message_id, peer_id, body, created_at).await
+    ) -> Result<MessageModel, Error> {
+        MessageModel::create_outgoing(
+            &self.db,
+            &session_id.to_string(),
+            &message_id.to_string(),
+            peer_id.as_str(),
+            &body,
+            created_at,
+        )
+        .await
     }
 
     async fn create_incoming_if_missing(
         &self,
-        message_id: String,
-        peer_id: String,
+        session_id: SessionId,
+        message_id: MessageId,
+        peer_id: PeerId,
         body: String,
         created_at: DateTime<Utc>,
-        delivered_at: DateTime<Utc>,
-    ) -> Result<bool, Error> {
+        received_at: DateTime<Utc>,
+    ) -> Result<Option<MessageModel>, Error> {
         MessageModel::create_incoming_if_missing(
             &self.db,
-            message_id,
-            peer_id,
-            body,
+            &session_id.to_string(),
+            &message_id.to_string(),
+            peer_id.as_str(),
+            &body,
             created_at,
-            delivered_at,
+            received_at,
+        )
+        .await
+    }
+
+    async fn mark_sent(
+        &self,
+        session_id: SessionId,
+        peer_id: PeerId,
+        message_id: MessageId,
+    ) -> Result<Option<MessageModel>, Error> {
+        MessageModel::mark_sent(
+            &self.db,
+            &session_id.to_string(),
+            peer_id.as_str(),
+            &message_id.to_string(),
         )
         .await
     }
 
     async fn mark_delivered(
         &self,
-        message_id: String,
+        session_id: SessionId,
+        peer_id: PeerId,
+        message_id: MessageId,
         delivered_at: DateTime<Utc>,
-    ) -> Result<bool, Error> {
-        MessageModel::mark_delivered(&self.db, message_id, delivered_at).await
+    ) -> Result<Option<MessageModel>, Error> {
+        MessageModel::mark_delivered(
+            &self.db,
+            &session_id.to_string(),
+            peer_id.as_str(),
+            &message_id.to_string(),
+            delivered_at,
+        )
+        .await
     }
 
-    async fn mark_failed(&self, message_id: String) -> Result<bool, Error> {
-        MessageModel::mark_failed(&self.db, message_id).await
+    async fn mark_failed(
+        &self,
+        session_id: SessionId,
+        peer_id: PeerId,
+        message_id: MessageId,
+    ) -> Result<Option<MessageModel>, Error> {
+        MessageModel::mark_failed(
+            &self.db,
+            &session_id.to_string(),
+            peer_id.as_str(),
+            &message_id.to_string(),
+        )
+        .await
+    }
+
+    async fn mark_unknown(
+        &self,
+        session_id: SessionId,
+        peer_id: PeerId,
+        message_id: MessageId,
+    ) -> Result<Option<MessageModel>, Error> {
+        MessageModel::mark_unknown(
+            &self.db,
+            &session_id.to_string(),
+            peer_id.as_str(),
+            &message_id.to_string(),
+        )
+        .await
+    }
+
+    async fn mark_all_pending_unknown(&self) -> Result<Vec<MessageModel>, Error> {
+        MessageModel::mark_all_pending_unknown(&self.db).await
     }
 }

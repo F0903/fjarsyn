@@ -9,7 +9,7 @@ impl Fjarsyn {
         // orchestration that the message implies.
         let screen_task = {
             let active_screen = &mut self.active_screen;
-            let mut ctx = ShellContextMut { state: &mut self.ctx, runtime: &mut self.runtime };
+            let mut ctx = ShellContextMut::new_mut(&mut self.ctx);
             active_screen.update(&mut ctx, message.clone())
         };
         let global_task = global::handle_global_message(self, message);

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
+    identity::{LocalPeerIdentity, StoredIdentityKeypair},
     media::{
         ffmpeg::FFmpegTranscodeTypeExt,
         gpu_interop,
@@ -11,7 +12,6 @@ use crate::{
         transcoding::FFmpegTranscodeType,
         video::{CaptureFramerate, TargetResolution},
     },
-    networking::signaling::auth::{LocalPeerIdentity, StoredIdentityKeypair},
     utils::paths::CONFIG_DIR,
 };
 
@@ -101,60 +101,13 @@ pub enum ConfigError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub app: AppConfig,
     pub identity: IdentityConfig,
     pub video: VideoConfig,
     pub capture: CaptureConfig,
     pub network: NetworkConfig,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum PersistedConfig {
-    Legacy(LegacyConfig),
-    Current(Config),
-}
-
-#[derive(Debug, Deserialize)]
-pub struct LegacyConfig {
-    pub peer_id: Option<String>,
-    pub target_bitrate: u32,
-    pub target_framerate: CaptureFramerate,
-    pub target_resolution: TargetResolution,
-    #[serde(default)]
-    pub pixel_format: serde_json::Value,
-    pub max_depacket_latency: u16,
-    pub transcoding_type: FFmpegTranscodeType,
-    pub record_cursor: bool,
-    pub recording_border_indicator: bool,
-    pub enable_ui_preview: bool,
-}
-
-impl From<LegacyConfig> for Config {
-    fn from(legacy: LegacyConfig) -> Self {
-        let _ = legacy.pixel_format;
-
-        let mut config = Self {
-            app: AppConfig { power_pref: PowerPref::Low },
-            identity: IdentityConfig { peer_id: legacy.peer_id, signing_key: None },
-            video: VideoConfig {
-                target_bitrate: legacy.target_bitrate,
-                target_framerate: legacy.target_framerate,
-                target_resolution: legacy.target_resolution,
-                transcoding_type: legacy.transcoding_type,
-            },
-            capture: CaptureConfig {
-                record_cursor: legacy.record_cursor,
-                recording_border_indicator: legacy.recording_border_indicator,
-                enable_ui_preview: legacy.enable_ui_preview,
-            },
-            network: NetworkConfig { max_depacket_latency: legacy.max_depacket_latency },
-        };
-        config.network.normalize();
-        config
-    }
 }
 
 impl Config {
@@ -178,17 +131,13 @@ impl Config {
 
     // Tries to load the config from disk. If unable to load, a default config is created and saved.
     // If the default config is not able to be saved an error will be returned.
-    pub fn load_or_overwrite() -> Result<Self, ConfigError> {
+    pub fn load_or_create() -> Result<Self, ConfigError> {
         tracing::info!("Loading config");
         let path = Self::get_config_path();
         if path.exists() {
             let content = fs::read(&path).map_err(ConfigError::Read)?;
-            let persisted: PersistedConfig = serde_json::from_slice(&content)?;
-            let mut config = match persisted {
-                PersistedConfig::Current(config) => config,
-                PersistedConfig::Legacy(config) => config.into(),
-            }
-            .normalized();
+            let mut config: Config = serde_json::from_slice(&content)?;
+            config = config.normalized();
             if config.ensure_signing_key() {
                 config.save().map_err(ConfigError::Save)?;
             }
@@ -217,8 +166,9 @@ impl Config {
 pub fn parse_target_bitrate_input(value: &str) -> Result<u32, String> {
     value
         .parse::<u32>()
-        .map(|kbps| kbps * 1000)
-        .map_err(|_| format!("Invalid bitrate value: '{}'", value))
+        .map_err(|_| format!("Invalid bitrate value: '{}'", value))?
+        .checked_mul(1000)
+        .ok_or_else(|| format!("Bitrate value is too large: '{}'", value))
 }
 
 pub fn clamp_max_depacket_latency(value: u16) -> u16 {
@@ -238,4 +188,26 @@ pub fn requires_capture_readback(config: &Config) -> bool {
         PixelFormat::DEFAULT_CAPTURE,
         config.video.transcoding_type.get_encoder_info().hw_accel,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bitrate_input_uses_checked_unit_conversion() {
+        assert_eq!(parse_target_bitrate_input("8000"), Ok(8_000_000));
+        assert!(parse_target_bitrate_input(&u32::MAX.to_string()).is_err());
+    }
+
+    #[test]
+    fn network_latency_is_normalized_to_the_supported_limit() {
+        let mut config = Config::default();
+        config.network.max_depacket_latency = u16::MAX;
+
+        assert_eq!(
+            config.normalized().network.max_depacket_latency,
+            NetworkConfig::MAX_DEPACKET_LATENCY_MS
+        );
+    }
 }

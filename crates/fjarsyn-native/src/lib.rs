@@ -17,8 +17,6 @@ pub enum Error {
     UiWindowMgmtError(#[from] iced_winit::Error),
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-    #[error("WebRTC error: {0}")]
-    WebRtcError(#[from] fjarsyn_core::networking::webrtc::WebRTCError),
     #[error("Config error: {0}")]
     ConfigError(#[from] fjarsyn_core::config::ConfigError),
 }

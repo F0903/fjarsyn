@@ -1,62 +1,66 @@
-use fjarsyn_core::utils::text::truncate;
+use fjarsyn_core::peer_session::PeerSessionPhase;
 use iced::{
-    Element, Length,
+    Alignment, Element, Length,
     widget::{button, column, container, row, text},
 };
 use iced_fonts::lucide;
 
 use super::super::Fjarsyn;
-use crate::ui::message::{CallActionMessage, Message};
+use crate::ui::{
+    message::{Message, PeerActionMessage},
+    theme,
+};
 
 impl Fjarsyn {
-    pub(super) fn incoming_call_popup<'a>(&self) -> Element<'a, Message> {
-        let sender_id = match &self.ctx.session.incoming_call_id {
-            Some(id) => id,
-            None => {
-                return column![].into();
-            }
-        };
-
-        let sender_name = self
+    pub(super) fn incoming_session_popup(&self) -> Option<Element<'_, Message>> {
+        let incoming = self
             .ctx
-            .networking
-            .discovered_peers
+            .sessions
+            .sessions
             .iter()
-            .find(|p| p.id == *sender_id)
-            .map(|p| p.instance_name.clone())
-            .unwrap_or_else(|| format!("{}...", truncate(sender_id, 8)));
+            .find(|session| session.phase == PeerSessionPhase::Incoming)?;
+        let name = self.ctx.display_name(&incoming.peer_id);
+        let session_id = incoming.session_id;
 
-        container(
+        Some(
             container(
-                column![
-                    text("Incoming Call").size(14).style(text::secondary),
-                    text(sender_name).size(20).style(text::primary),
-                    row![
-                        button(row![lucide::phone_incoming().size(16), text("Accept")].spacing(10))
-                            .on_press(Message::CallAction(CallActionMessage::AcceptCall))
-                            .style(button::success)
-                            .padding(10),
-                        button(row![lucide::phone_off().size(16), text("Decline")].spacing(10))
-                            .on_press(Message::CallAction(CallActionMessage::DeclineCall))
-                            .style(button::danger)
-                            .padding(10),
+                container(
+                    column![
+                        text("Connection request").size(14).style(text::secondary),
+                        text(name).size(20).style(text::primary),
+                        text("Accept to create an authenticated WebRTC session.")
+                            .size(12)
+                            .style(text::secondary),
+                        row![
+                            button(row![lucide::check().size(15), text("Accept")].spacing(8))
+                                .on_press(Message::PeerAction(PeerActionMessage::Accept {
+                                    session_id,
+                                }))
+                                .style(button::success)
+                                .padding(10),
+                            button(row![lucide::x().size(15), text("Reject")].spacing(8))
+                                .on_press(Message::PeerAction(PeerActionMessage::Reject {
+                                    session_id,
+                                }))
+                                .style(button::danger)
+                                .padding(10),
+                        ]
+                        .spacing(12),
                     ]
-                    .spacing(15)
-                ]
-                .spacing(15)
-                .align_x(iced::Alignment::Center),
+                    .spacing(14)
+                    .align_x(Alignment::Center),
+                )
+                .padding(22)
+                .style(theme::card_container),
             )
-            .padding(20)
-            .style(crate::ui::theme::card_container),
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(iced::Color { a: 0.78, ..iced::Color::BLACK }.into()),
+                ..Default::default()
+            })
+            .into(),
         )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(iced::Color { a: 0.8, ..iced::Color::BLACK }.into()),
-            ..Default::default()
-        })
-        .into()
     }
 }
