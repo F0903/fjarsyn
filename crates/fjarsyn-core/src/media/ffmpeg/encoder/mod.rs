@@ -12,7 +12,7 @@ mod software;
 mod windows;
 
 use crate::media::{
-    TargetResolution,
+    CodecDeviceLease, TargetResolution,
     ffmpeg::ffmpeg_transcode_type::{FFmpegTranscodeType, FFmpegTranscodeTypeExt, HWAccelType},
     frame::Frame,
     pixel_format::PixelFormat,
@@ -58,7 +58,7 @@ impl FFmpegEncoder {
         target_framerate_hz: f32,
         target_resolution: TargetResolution,
         input_format: PixelFormat,
-        device_handle: Option<*mut std::ffi::c_void>,
+        device: Option<CodecDeviceLease>,
         transcoding_type: FFmpegTranscodeType,
     ) -> Result<Self> {
         ffmpeg::init().map_err(FFmpegEncoderError::Create)?;
@@ -68,7 +68,7 @@ impl FFmpegEncoder {
 
         #[cfg(target_os = "windows")]
         let hw_device_ctx = match transcoding_type.get_encoder_info().hw_accel {
-            HWAccelType::D3D11VA => device_handle.and_then(Self::init_hw_device_ctx),
+            HWAccelType::D3D11VA => device.as_ref().and_then(Self::init_hw_device_ctx),
             HWAccelType::None => None,
         };
 
@@ -133,8 +133,6 @@ impl std::fmt::Debug for FFmpegEncoder {
             .finish()
     }
 }
-
-unsafe impl Send for FFmpegEncoder {}
 
 impl Drop for FFmpegEncoder {
     fn drop(&mut self) {

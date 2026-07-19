@@ -3,6 +3,7 @@ use ffmpeg_next as ffmpeg;
 use windows_core::Interface;
 
 use super::{FFmpegEncoder, FFmpegEncoderError, Result};
+use crate::media::CodecDeviceLease;
 
 #[repr(C)]
 pub struct AVD3D11VADeviceContext {
@@ -17,7 +18,7 @@ pub struct AVD3D11VADeviceContext {
 
 impl FFmpegEncoder {
     pub(super) fn init_hw_device_ctx(
-        handle: *mut std::ffi::c_void,
+        device_lease: &CodecDeviceLease,
     ) -> Option<*mut ffmpeg_next::ffi::AVBufferRef> {
         unsafe {
             let ctx = ffmpeg_next::ffi::av_hwdevice_ctx_alloc(
@@ -27,12 +28,12 @@ impl FFmpegEncoder {
                 let hw_ctx = (*ctx).data as *mut ffmpeg_next::ffi::AVHWDeviceContext;
                 let d3d11_ctx = (*hw_ctx).hwctx as *mut AVD3D11VADeviceContext;
 
-                let device: std::mem::ManuallyDrop<
-                    windows::Win32::Graphics::Direct3D11::ID3D11Device,
-                > = std::mem::ManuallyDrop::new(std::mem::transmute_copy(&handle));
+                // Transfer one explicit COM reference for each interface that
+                // FFmpeg's D3D11 device context will release.
+                let device = std::mem::ManuallyDrop::new(device_lease.d3d11().clone());
                 let device_context = device.GetImmediateContext().ok();
 
-                (*d3d11_ctx).device = handle as *mut _;
+                (*d3d11_ctx).device = device.as_raw() as *mut _;
                 if let Some(context) = device_context {
                     (*d3d11_ctx).device_context =
                         std::mem::ManuallyDrop::new(context).as_raw() as *mut _;

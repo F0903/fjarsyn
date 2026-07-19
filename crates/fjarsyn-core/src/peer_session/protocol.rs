@@ -7,11 +7,14 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
 
-use super::{MessageId, PeerId, PeerSessionError, SessionId, ShareId};
+use super::{
+    MessageId, PeerId, PeerSessionError, SessionId, ShareEpoch, ShareId,
+    restart::TransportGeneration,
+};
 use crate::identity::{LocalPeerIdentity, TrustedPeerIdentity};
 
 pub(crate) const SIGNALING_VERSION: u8 = 1;
-pub(crate) const DATA_PROTOCOL_VERSION: u8 = 1;
+pub(crate) const DATA_PROTOCOL_VERSION: u8 = 2;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
@@ -19,12 +22,14 @@ pub(crate) enum NegotiationSignal {
     EndpointHello { challenge: Uuid },
     EndpointProof { challenge: Uuid },
     Request {},
+    Restart { generation: TransportGeneration },
+    RestartAck { generation: TransportGeneration },
     Accept {},
-    Offer { sdp: String },
-    Answer { sdp: String },
-    IceCandidate { candidate: RTCIceCandidateInit },
-    Ready {},
-    ReadyAck {},
+    Offer { generation: TransportGeneration, sdp: String },
+    Answer { generation: TransportGeneration, sdp: String },
+    IceCandidate { generation: TransportGeneration, candidate: RTCIceCandidateInit },
+    Ready { generation: TransportGeneration },
+    ReadyAck { generation: TransportGeneration },
     Reject { reason: String },
     Cancel {},
 }
@@ -32,8 +37,8 @@ pub(crate) enum NegotiationSignal {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub(crate) enum ControlMessage {
-    ShareStarted { version: u8, share_id: ShareId },
-    ShareStopped { version: u8, share_id: ShareId },
+    ShareStarted { version: u8, share_id: ShareId, epoch: ShareEpoch },
+    ShareStopped { version: u8, share_id: ShareId, epoch: ShareEpoch },
     Disconnect { version: u8 },
 }
 
@@ -44,7 +49,13 @@ impl ControlMessage {
             | Self::ShareStopped { version, .. }
             | Self::Disconnect { version } => *version,
         };
-        validate_data_version(version)
+        validate_data_version(version)?;
+        match self {
+            Self::ShareStarted { epoch, .. } | Self::ShareStopped { epoch, .. } => {
+                epoch.require_valid()
+            }
+            Self::Disconnect { .. } => Ok(()),
+        }
     }
 }
 
@@ -329,6 +340,37 @@ mod tests {
     }
 
     #[test]
+    fn share_control_requires_v2_and_a_nonzero_epoch() {
+        let message = ControlMessage::ShareStarted {
+            version: DATA_PROTOCOL_VERSION,
+            share_id: ShareId::new(),
+            epoch: ShareEpoch::FIRST,
+        };
+        assert!(message.validate().is_ok());
+
+        let encoded = serde_json::to_vec(&message).unwrap();
+        assert_eq!(serde_json::from_slice::<ControlMessage>(&encoded).unwrap(), message);
+
+        let wrong_version = ControlMessage::ShareStarted {
+            version: DATA_PROTOCOL_VERSION - 1,
+            share_id: ShareId::new(),
+            epoch: ShareEpoch::FIRST,
+        };
+        assert!(wrong_version.validate().is_err());
+
+        let zero_epoch = ControlMessage::ShareStopped {
+            version: DATA_PROTOCOL_VERSION,
+            share_id: ShareId::new(),
+            epoch: ShareEpoch::from_value(0),
+        };
+        assert!(zero_epoch.validate().is_err());
+
+        let mut missing_epoch = serde_json::to_value(message).unwrap();
+        missing_epoch.as_object_mut().unwrap().remove("epoch");
+        assert!(serde_json::from_value::<ControlMessage>(missing_epoch).is_err());
+    }
+
+    #[test]
     fn envelope_rejects_wrong_sender_target_session_and_mutated_sdp() {
         let identity = LocalPeerIdentity::generate();
         let remote = PeerId::new("remote").unwrap();
@@ -341,7 +383,10 @@ mod tests {
             session,
             remote.clone(),
             local.clone(),
-            NegotiationSignal::Offer { sdp: "signed-sdp".into() },
+            NegotiationSignal::Offer {
+                generation: TransportGeneration::INITIAL,
+                sdp: "signed-sdp".into(),
+            },
             now,
         )
         .unwrap();
@@ -369,8 +414,49 @@ mod tests {
         assert!(verify(&envelope, &remote, &local, SessionId::new()).is_err());
 
         let mut mutated = envelope;
-        mutated.payload = NegotiationSignal::Offer { sdp: "mutated-sdp".into() };
+        mutated.payload = NegotiationSignal::Offer {
+            generation: TransportGeneration::INITIAL,
+            sdp: "mutated-sdp".into(),
+        };
         assert!(verify(&mutated, &remote, &local, session).is_err());
+    }
+
+    #[test]
+    fn envelope_signature_binds_transport_generation() {
+        let identity = LocalPeerIdentity::generate();
+        let remote = PeerId::new("remote").unwrap();
+        let local = PeerId::new("local").unwrap();
+        let trusted = TrustedPeerIdentity::new(remote.clone(), identity.public_key_base64());
+        let session = SessionId::new();
+        let now = Utc::now();
+        let mut envelope = SignedSessionEnvelope::sign(
+            &identity,
+            session,
+            remote.clone(),
+            local.clone(),
+            NegotiationSignal::Restart { generation: TransportGeneration::from_value(1) },
+            now,
+        )
+        .unwrap();
+        envelope.payload =
+            NegotiationSignal::Restart { generation: TransportGeneration::from_value(2) };
+
+        assert!(
+            envelope
+                .verify(
+                    EnvelopeVerification {
+                        trusted_peer: &trusted,
+                        expected_local: &local,
+                        expected_remote: Some(&remote),
+                        expected_session: Some(session),
+                        now,
+                        max_age: Duration::minutes(5),
+                        max_clock_skew: Duration::seconds(30),
+                    },
+                    &mut SessionReplayCache::new(8),
+                )
+                .is_err()
+        );
     }
 
     #[test]

@@ -11,7 +11,7 @@ pub trait CaptureProvider {
     fn stop_capture(&mut self) -> Self::Result<()>;
     fn is_capturing(&self) -> bool;
 
-    fn raw_device_handle(&self) -> Option<*mut std::ffi::c_void> {
+    fn codec_device(&self) -> Option<crate::media::CodecDeviceLease> {
         None
     }
 }

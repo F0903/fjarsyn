@@ -81,9 +81,9 @@ pub fn handle_peer_action(app: &mut Fjarsyn, message: PeerActionMessage) -> Task
             Task::none()
         }
         PeerActionMessage::BeginScreenShare { session_id } => begin_screen_share(app, session_id),
-        PeerActionMessage::CaptureSourceSelected { session_id, result } => match result {
-            Ok(Some(item)) => start_screen_share(app, session_id, item),
-            Ok(None) => {
+        PeerActionMessage::CaptureSourceSelected { session_id, result } => {
+            if app.ctx.media.encoder_restart_required() {
+                app.ctx.notify_error(encoder_restart_required_message());
                 if let Some(media) = media(app) {
                     Task::future(async move {
                         media.lock().await.cancel_local(session_id).await;
@@ -92,19 +92,33 @@ pub fn handle_peer_action(app: &mut Fjarsyn, message: PeerActionMessage) -> Task
                 } else {
                     Task::none()
                 }
-            }
-            Err(error) => {
-                app.ctx.notify_error(format!("Failed to select a capture source: {error}"));
-                if let Some(media) = media(app) {
-                    Task::future(async move {
-                        media.lock().await.fail_local(session_id, error).await;
-                        Message::NoOp
-                    })
-                } else {
-                    Task::none()
+            } else {
+                match result {
+                    Ok(Some(item)) => start_screen_share(app, session_id, item),
+                    Ok(None) => {
+                        if let Some(media) = media(app) {
+                            Task::future(async move {
+                                media.lock().await.cancel_local(session_id).await;
+                                Message::NoOp
+                            })
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    Err(error) => {
+                        app.ctx.notify_error(format!("Failed to select a capture source: {error}"));
+                        if let Some(media) = media(app) {
+                            Task::future(async move {
+                                media.lock().await.fail_local(session_id, error).await;
+                                Message::NoOp
+                            })
+                        } else {
+                            Task::none()
+                        }
+                    }
                 }
             }
-        },
+        }
         PeerActionMessage::StopScreenShare { session_id } => stop_screen_share(app, session_id),
         PeerActionMessage::ScreenShareCompleted(result) => {
             if let Err(error) = result {
@@ -119,6 +133,10 @@ fn begin_screen_share(
     app: &mut Fjarsyn,
     session_id: fjarsyn_core::peer_session::SessionId,
 ) -> Task<Message> {
+    if app.ctx.media.encoder_restart_required() {
+        app.ctx.notify_error(encoder_restart_required_message());
+        return Task::none();
+    }
     let Some(raw_window_id) = app.ctx.ui.main_window.as_ref().and_then(|window| window.raw_id)
     else {
         app.ctx.notify_error("The application window is not ready for capture selection.");
@@ -148,6 +166,10 @@ fn start_screen_share(
     session_id: fjarsyn_core::peer_session::SessionId,
     item: fjarsyn_core::capture_providers::PlatformCaptureItem,
 ) -> Task<Message> {
+    if app.ctx.media.encoder_restart_required() {
+        app.ctx.notify_error(encoder_restart_required_message());
+        return Task::none();
+    }
     let Some(sessions) = sessions(app) else {
         return unavailable(app);
     };
@@ -157,21 +179,19 @@ fn start_screen_share(
     let config = app.ctx.config.clone();
 
     Task::future(async move {
-        media.lock().await.begin_local_start(session_id).await;
         let result = async {
+            media.lock().await.begin_local_start(session_id).await?;
             let share_id = resolve_started_share(&sessions, session_id)
                 .await
                 .map_err(|error| error.to_string())?;
-            let sink = match sessions.encoded_video_sink(session_id).await {
+            let sink = match sessions.encoded_video_sink(session_id, share_id).await {
                 Ok(sink) => sink,
                 Err(error) => {
                     let _ = sessions.stop_screen_share(session_id, share_id).await;
                     return Err(error.to_string());
                 }
             };
-            if let Err(error) =
-                media.lock().await.start_local(session_id, share_id, item, sink, config).await
-            {
+            if let Err(error) = media.lock().await.start_local(item, sink, config).await {
                 let _ = sessions.stop_screen_share(session_id, share_id).await;
                 return Err(error);
             }
@@ -250,7 +270,7 @@ fn active_local_share(
     session_id: SessionId,
 ) -> Option<ShareId> {
     snapshot.session(session_id).and_then(|session| match session.local_share {
-        LocalShareState::Active { share_id } => Some(share_id),
+        LocalShareState::Active { share_id, .. } => Some(share_id),
         LocalShareState::Inactive => None,
     })
 }
@@ -268,6 +288,10 @@ fn media(
 fn unavailable(app: &mut Fjarsyn) -> Task<Message> {
     app.ctx.notify_error("Peer sessions are unavailable while Fjarsyn is starting.");
     Task::none()
+}
+
+fn encoder_restart_required_message() -> &'static str {
+    "Screen sharing is unavailable until Fjarsyn restarts."
 }
 
 fn session_command<F, Fut>(app: &mut Fjarsyn, command: F) -> Task<Message>

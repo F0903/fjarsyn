@@ -366,12 +366,11 @@ impl CaptureProvider for WgcCaptureProvider {
         self.capturing
     }
 
-    fn raw_device_handle(&self) -> Option<*mut std::ffi::c_void> {
+    fn codec_device(&self) -> Option<crate::media::CodecDeviceLease> {
         let device = self.device.get();
-        super::super::d3d11_utils::winrt_to_native_d3d11device(&device).ok().map(|device| {
-            let device = std::mem::ManuallyDrop::new(device);
-            windows_core::Interface::as_raw(&*device)
-        })
+        super::super::d3d11_utils::winrt_to_native_d3d11device(&device)
+            .ok()
+            .map(crate::media::CodecDeviceLease::from_d3d11)
     }
 }
 

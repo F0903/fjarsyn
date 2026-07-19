@@ -28,7 +28,8 @@ use super::{
     protocol::{
         EnvelopeVerification, NegotiationSignal, SessionReplayCache, SignedSessionEnvelope,
     },
-    service::TrustedPeerResolver,
+    restart::TransportGeneration,
+    service::{PeerEndpointResolver, TrustedPeerResolver},
 };
 use crate::identity::{LocalPeerIdentity, TrustedPeerIdentity};
 
@@ -50,6 +51,81 @@ pub(crate) struct NegotiationLimits {
     pub idle_timeout: Duration,
     pub max_message_age: ChronoDuration,
     pub max_clock_skew: ChronoDuration,
+}
+
+/// Resolves fresh discovery hints and opens an authenticated, identity-pinned
+/// signaling connection. Session actors use the same service for initial
+/// negotiation and short-lived ICE recovery.
+#[derive(Clone)]
+pub(crate) struct NegotiationService {
+    local_peer_id: PeerId,
+    local_identity: LocalPeerIdentity,
+    trusted_peers: Arc<dyn TrustedPeerResolver>,
+    endpoints: Arc<dyn PeerEndpointResolver>,
+    max_endpoint_attempts: usize,
+    endpoint_attempt_timeout: Duration,
+    limits: NegotiationLimits,
+}
+
+impl std::fmt::Debug for NegotiationService {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NegotiationService")
+            .field("local_peer_id", &self.local_peer_id)
+            .field("max_endpoint_attempts", &self.max_endpoint_attempts)
+            .finish_non_exhaustive()
+    }
+}
+
+impl NegotiationService {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        local_peer_id: PeerId,
+        local_identity: LocalPeerIdentity,
+        trusted_peers: Arc<dyn TrustedPeerResolver>,
+        endpoints: Arc<dyn PeerEndpointResolver>,
+        max_endpoint_attempts: usize,
+        endpoint_attempt_timeout: Duration,
+        limits: NegotiationLimits,
+    ) -> Self {
+        Self {
+            local_peer_id,
+            local_identity,
+            trusted_peers,
+            endpoints,
+            max_endpoint_attempts,
+            endpoint_attempt_timeout,
+            limits,
+        }
+    }
+
+    pub(crate) async fn connect(
+        &self,
+        session_id: SessionId,
+        remote_peer_id: PeerId,
+    ) -> Result<NegotiationConnection, PeerSessionError> {
+        let trusted_peer = self
+            .trusted_peers
+            .trusted_peer(&remote_peer_id)
+            .await?
+            .ok_or_else(|| PeerSessionError::PeerNotTrusted(remote_peer_id.clone()))?;
+        let endpoint_hints = self.endpoints.endpoint_hints_for(&remote_peer_id).await?;
+        if endpoint_hints.is_empty() {
+            return Err(PeerSessionError::PeerNotNearby(remote_peer_id));
+        }
+        NegotiationConnection::connect_from_hints(
+            &endpoint_hints,
+            self.max_endpoint_attempts,
+            self.endpoint_attempt_timeout,
+            session_id,
+            self.local_peer_id.clone(),
+            remote_peer_id,
+            self.local_identity.clone(),
+            trusted_peer,
+            self.limits.clone(),
+        )
+        .await
+    }
 }
 
 #[derive(Clone)]
@@ -209,10 +285,17 @@ impl AuthenticationAttemptLimiter {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NegotiationIntent {
+    NewSession,
+    Restart { generation: TransportGeneration },
+}
+
 pub(crate) struct IncomingNegotiation {
     pub session_id: SessionId,
     pub peer_id: PeerId,
     pub authenticated_public_key: String,
+    pub intent: NegotiationIntent,
     pub connection: NegotiationConnection,
 }
 
@@ -222,6 +305,7 @@ impl std::fmt::Debug for IncomingNegotiation {
             .debug_struct("IncomingNegotiation")
             .field("session_id", &self.session_id)
             .field("peer_id", &self.peer_id)
+            .field("intent", &self.intent)
             .finish_non_exhaustive()
     }
 }
@@ -381,6 +465,7 @@ pub(crate) struct NegotiationConnection {
     session_id: SessionId,
     local_peer_id: PeerId,
     remote_peer_id: PeerId,
+    authenticated_remote_public_key: String,
     local_identity: LocalPeerIdentity,
     outbound_tx: mpsc::Sender<OutboundEnvelope>,
     inbound_rx: mpsc::Receiver<Result<NegotiationSignal, PeerSessionError>>,
@@ -403,6 +488,10 @@ impl std::fmt::Debug for NegotiationConnection {
 }
 
 impl NegotiationConnection {
+    pub(crate) fn authenticated_remote_public_key(&self) -> &str {
+        &self.authenticated_remote_public_key
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn connect_from_hints(
         endpoint_hints: &[SocketAddr],
@@ -648,15 +737,21 @@ async fn accept_connection(
         send_handshake_envelope(&mut socket, proof, &limits).await?;
 
         let request = receive_handshake_envelope(&mut socket, &limits).await?;
-        if !matches!(request.payload(), NegotiationSignal::Request {}) {
-            return Err(PeerSessionError::Protocol(
-                "endpoint authentication must be followed by a connection request".into(),
-            ));
-        }
+        let intent = match request.payload() {
+            NegotiationSignal::Request {} => NegotiationIntent::NewSession,
+            NegotiationSignal::Restart { generation } => {
+                NegotiationIntent::Restart { generation: *generation }
+            }
+            _ => {
+                return Err(PeerSessionError::Protocol(
+                    "endpoint authentication must be followed by a session intent".into(),
+                ));
+            }
+        };
         verify_incoming_handshake(&request, &verification, &mut replay)?;
-        Ok::<_, PeerSessionError>((socket, session_id, peer_id, trusted_peer, replay))
+        Ok::<_, PeerSessionError>((socket, session_id, peer_id, trusted_peer, intent, replay))
     };
-    let (socket, session_id, peer_id, trusted_peer, replay) =
+    let (socket, session_id, peer_id, trusted_peer, intent, replay) =
         tokio::time::timeout_at(authentication_deadline, authenticating).await.map_err(
             |_| PeerSessionError::Signaling("signaling authentication timed out".into()),
         )??;
@@ -679,6 +774,7 @@ async fn accept_connection(
         session_id,
         peer_id,
         authenticated_public_key,
+        intent,
         connection,
     });
     tokio::pin!(routing);
@@ -720,6 +816,7 @@ where
     let shutdown_timeout = limits.handshake_timeout;
     let expected_local = local_peer_id.clone();
     let expected_remote = remote_peer_id.clone();
+    let authenticated_remote_public_key = trusted_peer.public_key.clone();
 
     let task = tokio::spawn(async move {
         loop {
@@ -817,6 +914,7 @@ where
         session_id,
         local_peer_id,
         remote_peer_id,
+        authenticated_remote_public_key,
         local_identity,
         outbound_tx,
         inbound_rx,

@@ -1,3 +1,4 @@
+mod codec;
 mod overlay;
 
 use iced::{
@@ -54,6 +55,38 @@ impl Fjarsyn {
             )
             .center(Length::Fill)
             .into(),
+            AppLifecycle::Restarting => container(
+                column![
+                    text("Restarting Fjarsyn").size(24),
+                    text("Closing active connections and media workers before starting a clean process...")
+                        .size(13)
+                        .style(text::secondary),
+                ]
+                .spacing(10)
+                .align_x(Alignment::Center),
+            )
+            .center(Length::Fill)
+            .into(),
+            AppLifecycle::RestartFailed(error) => container(
+                column![
+                    text("Fjarsyn could not restart").size(24),
+                    text(error.clone()).size(12).style(text::secondary),
+                    text("The old application services are already stopped. Try launching a clean process again or close Fjarsyn.")
+                        .size(12)
+                        .style(text::secondary),
+                    row![
+                        iced::widget::button("Try restart again")
+                            .on_press(Message::Lifecycle(LifecycleMessage::RestartRequested)),
+                        iced::widget::button("Close Fjarsyn")
+                            .on_press(Message::Lifecycle(LifecycleMessage::ExitRequested)),
+                    ]
+                    .spacing(10),
+                ]
+                .spacing(14)
+                .align_x(Alignment::Center),
+            )
+            .center(Length::Fill)
+            .into(),
             AppLifecycle::Ready | AppLifecycle::ShuttingDown => {
                 let ctx = ShellContext::new(&self.ctx);
                 let route = self.active_screen.route();
@@ -61,7 +94,15 @@ impl Fjarsyn {
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .style(theme::main_content_container);
-                let shell = row![components::sidebar(ctx, route), content]
+                let application = row![components::sidebar(ctx, route), content]
+                    .width(Length::Fill)
+                    .height(Length::Fill);
+                let mut shell = column![];
+                if let Some(banner) = codec::restart_required_banner(&self.ctx.media) {
+                    shell = shell.push(banner);
+                }
+                let shell = shell
+                    .push(application)
                     .padding(padding::top(titlebar_size))
                     .width(Length::Fill)
                     .height(Length::Fill);

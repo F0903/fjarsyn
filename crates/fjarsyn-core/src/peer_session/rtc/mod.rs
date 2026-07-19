@@ -1,6 +1,15 @@
-use std::{sync::Arc, time::Duration};
+mod share_epoch;
+
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use bytes::Bytes;
+use sha2::{Digest, Sha256};
 use tokio::{
     sync::{broadcast, mpsc, watch},
     task::JoinSet,
@@ -13,18 +22,22 @@ use webrtc::{
     },
     data_channel::{
         RTCDataChannel, data_channel_init::RTCDataChannelInit,
-        data_channel_message::DataChannelMessage,
+        data_channel_message::DataChannelMessage, data_channel_state::RTCDataChannelState,
     },
+    dtls_transport::dtls_transport_state::RTCDtlsTransportState,
     ice_transport::{
         ice_candidate::{RTCIceCandidate, RTCIceCandidateInit},
+        ice_connection_state::RTCIceConnectionState,
+        ice_gathering_state::RTCIceGatheringState,
         ice_server::RTCIceServer,
+        ice_transport_state::RTCIceTransportState,
     },
     interceptor::registry::Registry,
     media::{Sample, io::sample_builder::SampleBuilder},
     peer_connection::{
-        RTCPeerConnection, configuration::RTCConfiguration,
+        RTCPeerConnection, configuration::RTCConfiguration, offer_answer_options::RTCOfferOptions,
         peer_connection_state::RTCPeerConnectionState,
-        sdp::session_description::RTCSessionDescription,
+        sdp::session_description::RTCSessionDescription, signaling_state::RTCSignalingState,
     },
     rtcp::payload_feedbacks::picture_loss_indication::PictureLossIndication,
     rtp_transceiver::{
@@ -37,10 +50,14 @@ use webrtc::{
     },
 };
 
-use super::{EncodedVideoSample, PeerSessionError};
+use super::{
+    EncodedVideoSample, PeerSessionError, ShareEpoch,
+    media::{OutboundVideoSample, RemoteVideoSample},
+    restart::TransportGeneration,
+};
 
-pub(crate) const CONTROL_CHANNEL_LABEL: &str = "fjarsyn-control-v1";
-pub(crate) const MESSAGING_CHANNEL_LABEL: &str = "fjarsyn-messaging-v1";
+pub(crate) const CONTROL_CHANNEL_LABEL: &str = "fjarsyn-control-v2";
+pub(crate) const MESSAGING_CHANNEL_LABEL: &str = "fjarsyn-messaging-v2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ChannelKind {
@@ -66,8 +83,10 @@ impl ChannelKind {
 }
 
 pub(crate) enum RtcEvent {
-    LocalCandidate(RTCIceCandidateInit),
-    PeerState(RTCPeerConnectionState),
+    LocalCandidate { generation: TransportGeneration, candidate: RTCIceCandidateInit },
+    IceState { generation: TransportGeneration, state: RTCIceConnectionState },
+    DtlsState { generation: TransportGeneration, state: RTCDtlsTransportState },
+    PeerState { generation: TransportGeneration, state: RTCPeerConnectionState },
     DataChannel(Arc<RTCDataChannel>),
     ChannelOpen(ChannelKind),
     ChannelClosed(ChannelKind),
@@ -99,9 +118,64 @@ impl RtcEventDispatcher {
 pub(crate) struct RtcConfig {
     pub ice_servers: Vec<String>,
     pub max_depacket_latency: Duration,
-    pub max_pending_candidates: usize,
+    pub max_candidates_per_generation: usize,
     pub max_data_message_bytes: usize,
     pub operation_timeout: Duration,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct IceCredentials {
+    username_fragment: String,
+    password_digest: [u8; 32],
+}
+
+impl IceCredentials {
+    fn from_sdp(sdp: &str) -> Result<Self, PeerSessionError> {
+        let mut username_fragment: Option<&str> = None;
+        let mut password: Option<&str> = None;
+        for line in sdp.lines().map(str::trim) {
+            if let Some(value) = line.strip_prefix("a=ice-ufrag:") {
+                record_unique_ice_attribute(&mut username_fragment, value, "username fragment")?;
+            } else if let Some(value) = line.strip_prefix("a=ice-pwd:") {
+                record_unique_ice_attribute(&mut password, value, "password")?;
+            }
+        }
+        let username_fragment = username_fragment
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| PeerSessionError::Protocol("SDP has no ICE username fragment".into()))?;
+        let password = password
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| PeerSessionError::Protocol("SDP has no ICE password".into()))?;
+        Ok(Self {
+            username_fragment: username_fragment.to_owned(),
+            password_digest: Sha256::digest(password.as_bytes()).into(),
+        })
+    }
+
+    fn require_rotation_from(&self, previous: &Self, side: &str) -> Result<(), PeerSessionError> {
+        if self.username_fragment == previous.username_fragment
+            || self.password_digest == previous.password_digest
+        {
+            return Err(PeerSessionError::Protocol(format!(
+                "ICE restart did not rotate both {side} credentials"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn record_unique_ice_attribute<'a>(
+    slot: &mut Option<&'a str>,
+    value: &'a str,
+    name: &str,
+) -> Result<(), PeerSessionError> {
+    if let Some(existing) = slot
+        && *existing != value
+    {
+        return Err(PeerSessionError::Protocol(format!("SDP contains multiple ICE {name}s")));
+    }
+    *slot = Some(value);
+    Ok(())
 }
 
 pub(crate) struct RtcPeer {
@@ -109,13 +183,19 @@ pub(crate) struct RtcPeer {
     video_track: Arc<TrackLocalStaticSample>,
     control: Option<Arc<RTCDataChannel>>,
     messaging: Option<Arc<RTCDataChannel>>,
-    remote_description_set: bool,
-    pending_candidates: Vec<RTCIceCandidateInit>,
-    max_pending_candidates: usize,
+    generation: TransportGeneration,
+    callback_generation: Arc<AtomicU64>,
+    local_description_generation: Option<TransportGeneration>,
+    remote_description_generation: Option<TransportGeneration>,
+    local_ice_credentials: Option<IceCredentials>,
+    remote_ice_credentials: Option<IceCredentials>,
+    share_epoch_extension_id: Option<u8>,
+    max_candidates_per_generation: usize,
+    remote_candidates_received: usize,
     max_data_message_bytes: usize,
     operation_timeout: Duration,
     max_depacket_latency: Duration,
-    remote_video_tx: broadcast::Sender<EncodedVideoSample>,
+    remote_video_tx: broadcast::Sender<RemoteVideoSample>,
     events: RtcEventDispatcher,
     tasks: JoinSet<()>,
     remote_video_claimed: bool,
@@ -139,10 +219,11 @@ impl RtcPeer {
         config: RtcConfig,
         event_tx: mpsc::Sender<RtcEvent>,
         fatal_tx: watch::Sender<Option<String>>,
-        remote_video_tx: broadcast::Sender<EncodedVideoSample>,
+        remote_video_tx: broadcast::Sender<RemoteVideoSample>,
     ) -> Result<Self, PeerSessionError> {
         let mut media_engine = MediaEngine::default();
         register_h264_codecs(&mut media_engine)?;
+        share_epoch::register(&mut media_engine)?;
         let registry = register_default_interceptors(Registry::new(), &mut media_engine)
             .map_err(|error| PeerSessionError::WebRtc(error.to_string()))?;
         let api = APIBuilder::new()
@@ -183,16 +264,23 @@ impl RtcPeer {
         }
 
         let events = RtcEventDispatcher { tx: event_tx, fatal_tx };
-        Self::register_peer_callbacks(&pc, events.clone());
+        let callback_generation = Arc::new(AtomicU64::new(TransportGeneration::INITIAL.value()));
+        Self::register_peer_callbacks(&pc, events.clone(), callback_generation.clone());
 
         Ok(Self {
             pc,
             video_track,
             control: None,
             messaging: None,
-            remote_description_set: false,
-            pending_candidates: Vec::new(),
-            max_pending_candidates: config.max_pending_candidates.max(1),
+            generation: TransportGeneration::INITIAL,
+            callback_generation,
+            local_description_generation: None,
+            remote_description_generation: None,
+            local_ice_credentials: None,
+            remote_ice_credentials: None,
+            share_epoch_extension_id: None,
+            max_candidates_per_generation: config.max_candidates_per_generation.max(1),
+            remote_candidates_received: 0,
             max_data_message_bytes: config.max_data_message_bytes.max(1),
             operation_timeout: config.operation_timeout,
             max_depacket_latency: config.max_depacket_latency,
@@ -203,24 +291,57 @@ impl RtcPeer {
         })
     }
 
-    fn register_peer_callbacks(pc: &Arc<RTCPeerConnection>, events: RtcEventDispatcher) {
+    fn register_peer_callbacks(
+        pc: &Arc<RTCPeerConnection>,
+        events: RtcEventDispatcher,
+        callback_generation: Arc<AtomicU64>,
+    ) {
         let candidate_events = events.clone();
+        let candidate_generation = callback_generation.clone();
         pc.on_ice_candidate(Box::new(move |candidate: Option<RTCIceCandidate>| {
             let candidate_events = candidate_events.clone();
+            let generation =
+                TransportGeneration::from_value(candidate_generation.load(Ordering::Acquire));
             Box::pin(async move {
                 let Some(candidate) = candidate else { return };
                 match candidate.to_json() {
-                    Ok(candidate) => candidate_events.dispatch(RtcEvent::LocalCandidate(candidate)),
+                    Ok(candidate) => candidate_events
+                        .dispatch(RtcEvent::LocalCandidate { generation, candidate }),
                     Err(error) => candidate_events.dispatch(RtcEvent::Error(error.to_string())),
                 }
             })
         }));
 
         let state_events = events.clone();
+        let state_generation = callback_generation.clone();
         pc.on_peer_connection_state_change(Box::new(move |state| {
             let state_events = state_events.clone();
+            let generation =
+                TransportGeneration::from_value(state_generation.load(Ordering::Acquire));
             Box::pin(async move {
-                state_events.dispatch(RtcEvent::PeerState(state));
+                state_events.dispatch(RtcEvent::PeerState { generation, state });
+            })
+        }));
+
+        let ice_events = events.clone();
+        let ice_generation = callback_generation.clone();
+        pc.on_ice_connection_state_change(Box::new(move |state| {
+            let ice_events = ice_events.clone();
+            let generation =
+                TransportGeneration::from_value(ice_generation.load(Ordering::Acquire));
+            Box::pin(async move {
+                ice_events.dispatch(RtcEvent::IceState { generation, state });
+            })
+        }));
+
+        let dtls_events = events.clone();
+        let dtls_generation = callback_generation.clone();
+        pc.dtls_transport().on_state_change(Box::new(move |state| {
+            let dtls_events = dtls_events.clone();
+            let generation =
+                TransportGeneration::from_value(dtls_generation.load(Ordering::Acquire));
+            Box::pin(async move {
+                dtls_events.dispatch(RtcEvent::DtlsState { generation, state });
             })
         }));
 
@@ -326,10 +447,11 @@ impl RtcPeer {
         Ok(())
     }
 
-    pub(crate) async fn create_offer(&self) -> Result<String, PeerSessionError> {
+    pub(crate) async fn create_offer(&mut self) -> Result<String, PeerSessionError> {
         let offer = rtc_operation(self.operation_timeout, self.pc.create_offer(None)).await?;
         let sdp = offer.sdp.clone();
-        rtc_operation(self.operation_timeout, self.pc.set_local_description(offer)).await?;
+        let credentials = IceCredentials::from_sdp(&sdp)?;
+        self.set_local_description(TransportGeneration::INITIAL, offer, credentials).await?;
         Ok(sdp)
     }
 
@@ -337,46 +459,275 @@ impl RtcPeer {
         &mut self,
         sdp: String,
     ) -> Result<String, PeerSessionError> {
+        let remote_credentials = IceCredentials::from_sdp(&sdp)?;
         let offer = RTCSessionDescription::offer(sdp)
             .map_err(|error| PeerSessionError::WebRtc(error.to_string()))?;
-        self.set_remote_description(offer).await?;
+        self.set_remote_description(TransportGeneration::INITIAL, offer, remote_credentials)
+            .await?;
         let answer = rtc_operation(self.operation_timeout, self.pc.create_answer(None)).await?;
         let answer_sdp = answer.sdp.clone();
-        rtc_operation(self.operation_timeout, self.pc.set_local_description(answer)).await?;
+        let local_credentials = IceCredentials::from_sdp(&answer_sdp)?;
+        self.set_local_description(TransportGeneration::INITIAL, answer, local_credentials).await?;
         Ok(answer_sdp)
     }
 
     pub(crate) async fn apply_answer(&mut self, sdp: String) -> Result<(), PeerSessionError> {
+        let credentials = IceCredentials::from_sdp(&sdp)?;
         let answer = RTCSessionDescription::answer(sdp)
             .map_err(|error| PeerSessionError::WebRtc(error.to_string()))?;
-        self.set_remote_description(answer).await
+        self.set_remote_description(TransportGeneration::INITIAL, answer, credentials).await
+    }
+
+    pub(crate) async fn create_restart_offer(
+        &mut self,
+        generation: TransportGeneration,
+    ) -> Result<String, PeerSessionError> {
+        let previous_credentials = self.local_ice_credentials.clone().ok_or_else(|| {
+            PeerSessionError::WebRtc("initial local ICE credentials are unavailable".into())
+        })?;
+        self.begin_restart_generation(generation).await?;
+        let offer = rtc_operation(
+            self.operation_timeout,
+            self.pc.create_offer(Some(RTCOfferOptions { ice_restart: true, ..Default::default() })),
+        )
+        .await?;
+        let sdp = offer.sdp.clone();
+        let credentials = IceCredentials::from_sdp(&sdp)?;
+        credentials.require_rotation_from(&previous_credentials, "local")?;
+        self.set_local_description(generation, offer, credentials).await?;
+        Ok(sdp)
+    }
+
+    pub(crate) async fn apply_restart_offer_and_create_answer(
+        &mut self,
+        generation: TransportGeneration,
+        sdp: String,
+    ) -> Result<String, PeerSessionError> {
+        let remote_credentials = IceCredentials::from_sdp(&sdp)?;
+        let previous_remote = self.remote_ice_credentials.clone().ok_or_else(|| {
+            PeerSessionError::WebRtc("initial remote ICE credentials are unavailable".into())
+        })?;
+        remote_credentials.require_rotation_from(&previous_remote, "remote")?;
+        let previous_local = self.local_ice_credentials.clone().ok_or_else(|| {
+            PeerSessionError::WebRtc("initial local ICE credentials are unavailable".into())
+        })?;
+        self.begin_restart_generation(generation).await?;
+        let offer = RTCSessionDescription::offer(sdp)
+            .map_err(|error| PeerSessionError::WebRtc(error.to_string()))?;
+        self.set_remote_description(generation, offer, remote_credentials).await?;
+        let answer = rtc_operation(self.operation_timeout, self.pc.create_answer(None)).await?;
+        let answer_sdp = answer.sdp.clone();
+        let local_credentials = IceCredentials::from_sdp(&answer_sdp)?;
+        local_credentials.require_rotation_from(&previous_local, "local")?;
+        self.set_local_description(generation, answer, local_credentials).await?;
+        Ok(answer_sdp)
+    }
+
+    pub(crate) async fn apply_restart_answer(
+        &mut self,
+        generation: TransportGeneration,
+        sdp: String,
+    ) -> Result<(), PeerSessionError> {
+        self.require_generation(generation)?;
+        let credentials = IceCredentials::from_sdp(&sdp)?;
+        let previous_credentials = self.remote_ice_credentials.as_ref().ok_or_else(|| {
+            PeerSessionError::WebRtc("initial remote ICE credentials are unavailable".into())
+        })?;
+        credentials.require_rotation_from(previous_credentials, "remote")?;
+        let answer = RTCSessionDescription::answer(sdp)
+            .map_err(|error| PeerSessionError::WebRtc(error.to_string()))?;
+        self.set_remote_description(generation, answer, credentials).await
+    }
+
+    async fn begin_restart_generation(
+        &mut self,
+        generation: TransportGeneration,
+    ) -> Result<(), PeerSessionError> {
+        if generation != self.generation.next()? {
+            return Err(PeerSessionError::Protocol(
+                "WebRTC restart did not use the next transport generation".into(),
+            ));
+        }
+        if self.pc.signaling_state() != RTCSignalingState::Stable {
+            return Err(PeerSessionError::WebRtc(
+                "cannot restart ICE while WebRTC signaling is not stable".into(),
+            ));
+        }
+        if self.pc.ice_gathering_state() == RTCIceGatheringState::Gathering {
+            let mut gathering_complete = self.pc.gathering_complete_promise().await;
+            tokio::time::timeout(self.operation_timeout, gathering_complete.recv())
+                .await
+                .map_err(|_| PeerSessionError::OperationTimeout)?
+                .ok_or_else(|| {
+                    PeerSessionError::WebRtc(
+                        "ICE gathering completion notification was lost".into(),
+                    )
+                })?;
+        }
+
+        self.generation = generation;
+        self.callback_generation.store(generation.value(), Ordering::Release);
+        self.local_description_generation = None;
+        self.remote_description_generation = None;
+        self.remote_candidates_received = 0;
+        Ok(())
+    }
+
+    async fn set_local_description(
+        &mut self,
+        generation: TransportGeneration,
+        description: RTCSessionDescription,
+        credentials: IceCredentials,
+    ) -> Result<(), PeerSessionError> {
+        self.require_generation(generation)?;
+        let extension_id = self.validate_share_epoch_extension(&description.sdp)?;
+        rtc_operation(self.operation_timeout, self.pc.set_local_description(description)).await?;
+        self.share_epoch_extension_id = Some(extension_id);
+        self.local_description_generation = Some(generation);
+        self.local_ice_credentials = Some(credentials);
+        Ok(())
     }
 
     async fn set_remote_description(
         &mut self,
+        generation: TransportGeneration,
         description: RTCSessionDescription,
+        credentials: IceCredentials,
     ) -> Result<(), PeerSessionError> {
-        let deadline = tokio::time::Instant::now() + self.operation_timeout;
-        rtc_operation_until(deadline, self.pc.set_remote_description(description)).await?;
-        self.remote_description_set = true;
-        for candidate in std::mem::take(&mut self.pending_candidates) {
-            rtc_operation_until(deadline, self.pc.add_ice_candidate(candidate)).await?;
-        }
+        self.require_generation(generation)?;
+        let extension_id = self.validate_share_epoch_extension(&description.sdp)?;
+        rtc_operation(self.operation_timeout, self.pc.set_remote_description(description)).await?;
+        self.share_epoch_extension_id = Some(extension_id);
+        self.remote_description_generation = Some(generation);
+        self.remote_ice_credentials = Some(credentials);
         Ok(())
+    }
+
+    fn validate_share_epoch_extension(&self, sdp: &str) -> Result<u8, PeerSessionError> {
+        let extension_id = share_epoch::video_sdp_id(sdp)?;
+        if self.share_epoch_extension_id.is_some_and(|negotiated| negotiated != extension_id) {
+            return Err(PeerSessionError::Protocol(
+                "screen-share epoch RTP extension ID changed within the session".into(),
+            ));
+        }
+        Ok(extension_id)
+    }
+
+    pub(crate) fn prepare_local_candidate(
+        &self,
+        generation: TransportGeneration,
+        mut candidate: RTCIceCandidateInit,
+    ) -> Result<RTCIceCandidateInit, PeerSessionError> {
+        self.require_generation(generation)?;
+        if self.local_description_generation != Some(generation) {
+            return Err(PeerSessionError::Protocol(
+                "local ICE candidate arrived before its description was installed".into(),
+            ));
+        }
+        let expected = &self
+            .local_ice_credentials
+            .as_ref()
+            .ok_or_else(|| {
+                PeerSessionError::WebRtc("local ICE credentials are unavailable".into())
+            })?
+            .username_fragment;
+        if candidate.username_fragment.as_ref().is_some_and(|actual| actual != expected) {
+            return Err(PeerSessionError::Protocol(
+                "local ICE candidate used the wrong username fragment".into(),
+            ));
+        }
+        candidate.username_fragment = Some(expected.clone());
+        Ok(candidate)
     }
 
     pub(crate) async fn add_remote_candidate(
         &mut self,
+        generation: TransportGeneration,
         candidate: RTCIceCandidateInit,
     ) -> Result<(), PeerSessionError> {
-        if !self.remote_description_set {
-            if self.pending_candidates.len() >= self.max_pending_candidates {
-                return Err(PeerSessionError::Protocol("too many early ICE candidates".into()));
-            }
-            self.pending_candidates.push(candidate);
-            return Ok(());
+        self.require_generation(generation)?;
+        if self.remote_description_generation != Some(generation) {
+            return Err(PeerSessionError::Protocol(
+                "ICE candidate arrived before its remote description".into(),
+            ));
         }
+        let expected = &self
+            .remote_ice_credentials
+            .as_ref()
+            .ok_or_else(|| {
+                PeerSessionError::WebRtc("remote ICE credentials are unavailable".into())
+            })?
+            .username_fragment;
+        if candidate.username_fragment.as_deref() != Some(expected.as_str()) {
+            return Err(PeerSessionError::Protocol(
+                "remote ICE candidate used the wrong username fragment".into(),
+            ));
+        }
+        if self.remote_candidates_received >= self.max_candidates_per_generation {
+            return Err(PeerSessionError::Protocol(
+                "too many ICE candidates for one transport generation".into(),
+            ));
+        }
+        self.remote_candidates_received += 1;
         rtc_operation(self.operation_timeout, self.pc.add_ice_candidate(candidate)).await
+    }
+
+    pub(crate) fn ice_connection_state(&self) -> RTCIceConnectionState {
+        self.pc.ice_connection_state()
+    }
+
+    pub(crate) fn peer_connection_state(&self) -> RTCPeerConnectionState {
+        self.pc.connection_state()
+    }
+
+    pub(crate) fn dtls_state(&self) -> RTCDtlsTransportState {
+        self.pc.dtls_transport().state()
+    }
+
+    pub(crate) async fn transport_is_operational(
+        &self,
+        generation: TransportGeneration,
+    ) -> Result<bool, PeerSessionError> {
+        self.require_generation(generation)?;
+        if self.local_description_generation != Some(generation)
+            || self.remote_description_generation != Some(generation)
+            || !matches!(
+                self.pc.ice_connection_state(),
+                RTCIceConnectionState::Connected | RTCIceConnectionState::Completed
+            )
+            || self.pc.connection_state() != RTCPeerConnectionState::Connected
+            || !matches!(
+                self.pc.dtls_transport().ice_transport().state(),
+                RTCIceTransportState::Connected | RTCIceTransportState::Completed
+            )
+            || self.pc.dtls_transport().state() != RTCDtlsTransportState::Connected
+            || !self
+                .control
+                .as_ref()
+                .is_some_and(|channel| channel.ready_state() == RTCDataChannelState::Open)
+            || !self
+                .messaging
+                .as_ref()
+                .is_some_and(|channel| channel.ready_state() == RTCDataChannelState::Open)
+        {
+            return Ok(false);
+        }
+        let pair = tokio::time::timeout(
+            self.operation_timeout,
+            self.pc.dtls_transport().ice_transport().get_selected_candidate_pair(),
+        )
+        .await
+        .map_err(|_| PeerSessionError::OperationTimeout)?;
+        Ok(pair.is_some())
+    }
+
+    fn require_generation(&self, generation: TransportGeneration) -> Result<(), PeerSessionError> {
+        if generation != self.generation {
+            return Err(PeerSessionError::Protocol(
+                "WebRTC operation used the wrong transport generation".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn start_remote_track(
@@ -386,21 +737,60 @@ impl RtcPeer {
     ) -> Result<(), PeerSessionError> {
         let codec = track.codec();
         claim_remote_video_track(&mut self.remote_video_claimed, &codec.capability.mime_type)?;
+        let extension_id = share_epoch::negotiated_id(&track.params())?;
+        if self.share_epoch_extension_id != Some(extension_id) {
+            return Err(PeerSessionError::Protocol(
+                "remote track used the wrong screen-share epoch RTP extension ID".into(),
+            ));
+        }
         let remote_video_tx = self.remote_video_tx.clone();
+        let protocol_events = self.events.clone();
         let max_delay = self.max_depacket_latency;
         let media_ssrc = track.ssrc();
         self.tasks.spawn(async move {
             let clock_rate = codec.capability.clock_rate;
-            let depacketizer = webrtc::rtp::codecs::h264::H264Packet::default();
-            let mut builder =
-                SampleBuilder::new(Self::SAMPLE_BUILDER_PACKET_WINDOW, depacketizer, clock_rate)
-                    .with_max_time_delay(max_delay);
+            let new_builder = || {
+                SampleBuilder::new(
+                    Self::SAMPLE_BUILDER_PACKET_WINDOW,
+                    webrtc::rtp::codecs::h264::H264Packet::default(),
+                    clock_rate,
+                )
+                .with_max_time_delay(max_delay)
+            };
+            let mut builder = new_builder();
+            let mut active_epoch: Option<ShareEpoch> = None;
 
-            while let Ok((packet, _)) = track.read_rtp().await {
+            loop {
+                let (packet, _) = match track.read_rtp().await {
+                    Ok(packet) => packet,
+                    Err(error) => {
+                        protocol_events.dispatch(RtcEvent::Error(format!(
+                            "remote video RTP stream ended: {error}"
+                        )));
+                        return;
+                    }
+                };
+                let epoch = match share_epoch::decode(&packet.header, extension_id) {
+                    Ok(epoch) => epoch,
+                    Err(error) => {
+                        protocol_events.dispatch(RtcEvent::ProtocolError(error.to_string()));
+                        return;
+                    }
+                };
+                match share_epoch::classify_packet(active_epoch, epoch) {
+                    share_epoch::PacketDisposition::DropStale => continue,
+                    share_epoch::PacketDisposition::Advance => {
+                        builder = new_builder();
+                        active_epoch = Some(epoch);
+                    }
+                    share_epoch::PacketDisposition::Continue => {}
+                }
                 builder.push(packet);
                 while let Some(sample) = builder.pop() {
-                    let _ = remote_video_tx
-                        .send(EncodedVideoSample { data: sample.data, duration: sample.duration });
+                    let _ = remote_video_tx.send(RemoteVideoSample {
+                        epoch: active_epoch.expect("an accepted RTP packet establishes an epoch"),
+                        sample: EncodedVideoSample { data: sample.data, duration: sample.duration },
+                    });
                 }
             }
         });
@@ -434,15 +824,17 @@ impl RtcPeer {
 
     pub(crate) async fn write_video(
         &self,
-        sample: EncodedVideoSample,
+        tagged: OutboundVideoSample,
     ) -> Result<(), PeerSessionError> {
+        let extension = share_epoch::outbound(tagged.epoch)?;
+        let sample = Sample {
+            data: tagged.sample.data,
+            duration: tagged.sample.duration,
+            ..Default::default()
+        };
         tokio::time::timeout(
             self.operation_timeout,
-            self.video_track.write_sample(&Sample {
-                data: sample.data,
-                duration: sample.duration,
-                ..Default::default()
-            }),
+            self.video_track.write_sample_with_extensions(&sample, &[extension]),
         )
         .await
         .map_err(|_| PeerSessionError::OperationTimeout)?
@@ -558,16 +950,6 @@ async fn rtc_operation<T>(
         .map_err(|error| PeerSessionError::WebRtc(error.to_string()))
 }
 
-async fn rtc_operation_until<T>(
-    deadline: tokio::time::Instant,
-    operation: impl std::future::Future<Output = webrtc::error::Result<T>>,
-) -> Result<T, PeerSessionError> {
-    tokio::time::timeout_at(deadline, operation)
-        .await
-        .map_err(|_| PeerSessionError::OperationTimeout)?
-        .map_err(|error| PeerSessionError::WebRtc(error.to_string()))
-}
-
 fn validate_inbound_data_frame(
     kind: ChannelKind,
     is_string: bool,
@@ -594,37 +976,52 @@ fn validate_inbound_data_frame(
 mod tests {
     use super::*;
 
+    fn sdp_attribute(sdp: &str, prefix: &str) -> String {
+        sdp.lines()
+            .find(|line| line.starts_with(prefix))
+            .unwrap_or_else(|| panic!("missing SDP attribute {prefix}"))
+            .trim()
+            .to_owned()
+    }
+
     #[tokio::test]
-    async fn early_ice_candidates_are_bounded_and_queued_until_remote_sdp() {
+    async fn remote_ice_candidates_require_sdp_credentials_and_are_bounded() {
         let (event_tx, _event_rx) = mpsc::channel(8);
         let (fatal_tx, _fatal_rx) = watch::channel(None);
         let (video_tx, _) = broadcast::channel(2);
-        let mut peer = RtcPeer::new(
-            RtcConfig {
-                ice_servers: Vec::new(),
-                max_depacket_latency: Duration::from_millis(100),
-                max_pending_candidates: 1,
-                max_data_message_bytes: 16 * 1024,
-                operation_timeout: Duration::from_secs(1),
-            },
-            event_tx,
-            fatal_tx,
-            video_tx,
-        )
-        .await
-        .unwrap();
+        let (offer_event_tx, _offer_event_rx) = mpsc::channel(8);
+        let (offer_fatal_tx, _offer_fatal_rx) = watch::channel(None);
+        let (offer_video_tx, _) = broadcast::channel(2);
+        let config = RtcConfig {
+            ice_servers: Vec::new(),
+            max_depacket_latency: Duration::from_millis(100),
+            max_candidates_per_generation: 1,
+            max_data_message_bytes: 16 * 1024,
+            operation_timeout: Duration::from_secs(1),
+        };
+        let mut peer = RtcPeer::new(config.clone(), event_tx, fatal_tx, video_tx).await.unwrap();
         let candidate = RTCIceCandidateInit {
             candidate: "candidate:1 1 udp 1 127.0.0.1 9 typ host".into(),
             ..Default::default()
         };
 
-        peer.add_remote_candidate(candidate.clone()).await.unwrap();
-        assert_eq!(peer.pending_candidates, vec![candidate.clone()]);
         assert!(matches!(
-            peer.add_remote_candidate(candidate).await,
+            peer.add_remote_candidate(TransportGeneration::INITIAL, candidate.clone()).await,
+            Err(PeerSessionError::Protocol(_))
+        ));
+        let mut offerer =
+            RtcPeer::new(config, offer_event_tx, offer_fatal_tx, offer_video_tx).await.unwrap();
+        let offer = offerer.create_offer().await.unwrap();
+        let remote_ufrag = IceCredentials::from_sdp(&offer).unwrap().username_fragment;
+        peer.apply_offer_and_create_answer(offer).await.unwrap();
+        let candidate = RTCIceCandidateInit { username_fragment: Some(remote_ufrag), ..candidate };
+        peer.add_remote_candidate(TransportGeneration::INITIAL, candidate.clone()).await.unwrap();
+        assert!(matches!(
+            peer.add_remote_candidate(TransportGeneration::INITIAL, candidate).await,
             Err(PeerSessionError::Protocol(_))
         ));
         peer.shutdown().await;
+        offerer.shutdown().await;
     }
 
     #[test]
@@ -632,8 +1029,14 @@ mod tests {
         let (tx, _rx) = mpsc::channel(1);
         let (fatal_tx, fatal_rx) = watch::channel(None);
         let events = RtcEventDispatcher { tx, fatal_tx };
-        events.dispatch(RtcEvent::PeerState(RTCPeerConnectionState::New));
-        events.dispatch(RtcEvent::PeerState(RTCPeerConnectionState::Connecting));
+        events.dispatch(RtcEvent::PeerState {
+            generation: TransportGeneration::INITIAL,
+            state: RTCPeerConnectionState::New,
+        });
+        events.dispatch(RtcEvent::PeerState {
+            generation: TransportGeneration::INITIAL,
+            state: RTCPeerConnectionState::Connecting,
+        });
         assert_eq!(fatal_rx.borrow().as_deref(), Some("WebRTC event queue overflowed"));
     }
 
@@ -661,11 +1064,11 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(8);
         let (fatal_tx, _fatal_rx) = watch::channel(None);
         let (video_tx, _) = broadcast::channel(2);
-        let peer = RtcPeer::new(
+        let mut peer = RtcPeer::new(
             RtcConfig {
                 ice_servers: Vec::new(),
                 max_depacket_latency: Duration::from_millis(100),
-                max_pending_candidates: 1,
+                max_candidates_per_generation: 1,
                 max_data_message_bytes: 16 * 1024,
                 operation_timeout: Duration::from_secs(1),
             },
@@ -682,5 +1085,63 @@ mod tests {
         assert!(!offer.contains("VP9/90000"));
         assert!(!offer.contains("AV1/90000"));
         peer.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn restart_offer_rotates_ice_credentials_without_recreating_capabilities() {
+        let (offer_events, _offer_event_rx) = mpsc::channel(128);
+        let (offer_fatal, _offer_fatal_rx) = watch::channel(None);
+        let (offer_video, _) = broadcast::channel(2);
+        let (answer_events, _answer_event_rx) = mpsc::channel(128);
+        let (answer_fatal, _answer_fatal_rx) = watch::channel(None);
+        let (answer_video, _) = broadcast::channel(2);
+        let config = RtcConfig {
+            ice_servers: Vec::new(),
+            max_depacket_latency: Duration::from_millis(100),
+            max_candidates_per_generation: 8,
+            max_data_message_bytes: 16 * 1024,
+            operation_timeout: Duration::from_secs(5),
+        };
+        let mut offerer =
+            RtcPeer::new(config.clone(), offer_events, offer_fatal, offer_video).await.unwrap();
+        let mut answerer =
+            RtcPeer::new(config, answer_events, answer_fatal, answer_video).await.unwrap();
+
+        offerer.prepare_offerer_channels().await.unwrap();
+        let initial_offer = offerer.create_offer().await.unwrap();
+        let initial_offer_replay = initial_offer.clone();
+        let initial_fingerprint = sdp_attribute(&initial_offer, "a=fingerprint:");
+        let initial_ufrag = sdp_attribute(&initial_offer, "a=ice-ufrag:");
+        let initial_answer = answerer.apply_offer_and_create_answer(initial_offer).await.unwrap();
+        let initial_answer_ufrag = sdp_attribute(&initial_answer, "a=ice-ufrag:");
+        offerer.apply_answer(initial_answer).await.unwrap();
+
+        let generation = TransportGeneration::INITIAL.next().unwrap();
+        assert!(
+            answerer
+                .apply_restart_offer_and_create_answer(generation, initial_offer_replay)
+                .await
+                .is_err()
+        );
+        assert_eq!(answerer.generation, TransportGeneration::INITIAL);
+        let restart_offer = offerer.create_restart_offer(generation).await.unwrap();
+        assert_ne!(sdp_attribute(&restart_offer, "a=ice-ufrag:"), initial_ufrag);
+        assert_eq!(sdp_attribute(&restart_offer, "a=fingerprint:"), initial_fingerprint);
+        assert!(restart_offer.contains("m=application"));
+        assert!(restart_offer.contains("m=video"));
+        assert!(offerer.control.is_some());
+        assert!(offerer.messaging.is_some());
+
+        let restart_answer = answerer
+            .apply_restart_offer_and_create_answer(generation, restart_offer)
+            .await
+            .unwrap();
+        assert_ne!(sdp_attribute(&restart_answer, "a=ice-ufrag:"), initial_answer_ufrag);
+        offerer.apply_restart_answer(generation, restart_answer).await.unwrap();
+        assert_eq!(offerer.generation, generation);
+        assert_eq!(answerer.generation, generation);
+
+        offerer.shutdown().await;
+        answerer.shutdown().await;
     }
 }

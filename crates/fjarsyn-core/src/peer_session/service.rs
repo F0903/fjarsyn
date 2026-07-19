@@ -21,11 +21,12 @@ use super::{
     EncodedVideoSink, MessageId, PeerId, PeerSessionError, PeerSessionEvent, PeerSessionPhase,
     PeerSessionServiceSnapshot, RemoteVideoSource, SessionCloseReason, SessionId, ShareId,
     actor::{
-        self, SessionActorConfig, SessionActorHandle, SessionCommand, SessionRole, SessionTerminal,
-        SessionUpdate,
+        self, RestartAttachment, SessionActorConfig, SessionActorHandle, SessionCommand,
+        SessionRole, SessionTerminal, SessionUpdate,
     },
     negotiation::{
-        IncomingNegotiation, NegotiationConnection, NegotiationLimits, NegotiationListener,
+        IncomingNegotiation, NegotiationConnection, NegotiationIntent, NegotiationLimits,
+        NegotiationListener, NegotiationService,
     },
     rtc::RtcConfig,
 };
@@ -78,7 +79,7 @@ pub struct PeerSessionLimits {
     pub signaling_idle_timeout: Duration,
     pub signaling_max_message_age: Duration,
     pub signaling_max_clock_skew: Duration,
-    pub max_pending_ice_candidates: usize,
+    pub max_ice_candidates_per_generation: usize,
     pub request_timeout: Duration,
     pub negotiation_timeout: Duration,
     pub shutdown_timeout: Duration,
@@ -86,6 +87,7 @@ pub struct PeerSessionLimits {
     pub pre_ready_data_capacity: usize,
     pub service_operation_timeout: Duration,
     pub disconnected_grace: Duration,
+    pub ice_restart_timeout: Duration,
     pub rtc_operation_timeout: Duration,
     pub max_remote_timestamp_age: Duration,
     pub max_remote_clock_skew: Duration,
@@ -121,7 +123,7 @@ impl Default for PeerSessionLimits {
             signaling_idle_timeout: Duration::from_secs(60),
             signaling_max_message_age: Duration::from_secs(5 * 60),
             signaling_max_clock_skew: Duration::from_secs(30),
-            max_pending_ice_candidates: 256,
+            max_ice_candidates_per_generation: 256,
             request_timeout: Duration::from_secs(30),
             negotiation_timeout: Duration::from_secs(45),
             shutdown_timeout: Duration::from_secs(5),
@@ -129,6 +131,7 @@ impl Default for PeerSessionLimits {
             pre_ready_data_capacity: 32,
             service_operation_timeout: Duration::from_secs(15),
             disconnected_grace: Duration::from_secs(5),
+            ice_restart_timeout: Duration::from_secs(20),
             rtc_operation_timeout: Duration::from_secs(2),
             max_remote_timestamp_age: Duration::from_secs(5 * 60),
             max_remote_clock_skew: Duration::from_secs(30),
@@ -219,6 +222,15 @@ impl PeerSessionService {
             None => LocalPeerIdentity::generate(),
         };
         let negotiation_limits = negotiation_limits(&config.limits)?;
+        let negotiation = NegotiationService::new(
+            local_peer_id.clone(),
+            identity.clone(),
+            config.trusted_peers.clone(),
+            config.endpoints.clone(),
+            config.limits.max_endpoint_attempts,
+            config.limits.endpoint_attempt_timeout,
+            negotiation_limits.clone(),
+        );
         let (incoming_tx, incoming_rx) =
             mpsc::channel(config.limits.max_signaling_connections.max(1));
         let listener = NegotiationListener::bind(
@@ -251,9 +263,8 @@ impl PeerSessionService {
         let recent_session_capacity = config.limits.signaling_replay_capacity;
         let runtime = ServiceRuntime {
             local_peer_id: local_peer_id.clone(),
-            local_identity: identity.clone(),
             trusted_peers: config.trusted_peers,
-            endpoints: config.endpoints,
+            negotiation,
             ice_servers: config.ice_servers,
             max_depacket_latency: config.max_depacket_latency,
             limits: config.limits,
@@ -497,11 +508,28 @@ impl PeerSessionServiceHandle {
             .await
     }
 
+    #[cfg(test)]
+    async fn force_ice_restart(&self, session_id: SessionId) -> Result<(), PeerSessionError> {
+        self.session_command(session_id, SessionCommand::ForceIceRestart).await
+    }
+
+    #[cfg(test)]
+    async fn committed_transport_generation(
+        &self,
+        session_id: SessionId,
+    ) -> Result<u64, PeerSessionError> {
+        self.session_command(session_id, SessionCommand::CommittedTransportGeneration)
+            .await
+            .map(super::restart::TransportGeneration::value)
+    }
+
     pub async fn encoded_video_sink(
         &self,
         session_id: SessionId,
+        share_id: ShareId,
     ) -> Result<EncodedVideoSink, PeerSessionError> {
-        self.send_command(|reply| ServiceCommand::EncodedVideoSink { session_id, reply }).await
+        self.send_command(|reply| ServiceCommand::EncodedVideoSink { session_id, share_id, reply })
+            .await
     }
 
     pub async fn subscribe_remote_video(
@@ -558,6 +586,7 @@ enum ServiceCommand {
     },
     EncodedVideoSink {
         session_id: SessionId,
+        share_id: ShareId,
         reply: oneshot::Sender<Result<EncodedVideoSink, PeerSessionError>>,
     },
     RemoteVideoSource {
@@ -581,9 +610,8 @@ impl Drop for SessionEntry {
 
 struct ServiceRuntime {
     local_peer_id: PeerId,
-    local_identity: LocalPeerIdentity,
     trusted_peers: Arc<dyn TrustedPeerResolver>,
-    endpoints: Arc<dyn PeerEndpointResolver>,
+    negotiation: NegotiationService,
     ice_servers: Vec<String>,
     max_depacket_latency: Duration,
     limits: PeerSessionLimits,
@@ -724,9 +752,10 @@ impl ServiceRuntime {
                     }
                 }
             }
-            ServiceCommand::EncodedVideoSink { session_id, reply } => {
-                let result =
-                    self.connected_entry(session_id).map(|entry| entry.handle.encoded_video_sink());
+            ServiceCommand::EncodedVideoSink { session_id, share_id, reply } => {
+                let result = self
+                    .connected_entry(session_id)
+                    .and_then(|entry| entry.handle.encoded_video_sink(share_id));
                 let _ = reply.send(result);
             }
             ServiceCommand::RemoteVideoSource { session_id, reply } => {
@@ -762,33 +791,13 @@ impl ServiceRuntime {
         if self.sessions.len() >= self.limits.max_sessions {
             return Err(PeerSessionError::Protocol("session capacity reached".into()));
         }
-        let trusted_peer = self
-            .trusted_peers
-            .trusted_peer(&peer_id)
-            .await?
-            .ok_or_else(|| PeerSessionError::PeerNotTrusted(peer_id.clone()))?;
-        let endpoint_hints = self.endpoints.endpoint_hints_for(&peer_id).await?;
-        if endpoint_hints.is_empty() {
-            return Err(PeerSessionError::PeerNotNearby(peer_id));
-        }
         let session_id = loop {
             let candidate = SessionId::new();
             if !self.recent_session_ids.seen_or_remember(candidate, Instant::now()) {
                 break candidate;
             }
         };
-        let connection = NegotiationConnection::connect_from_hints(
-            &endpoint_hints,
-            self.limits.max_endpoint_attempts,
-            self.limits.endpoint_attempt_timeout,
-            session_id,
-            self.local_peer_id.clone(),
-            peer_id.clone(),
-            self.local_identity.clone(),
-            trusted_peer,
-            self.negotiation_limits.clone(),
-        )
-        .await?;
+        let connection = self.negotiation.connect(session_id, peer_id.clone()).await?;
         self.insert_session(session_id, peer_id, SessionRole::Outgoing, connection).await?;
         Ok(session_id)
     }
@@ -843,6 +852,10 @@ impl ServiceRuntime {
                 reject_timeout,
             )
             .await;
+            return;
+        }
+        if let NegotiationIntent::Restart { generation } = incoming.intent {
+            self.handle_incoming_restart(incoming, generation);
             return;
         }
         if self.recent_session_ids.seen_or_remember(incoming.session_id, Instant::now()) {
@@ -927,6 +940,48 @@ impl ServiceRuntime {
         }
     }
 
+    fn handle_incoming_restart(
+        &mut self,
+        incoming: IncomingNegotiation,
+        generation: super::restart::TransportGeneration,
+    ) {
+        let Some(entry) = self.sessions.get(&incoming.session_id) else {
+            discard_restart_connection(
+                incoming.connection,
+                "restart does not identify an active session",
+            );
+            return;
+        };
+        if entry.handle.snapshot().peer_id != incoming.peer_id
+            || self.peers.get(&incoming.peer_id) != Some(&incoming.session_id)
+        {
+            discard_restart_connection(
+                incoming.connection,
+                "restart peer and session do not match",
+            );
+            return;
+        }
+        if !matches!(
+            entry.handle.snapshot().phase,
+            PeerSessionPhase::Connected | PeerSessionPhase::Reconnecting
+        ) {
+            discard_restart_connection(
+                incoming.connection,
+                "session is not eligible for ICE restart",
+            );
+            return;
+        }
+
+        let attachment = RestartAttachment { generation, connection: incoming.connection };
+        if let Err(error) = entry.handle.try_attach_restart(attachment) {
+            let attachment = *error;
+            discard_restart_connection(
+                attachment.connection,
+                "session cannot accept restart signaling",
+            );
+        }
+    }
+
     async fn insert_session(
         &mut self,
         session_id: SessionId,
@@ -934,18 +989,21 @@ impl ServiceRuntime {
         role: SessionRole,
         connection: NegotiationConnection,
     ) -> Result<(), PeerSessionError> {
+        let remote_public_key = connection.authenticated_remote_public_key().to_owned();
         let rtc = RtcConfig {
             ice_servers: self.ice_servers.clone(),
             max_depacket_latency: self.max_depacket_latency,
-            max_pending_candidates: self.limits.max_pending_ice_candidates,
+            max_candidates_per_generation: self.limits.max_ice_candidates_per_generation,
             max_data_message_bytes: self.limits.max_data_message_bytes,
             operation_timeout: self.limits.rtc_operation_timeout,
         };
         let config = SessionActorConfig {
             session_id,
             remote_peer_id: peer_id.clone(),
+            remote_public_key,
             role,
             connection: Some(connection),
+            negotiation: self.negotiation.clone(),
             rtc,
             command_capacity: self.limits.session_command_capacity,
             media_capacity: self.limits.video_input_capacity,
@@ -958,6 +1016,7 @@ impl ServiceRuntime {
             cleanup_timeout: self.limits.shutdown_timeout,
             pre_ready_data_capacity: self.limits.pre_ready_data_capacity.max(1),
             disconnected_grace: self.limits.disconnected_grace,
+            ice_restart_timeout: self.limits.ice_restart_timeout,
             max_remote_timestamp_age: self.limits.max_remote_timestamp_age,
             max_remote_clock_skew: self.limits.max_remote_clock_skew,
         };
@@ -1202,6 +1261,11 @@ fn resolve_incoming_request(
     }
 }
 
+fn discard_restart_connection(connection: NegotiationConnection, reason: &str) {
+    tracing::debug!(?connection, reason, "discarding invalid ICE restart signaling");
+    drop(connection);
+}
+
 async fn reject_connection(connection: NegotiationConnection, reason: &str, timeout: Duration) {
     let deadline = TokioInstant::now() + timeout;
     let _ = tokio::time::timeout_at(
@@ -1273,6 +1337,9 @@ fn child_shutdown_deadline(
 }
 
 fn negotiation_limits(limits: &PeerSessionLimits) -> Result<NegotiationLimits, PeerSessionError> {
+    if limits.ice_restart_timeout.is_zero() {
+        return Err(PeerSessionError::InvalidLimit { name: "ice_restart_timeout" });
+    }
     if limits.signaling_auth_global_burst == 0 {
         return Err(PeerSessionError::InvalidLimit { name: "signaling_auth_global_burst" });
     }
@@ -1416,6 +1483,7 @@ mod tests {
         assert_invalid_limit!(signaling_auth_per_ip_burst, 0);
         assert_invalid_limit!(signaling_auth_per_ip_refill_interval, Duration::ZERO);
         assert_invalid_limit!(max_signaling_auth_tracked_ips, 0);
+        assert_invalid_limit!(ice_restart_timeout, Duration::ZERO);
     }
 
     async fn start_test_pair() -> (PeerSessionService, PeerSessionService, PeerId, PeerId) {
@@ -1958,7 +2026,7 @@ mod tests {
                 event,
                 PeerSessionEvent::RemoteShareChanged {
                     session_id: id,
-                    state: super::super::RemoteShareState::Active { share_id: remote_id },
+                    state: super::super::RemoteShareState::Active { share_id: remote_id, .. },
                     ..
                 } if *id == session_id && *remote_id == share_id
             )
@@ -1991,6 +2059,345 @@ mod tests {
             .await
             .expect("service B shutdown timed out")
             .unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn rtp_share_epoch_survives_fragmentation_and_rejects_a_stale_sink() {
+        fn h264_sample(marker: u8, size: usize) -> super::super::EncodedVideoSample {
+            let mut data = vec![marker; size.max(3)];
+            data[0] = 0x65;
+            super::super::EncodedVideoSample::new(data, Duration::from_millis(16))
+        }
+
+        async fn receive_marker(
+            source: &mut RemoteVideoSource,
+            epoch: super::super::ShareEpoch,
+        ) -> u8 {
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    match source.recv_for(epoch).await.unwrap() {
+                        super::super::RemoteVideoRead::Sample(sample) => {
+                            if let Some(marker) = sample.data.get(5) {
+                                return *marker;
+                            }
+                        }
+                        super::super::RemoteVideoRead::EpochAdvanced { next_epoch } => {
+                            panic!(
+                                "media advanced to epoch {} while waiting for {}",
+                                next_epoch.value(),
+                                epoch.value()
+                            );
+                        }
+                    }
+                }
+            })
+            .await
+            .expect("timed out waiting for epoch-tagged video")
+        }
+
+        let (service_a, service_b, peer_a, peer_b) = start_test_pair().await;
+        let handle_a = service_a.handle();
+        let handle_b = service_b.handle();
+        let mut events_a = handle_a.subscribe_events();
+        let mut events_b = handle_b.subscribe_events();
+
+        let session_id = handle_a.connect(peer_b).await.unwrap();
+        assert_eq!(wait_for_incoming(&mut events_b, &peer_a).await, session_id);
+        handle_b.accept(session_id).await.unwrap();
+        wait_for_connected(&mut events_a, session_id).await;
+        wait_for_connected(&mut events_b, session_id).await;
+        let mut remote = handle_b.subscribe_remote_video(session_id).await.unwrap();
+
+        let share_a = handle_a.start_screen_share(session_id).await.unwrap();
+        wait_for_event(&mut events_b, |event| {
+            matches!(
+                event,
+                PeerSessionEvent::RemoteShareChanged {
+                    session_id: id,
+                    state: super::super::RemoteShareState::Active {
+                        share_id,
+                        epoch: super::super::ShareEpoch::FIRST,
+                    },
+                    ..
+                } if *id == session_id && *share_id == share_a
+            )
+        })
+        .await;
+        let sink_a = handle_a.encoded_video_sink(session_id, share_a).await.unwrap();
+        sink_a.send(h264_sample(0xa1, 5_000)).await.unwrap();
+        sink_a.send(h264_sample(0xa2, 32)).await.unwrap();
+        sink_a.send(h264_sample(0xa3, 32)).await.unwrap();
+        assert_eq!(receive_marker(&mut remote, super::super::ShareEpoch::FIRST).await, 0xa1);
+
+        handle_a.stop_screen_share(session_id, share_a).await.unwrap();
+        wait_for_event(&mut events_b, |event| {
+            matches!(
+                event,
+                PeerSessionEvent::RemoteShareChanged {
+                    session_id: id,
+                    state: super::super::RemoteShareState::Inactive,
+                    ..
+                } if *id == session_id
+            )
+        })
+        .await;
+        let share_b = handle_a.start_screen_share(session_id).await.unwrap();
+        let epoch_b = super::super::ShareEpoch::FIRST.next().unwrap();
+        wait_for_event(&mut events_b, |event| {
+            matches!(
+                event,
+                PeerSessionEvent::RemoteShareChanged {
+                    session_id: id,
+                    state: super::super::RemoteShareState::Active { share_id, epoch },
+                    ..
+                } if *id == session_id && *share_id == share_b && *epoch == epoch_b
+            )
+        })
+        .await;
+
+        // The old producer can still race cancellation, but its immutable A
+        // capability is revoked and cannot backpressure or be relabelled as B.
+        assert_eq!(sink_a.send(h264_sample(0xaf, 5_000)).await, Err(PeerSessionError::MediaClosed));
+        let sink_b = handle_a.encoded_video_sink(session_id, share_b).await.unwrap();
+        sink_b.send(h264_sample(0xb1, 5_000)).await.unwrap();
+        sink_b.send(h264_sample(0xb2, 32)).await.unwrap();
+        sink_b.send(h264_sample(0xb3, 32)).await.unwrap();
+        assert_eq!(receive_marker(&mut remote, epoch_b).await, 0xb1);
+
+        handle_a.disconnect(session_id).await.unwrap();
+        wait_for_closed(&mut events_a, session_id).await;
+        wait_for_closed(&mut events_b, session_id).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (a, b) = tokio::join!(service_a.shutdown(), service_b.shutdown());
+            a.unwrap();
+            b.unwrap();
+        })
+        .await
+        .expect("media epoch test services did not shut down");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn ice_restart_preserves_session_channels_and_active_share_state() {
+        let (service_a, service_b, peer_a, peer_b) = start_test_pair().await;
+        let handle_a = service_a.handle();
+        let handle_b = service_b.handle();
+        let mut events_a = handle_a.subscribe_events();
+        let mut events_b = handle_b.subscribe_events();
+
+        let session_id = handle_a.connect(peer_b).await.unwrap();
+        assert_eq!(wait_for_incoming(&mut events_b, &peer_a).await, session_id);
+        handle_b.accept(session_id).await.unwrap();
+        wait_for_connected(&mut events_a, session_id).await;
+        wait_for_connected(&mut events_b, session_id).await;
+
+        let share_id = handle_a.start_screen_share(session_id).await.unwrap();
+        wait_for_event(&mut events_b, |event| {
+            matches!(
+                event,
+                PeerSessionEvent::RemoteShareChanged {
+                    session_id: id,
+                    state: super::super::RemoteShareState::Active { share_id: remote_id, .. },
+                    ..
+                } if *id == session_id && *remote_id == share_id
+            )
+        })
+        .await;
+
+        // Let the initial DTLS/SCTP association leave its just-open callback
+        // window before forcing a healthy-path restart in this test. Production
+        // recovery is triggered only after the configured ICE disconnect grace.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let generation_a = handle_a.committed_transport_generation(session_id).await.unwrap();
+        let generation_b = handle_b.committed_transport_generation(session_id).await.unwrap();
+        handle_a.force_ice_restart(session_id).await.unwrap();
+        let ((), ()) = tokio::join!(
+            wait_for_transport_generation(&handle_a, session_id, generation_a),
+            wait_for_transport_generation(&handle_b, session_id, generation_b),
+        );
+
+        let snapshot_a = handle_a.snapshot();
+        let snapshot_b = handle_b.snapshot();
+        let session_a = snapshot_a.session(session_id).expect("offerer session survived restart");
+        let session_b = snapshot_b.session(session_id).expect("answerer session survived restart");
+        assert_eq!(
+            session_a.local_share,
+            super::super::LocalShareState::Active {
+                share_id,
+                epoch: super::super::ShareEpoch::FIRST,
+            }
+        );
+        assert_eq!(
+            session_b.remote_share,
+            super::super::RemoteShareState::Active {
+                share_id,
+                epoch: super::super::ShareEpoch::FIRST,
+            }
+        );
+        assert_eq!(snapshot_a.sessions.len(), 1);
+        assert_eq!(snapshot_b.sessions.len(), 1);
+
+        let message_id = MessageId::new();
+        handle_a.send_message(session_id, message_id, "after restart", Utc::now()).await.unwrap();
+        let post_restart_event = wait_for_event(&mut events_b, |event| {
+            matches!(
+                event,
+                PeerSessionEvent::MessageReceived {
+                    session_id: id,
+                    message_id: received_id,
+                    body,
+                    ..
+                } if *id == session_id && *received_id == message_id && body == "after restart"
+            ) || matches!(
+                event,
+                PeerSessionEvent::Closed { session_id: id, .. } if *id == session_id
+            )
+        })
+        .await;
+        assert!(
+            matches!(post_restart_event, PeerSessionEvent::MessageReceived { .. }),
+            "session closed after restart instead of delivering data: {post_restart_event:?}"
+        );
+
+        handle_a.disconnect(session_id).await.unwrap();
+        wait_for_closed(&mut events_a, session_id).await;
+        wait_for_closed(&mut events_b, session_id).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (a, b) = tokio::join!(service_a.shutdown(), service_b.shutdown());
+            a.unwrap();
+            b.unwrap();
+        })
+        .await
+        .expect("restart test services did not shut down");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn answerer_initiated_and_simultaneous_restarts_converge_without_glare() {
+        let (service_a, service_b, peer_a, peer_b) = start_test_pair().await;
+        let handle_a = service_a.handle();
+        let handle_b = service_b.handle();
+        let mut events_a = handle_a.subscribe_events();
+        let mut events_b = handle_b.subscribe_events();
+        let session_id = handle_a.connect(peer_b).await.unwrap();
+        assert_eq!(wait_for_incoming(&mut events_b, &peer_a).await, session_id);
+        handle_b.accept(session_id).await.unwrap();
+        wait_for_connected(&mut events_a, session_id).await;
+        wait_for_connected(&mut events_b, session_id).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        let generation_a = handle_a.committed_transport_generation(session_id).await.unwrap();
+        let generation_b = handle_b.committed_transport_generation(session_id).await.unwrap();
+        let (forced, (), ()) = tokio::join!(
+            handle_b.force_ice_restart(session_id),
+            wait_for_transport_generation(&handle_a, session_id, generation_a),
+            wait_for_transport_generation(&handle_b, session_id, generation_b),
+        );
+        forced.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let generation_a = handle_a.committed_transport_generation(session_id).await.unwrap();
+        let generation_b = handle_b.committed_transport_generation(session_id).await.unwrap();
+        let (forced_a, forced_b, (), ()) = tokio::join!(
+            handle_a.force_ice_restart(session_id),
+            handle_b.force_ice_restart(session_id),
+            wait_for_transport_generation(&handle_a, session_id, generation_a),
+            wait_for_transport_generation(&handle_b, session_id, generation_b),
+        );
+        forced_a.unwrap();
+        forced_b.unwrap();
+
+        assert_eq!(handle_a.snapshot().sessions.len(), 1);
+        assert_eq!(handle_b.snapshot().sessions.len(), 1);
+        let message_id = MessageId::new();
+        handle_b
+            .send_message(session_id, message_id, "after simultaneous restart", Utc::now())
+            .await
+            .unwrap();
+        wait_for_event(&mut events_a, |event| {
+            matches!(
+                event,
+                PeerSessionEvent::MessageReceived {
+                    session_id: id,
+                    message_id: received_id,
+                    body,
+                    ..
+                } if *id == session_id
+                    && *received_id == message_id
+                    && body == "after simultaneous restart"
+            )
+        })
+        .await;
+
+        handle_a.disconnect(session_id).await.unwrap();
+        wait_for_closed(&mut events_a, session_id).await;
+        wait_for_closed(&mut events_b, session_id).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (a, b) = tokio::join!(service_a.shutdown(), service_b.shutdown());
+            a.unwrap();
+            b.unwrap();
+        })
+        .await
+        .expect("simultaneous restart services did not shut down");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn unreachable_restart_signaling_is_removed_within_the_attempt_deadline() {
+        let peer_a = PeerId::new("peer-a").unwrap();
+        let peer_b = PeerId::new("peer-b").unwrap();
+        let directory_a = Arc::new(TestDirectory::default());
+        let directory_b = Arc::new(TestDirectory::default());
+        let mut config_a = PeerSessionServiceConfig::new(directory_a.clone(), directory_a.clone());
+        config_a.local_peer_id = Some(peer_a.clone());
+        config_a.limits.ice_restart_timeout = Duration::from_millis(150);
+        config_a.limits.endpoint_attempt_timeout = Duration::from_secs(5);
+        config_a.limits.shutdown_timeout = Duration::from_millis(500);
+        let mut config_b = PeerSessionServiceConfig::new(directory_b.clone(), directory_b.clone());
+        config_b.local_peer_id = Some(peer_b.clone());
+        config_b.limits.shutdown_timeout = Duration::from_millis(500);
+        let service_a = PeerSessionService::start(config_a).await.unwrap();
+        let service_b = PeerSessionService::start(config_b).await.unwrap();
+        directory_a.insert_peer(
+            peer_b.clone(),
+            service_b.local_public_key(),
+            SocketAddr::from(([127, 0, 0, 1], service_b.signaling_port())),
+        );
+        directory_b.insert_peer(
+            peer_a.clone(),
+            service_a.local_public_key(),
+            SocketAddr::from(([127, 0, 0, 1], service_a.signaling_port())),
+        );
+        let handle_a = service_a.handle();
+        let handle_b = service_b.handle();
+        let mut events_a = handle_a.subscribe_events();
+        let mut events_b = handle_b.subscribe_events();
+        let session_id = handle_a.connect(peer_b.clone()).await.unwrap();
+        assert_eq!(wait_for_incoming(&mut events_b, &peer_a).await, session_id);
+        handle_b.accept(session_id).await.unwrap();
+        wait_for_connected(&mut events_a, session_id).await;
+        wait_for_connected(&mut events_b, session_id).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        directory_a.insert_peer_with_hints(
+            peer_b,
+            service_b.local_public_key(),
+            Arc::from([SocketAddr::from(([203, 0, 113, 1], 9))]),
+        );
+        let started = Instant::now();
+        handle_a.force_ice_restart(session_id).await.unwrap();
+        wait_for_closed(&mut events_a, session_id).await;
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "restart removal exceeded its absolute deadline: {:?}",
+            started.elapsed()
+        );
+        wait_for_absent(&handle_a, session_id).await;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (a, b) = tokio::join!(service_a.shutdown(), service_b.shutdown());
+            a.unwrap();
+            b.unwrap();
+        })
+        .await
+        .expect("timed-out restart services did not shut down");
     }
 
     async fn wait_for_incoming(
@@ -2052,5 +2459,26 @@ mod tests {
         })
         .await
         .expect("session was not removed");
+    }
+
+    async fn wait_for_transport_generation(
+        handle: &PeerSessionServiceHandle,
+        session_id: SessionId,
+        previous: u64,
+    ) {
+        tokio::time::timeout(Duration::from_secs(15), async {
+            loop {
+                let current = handle
+                    .committed_transport_generation(session_id)
+                    .await
+                    .expect("session disappeared before committing its restart");
+                if current > previous {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("session did not commit its next transport generation");
     }
 }

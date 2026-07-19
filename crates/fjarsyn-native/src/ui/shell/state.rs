@@ -26,6 +26,8 @@ pub enum AppLifecycle {
     Ready,
     Failed(String),
     ShuttingDown,
+    Restarting,
+    RestartFailed(String),
 }
 
 #[derive(Debug, Clone)]

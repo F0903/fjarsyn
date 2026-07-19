@@ -197,5 +197,3 @@ impl std::fmt::Debug for FFmpegDecoder {
             .finish()
     }
 }
-
-unsafe impl Send for FFmpegDecoder {}

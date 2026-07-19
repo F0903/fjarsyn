@@ -5,7 +5,6 @@ use fjarsyn_core::{
     media::{frame::Frame, gpu_interop},
     peer_session::{
         LocalShareState, PeerSessionPhase, PeerSessionSnapshot, RemoteShareState, SessionId,
-        ShareId,
     },
 };
 use iced::{
@@ -20,7 +19,7 @@ use crate::ui::{
     fonts,
     message::{Message, PeerActionMessage, ScreenMessage},
     presentation::project_peer,
-    runtime::{LocalMediaState, MediaSessionProjection},
+    runtime::{LocalMediaState, MediaSessionProjection, ShareMediaBinding},
     shell::ShellContext,
     theme,
 };
@@ -131,22 +130,48 @@ impl PeerScreen {
     ) -> iced::widget::Container<'a, Message> {
         let connected =
             project_peer(false, session.map(|session| session.phase)).capabilities_ready();
-        let remote_share_id = session.and_then(|session| match session.remote_share {
-            RemoteShareState::Active { share_id } => Some(share_id),
+        let reconnecting =
+            session.is_some_and(|session| session.phase == PeerSessionPhase::Reconnecting);
+        let remote_binding = session.and_then(|session| match session.remote_share {
+            RemoteShareState::Active { share_id, epoch } => {
+                Some(ShareMediaBinding { share_id, epoch })
+            }
             RemoteShareState::Inactive => None,
         });
-        let remote_active = remote_share_id.is_some();
+        let local_binding = session.and_then(|session| match session.local_share {
+            LocalShareState::Active { share_id, epoch } => {
+                Some(ShareMediaBinding { share_id, epoch })
+            }
+            LocalShareState::Inactive => None,
+        });
+        let remote_active = remote_binding.is_some();
         let session_id = session.map(|session| session.session_id);
 
         let remote_failure = match &media.remote {
             crate::ui::runtime::RemoteMediaState::Failed(reason) => Some(reason.clone()),
             _ => None,
         };
-        let authenticated_frame = media
-            .remote_frame
-            .clone()
-            .filter(|_| should_render_remote_frame(remote_share_id, media.remote_frame_share_id));
-        let remote: Element<'_, Message> = if let Some(frame) = authenticated_frame {
+        let decoder_restart_required = ctx.media.decoder_restart_required();
+        let authenticated_frame = media.remote_frame.clone().filter(|_| {
+            should_render_remote_frame(
+                decoder_restart_required,
+                remote_binding,
+                media.remote_frame_binding,
+            )
+        });
+        let remote: Element<'_, Message> = if decoder_restart_required {
+            container(
+                column![
+                    lucide::triangle_alert().size(28),
+                    text("Video unavailable").size(18),
+                    text("Restart Fjarsyn to view shared screens.").size(12).style(text::secondary),
+                ]
+                .spacing(10)
+                .align_x(Alignment::Center),
+            )
+            .center(Length::Fill)
+            .into()
+        } else if let Some(frame) = authenticated_frame {
             self.frame_viewer(frame)
         } else {
             container(
@@ -158,6 +183,8 @@ impl PeerScreen {
                     },
                     text(if remote_failure.is_some() {
                         "Remote video failed"
+                    } else if reconnecting {
+                        "Reconnecting"
                     } else if !connected {
                         "Not connected"
                     } else if remote_active {
@@ -168,6 +195,9 @@ impl PeerScreen {
                     .size(18),
                     text(if let Some(reason) = remote_failure {
                         reason
+                    } else if reconnecting {
+                        "Keeping the current screen share ready while the connection recovers."
+                            .into()
                     } else if connected {
                         "Messaging remains available while no screen is being shared.".into()
                     } else {
@@ -184,28 +214,32 @@ impl PeerScreen {
         };
 
         let preview_enabled = ctx.config.capture.enable_ui_preview;
-        let local_preview: Element<'_, Message> = if preview_enabled && self.local_preview_visible {
-            if let Some(frame) = media.local_frame.clone() {
-                container(self.frame_viewer(frame))
-                    .width(Length::Fixed(260.0))
-                    .height(Length::Fixed(146.0))
-                    .padding(6)
-                    .style(theme::card_container)
-                    .into()
+        let encoder_restart_required = ctx.media.encoder_restart_required();
+        let local_preview: Element<'_, Message> =
+            if !encoder_restart_required && preview_enabled && self.local_preview_visible {
+                if let Some(frame) = media.local_frame.clone().filter(|_| {
+                    local_binding.is_some() && media.local_frame_binding == local_binding
+                }) {
+                    container(self.frame_viewer(frame))
+                        .width(Length::Fixed(260.0))
+                        .height(Length::Fixed(146.0))
+                        .padding(6)
+                        .style(theme::card_container)
+                        .into()
+                } else {
+                    Space::new().into()
+                }
             } else {
                 Space::new().into()
-            }
-        } else {
-            Space::new().into()
-        };
+            };
 
-        let core_local_active = session
-            .is_some_and(|session| matches!(session.local_share, LocalShareState::Active { .. }));
+        let core_local_active = local_binding.is_some();
         let share_controls = self.view_share_controls(
             session_id,
             connected,
             core_local_active,
             preview_enabled,
+            encoder_restart_required,
             media,
         );
         container(stack![
@@ -232,17 +266,21 @@ impl PeerScreen {
         connected: bool,
         core_local_active: bool,
         preview_enabled: bool,
+        encoder_restart_required: bool,
         media: &MediaSessionProjection,
     ) -> Element<'_, Message> {
         let local_active = matches!(media.local, LocalMediaState::Active);
         let reconciling_stop = core_local_active
             && matches!(media.local, LocalMediaState::Inactive | LocalMediaState::Failed(_));
-        let busy = reconciling_stop
+        let busy = encoder_restart_required
+            || reconciling_stop
             || matches!(
                 media.local,
                 LocalMediaState::Selecting | LocalMediaState::Starting | LocalMediaState::Stopping
             );
-        let label = if reconciling_stop {
+        let label = if encoder_restart_required && !reconciling_stop {
+            "Sharing unavailable"
+        } else if reconciling_stop {
             "Stopping..."
         } else {
             match &media.local {
@@ -300,7 +338,10 @@ impl PeerScreen {
             );
         }
         let mut content = column![controls].spacing(6).align_x(Alignment::Center);
-        if let LocalMediaState::Failed(reason) = &media.local {
+        if encoder_restart_required {
+            content = content
+                .push(text("Restart Fjarsyn to share screens.").size(11).style(text::secondary));
+        } else if let LocalMediaState::Failed(reason) = &media.local {
             content = content.push(text(reason.clone()).size(11).style(text::secondary));
         }
         container(content).padding(8).style(theme::section_container).into()
@@ -327,8 +368,16 @@ impl PeerScreen {
 
         let connected =
             project_peer(false, session.map(|session| session.phase)).capabilities_ready();
+        let reconnecting =
+            session.is_some_and(|session| session.phase == PeerSessionPhase::Reconnecting);
         let mut input = text_input(
-            if connected { "Type a message..." } else { "Connect to send messages" },
+            if connected {
+                "Type a message..."
+            } else if reconnecting {
+                "Reconnecting..."
+            } else {
+                "Connect to send messages"
+            },
             &self.draft,
         )
         .padding(11)
@@ -419,29 +468,39 @@ fn session_phase_label(phase: PeerSessionPhase) -> &'static str {
         PeerSessionPhase::Incoming => "Incoming",
         PeerSessionPhase::Negotiating => "Negotiating",
         PeerSessionPhase::Connected => "Connected",
+        PeerSessionPhase::Reconnecting => "Reconnecting",
         PeerSessionPhase::Disconnecting => "Disconnecting",
     }
 }
 
 fn should_render_remote_frame(
-    active_share_id: Option<ShareId>,
-    frame_share_id: Option<ShareId>,
+    decoder_restart_required: bool,
+    active_binding: Option<ShareMediaBinding>,
+    frame_binding: Option<ShareMediaBinding>,
 ) -> bool {
-    active_share_id.is_some() && active_share_id == frame_share_id
+    !decoder_restart_required && active_binding.is_some() && active_binding == frame_binding
 }
 
 #[cfg(test)]
 mod tests {
-    use super::should_render_remote_frame;
+    use fjarsyn_core::peer_session::{ShareEpoch, ShareId};
+
+    use super::{ShareMediaBinding, should_render_remote_frame};
 
     #[test]
     fn remote_frame_requires_authenticated_active_share_state() {
-        let active_share_id = fjarsyn_core::peer_session::ShareId::new();
-        let stale_share_id = fjarsyn_core::peer_session::ShareId::new();
+        let active = ShareMediaBinding { share_id: ShareId::new(), epoch: ShareEpoch::FIRST };
+        let stale_id = ShareMediaBinding { share_id: ShareId::new(), epoch: active.epoch };
+        let stale_epoch = ShareMediaBinding {
+            share_id: active.share_id,
+            epoch: ShareEpoch::try_from(active.epoch.value() + 1).unwrap(),
+        };
 
-        assert!(!should_render_remote_frame(None, Some(active_share_id)));
-        assert!(!should_render_remote_frame(Some(active_share_id), None));
-        assert!(!should_render_remote_frame(Some(active_share_id), Some(stale_share_id)));
-        assert!(should_render_remote_frame(Some(active_share_id), Some(active_share_id)));
+        assert!(!should_render_remote_frame(false, None, Some(active)));
+        assert!(!should_render_remote_frame(false, Some(active), None));
+        assert!(!should_render_remote_frame(false, Some(active), Some(stale_id)));
+        assert!(!should_render_remote_frame(false, Some(active), Some(stale_epoch)));
+        assert!(should_render_remote_frame(false, Some(active), Some(active)));
+        assert!(!should_render_remote_frame(true, Some(active), Some(active)));
     }
 }

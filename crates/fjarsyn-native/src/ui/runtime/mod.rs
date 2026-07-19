@@ -17,6 +17,7 @@ use fjarsyn_core::{
     },
     presence::{PresenceHandle, PresenceService, PresenceSnapshot},
     services::{
+        codec_service::Service,
         contact_trust_service::ContactTrustService,
         messaging_service::{
             ConversationMessage, ConversationSummary, MessagingEvent, MessagingService,
@@ -25,8 +26,8 @@ use fjarsyn_core::{
     },
 };
 pub use media::{
-    LocalMediaState, MediaEvent, MediaProjection, MediaSessionProjection, RemoteMediaState,
-    SessionMediaService,
+    LocalMediaState, MediaCodecDirection, MediaEvent, MediaProjection, MediaSessionProjection,
+    RemoteMediaState, SessionMediaService, ShareMediaBinding,
 };
 use tokio::{sync::Mutex, task::JoinHandle};
 
@@ -41,6 +42,7 @@ pub struct ApplicationHandles {
 
 pub(crate) struct ApplicationOwners {
     database: sqlx::SqlitePool,
+    codecs: Service,
     sessions: PeerSessionService,
     presence: PresenceService,
     messaging: MessagingService,
@@ -58,6 +60,7 @@ pub struct ApplicationRuntime {
     pub active_config: fjarsyn_core::config::Config,
     media_config: Arc<RwLock<fjarsyn_core::config::Config>>,
     database: Option<sqlx::SqlitePool>,
+    codecs: Option<Service>,
     sessions: Option<PeerSessionService>,
     presence: Option<PresenceService>,
     messaging: Option<MessagingService>,
@@ -73,7 +76,8 @@ impl ApplicationRuntime {
         media_config: Arc<RwLock<fjarsyn_core::config::Config>>,
         owners: ApplicationOwners,
     ) -> Self {
-        let ApplicationOwners { database, sessions, presence, messaging, event_workers } = owners;
+        let ApplicationOwners { database, codecs, sessions, presence, messaging, event_workers } =
+            owners;
         Self {
             handles,
             local_peer_id,
@@ -81,6 +85,7 @@ impl ApplicationRuntime {
             active_config,
             media_config,
             database: Some(database),
+            codecs: Some(codecs),
             sessions: Some(sessions),
             presence: Some(presence),
             messaging: Some(messaging),
@@ -89,15 +94,40 @@ impl ApplicationRuntime {
     }
 
     pub async fn shutdown(mut self) -> Result<(), String> {
+        let media_deadline = tokio::time::Instant::now() + media::PIPELINE_SHUTDOWN_TIMEOUT;
+        let mut errors = Vec::new();
+        // Signal codec supervisors before awaiting any application lock. A
+        // local share start may currently hold the media mutex while awaiting
+        // codec initialization; this makes that await resolve immediately and
+        // starts the same three-second worker-stop budget up front.
+        if let Some(codecs) = self.codecs.as_ref() {
+            codecs.request_shutdown();
+        }
         // Stop projection/reconciliation first so no worker can recreate a
         // media pipeline while the authoritative owners are winding down.
-        for worker in self.event_workers.drain(..) {
+        let event_workers = self.event_workers.drain(..).collect::<Vec<_>>();
+        for worker in &event_workers {
             worker.abort();
-            let _ = worker.await;
         }
-        self.handles.media.lock().await.shutdown().await;
+        if tokio::time::timeout_at(media_deadline, futures::future::join_all(event_workers))
+            .await
+            .is_err()
+        {
+            errors.push("media event workers exceeded the shared shutdown deadline".into());
+        }
 
-        let mut errors = Vec::new();
+        match tokio::time::timeout_at(media_deadline, self.handles.media.lock()).await {
+            Ok(mut media) => media.shutdown_until(media_deadline).await,
+            Err(_) => {
+                errors.push("media service lock exceeded the shared shutdown deadline".into())
+            }
+        }
+
+        if let Some(codecs) = self.codecs.take()
+            && let Err(error) = codecs.shutdown_until(media_deadline).await
+        {
+            errors.push(format!("codecs: {error}"));
+        }
         if let Some(presence) = self.presence.take()
             && let Err(error) = presence.shutdown().await
         {
@@ -141,6 +171,7 @@ impl Drop for ApplicationRuntime {
         if let Ok(mut media) = self.handles.media.try_lock() {
             media.cancel_now();
         }
+        drop(self.codecs.take());
         drop(self.presence.take());
         drop(self.sessions.take());
         drop(self.messaging.take());

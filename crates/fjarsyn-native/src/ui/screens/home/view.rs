@@ -62,6 +62,7 @@ impl HomeScreen {
                     }
                     Some(PeerSessionPhase::Incoming) => "Incoming request",
                     Some(PeerSessionPhase::Connected) => "Connected",
+                    Some(PeerSessionPhase::Reconnecting) => "Reconnecting",
                     Some(PeerSessionPhase::Disconnecting) => "Disconnecting",
                     None => "Not connected",
                 };

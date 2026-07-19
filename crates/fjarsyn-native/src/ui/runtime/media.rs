@@ -3,14 +3,15 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use fjarsyn_core::{
     capture_providers::{CaptureProvider, PlatformCaptureItem, PlatformCaptureProvider},
     config::Config,
-    media::{
-        ffmpeg::{FFmpegDecoder, FFmpegEncoder, FFmpegTranscodeTypeExt, HWAccelType},
-        frame::Frame,
-        pixel_format::PixelFormat,
-    },
+    media::{frame::Frame, pixel_format::PixelFormat},
     peer_session::{
         EncodedVideoSample, EncodedVideoSink, LocalShareState, PeerSessionServiceHandle,
-        PeerSessionServiceSnapshot, RemoteShareState, RemoteVideoSource, SessionId, ShareId,
+        PeerSessionServiceSnapshot, RemoteShareState, RemoteVideoRead, RemoteVideoSource,
+        SessionId, ShareEpoch, ShareId,
+    },
+    services::codec_service::{
+        CodecDirectionState, DecoderSessionParts, DecoderWorkerConfig, EncoderSessionParts,
+        EncoderWorkerConfig, Handle,
     },
 };
 use futures::StreamExt;
@@ -19,7 +20,7 @@ use tokio::{
     task::{AbortHandle, JoinHandle},
 };
 
-const PIPELINE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+pub(super) const PIPELINE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum LocalMediaState {
@@ -41,18 +42,34 @@ pub enum RemoteMediaState {
     Failed(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaCodecDirection {
+    Encoder,
+    Decoder,
+}
+
+/// Exact identity of one remote screen-share media generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ShareMediaBinding {
+    pub share_id: ShareId,
+    pub epoch: ShareEpoch,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MediaSessionProjection {
     pub local: LocalMediaState,
     pub remote: RemoteMediaState,
     pub local_frame: Option<Arc<Frame>>,
+    pub local_frame_binding: Option<ShareMediaBinding>,
     pub remote_frame: Option<Arc<Frame>>,
-    pub remote_frame_share_id: Option<ShareId>,
+    pub remote_frame_binding: Option<ShareMediaBinding>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct MediaProjection {
     pub sessions: Arc<BTreeMap<SessionId, MediaSessionProjection>>,
+    encoder_restart_required: bool,
+    decoder_restart_required: bool,
 }
 
 impl MediaProjection {
@@ -60,10 +77,25 @@ impl MediaProjection {
         self.sessions.get(&session_id).cloned().unwrap_or_default()
     }
 
+    pub fn encoder_restart_required(&self) -> bool {
+        self.encoder_restart_required
+    }
+
+    pub fn decoder_restart_required(&self) -> bool {
+        self.decoder_restart_required
+    }
+
+    pub fn codec_restart_required(&self) -> bool {
+        self.encoder_restart_required || self.decoder_restart_required
+    }
+
     pub fn apply(&mut self, event: MediaEvent) {
         let sessions = Arc::make_mut(&mut self.sessions);
         match event {
             MediaEvent::LocalState { session_id, state } => {
+                if self.encoder_restart_required {
+                    return;
+                }
                 let projection = sessions.entry(session_id).or_default();
                 projection.local = state;
                 if matches!(
@@ -73,9 +105,13 @@ impl MediaProjection {
                         | LocalMediaState::Failed(_)
                 ) {
                     projection.local_frame = None;
+                    projection.local_frame_binding = None;
                 }
             }
             MediaEvent::RemoteState { session_id, state } => {
+                if self.decoder_restart_required {
+                    return;
+                }
                 let projection = sessions.entry(session_id).or_default();
                 projection.remote = state;
                 if matches!(
@@ -83,17 +119,52 @@ impl MediaProjection {
                     RemoteMediaState::Inactive | RemoteMediaState::Failed(_)
                 ) {
                     projection.remote_frame = None;
-                    projection.remote_frame_share_id = None;
+                    projection.remote_frame_binding = None;
                 }
             }
-            MediaEvent::LocalFrame { session_id, frame } => {
-                sessions.entry(session_id).or_default().local_frame = Some(frame);
+            MediaEvent::LocalFrame { session_id, binding, frame } => {
+                if self.encoder_restart_required {
+                    return;
+                }
+                let projection = sessions.entry(session_id).or_default();
+                projection.local_frame = Some(frame);
+                projection.local_frame_binding = Some(binding);
             }
-            MediaEvent::RemoteFrame { session_id, share_id, frame } => {
+            MediaEvent::RemoteFrame { session_id, binding, frame } => {
+                if self.decoder_restart_required {
+                    return;
+                }
                 let projection = sessions.entry(session_id).or_default();
                 projection.remote_frame = Some(frame);
-                projection.remote_frame_share_id = Some(share_id);
+                projection.remote_frame_binding = Some(binding);
             }
+            MediaEvent::CodecRestartRequired { direction } => match direction {
+                MediaCodecDirection::Encoder if !self.encoder_restart_required => {
+                    self.encoder_restart_required = true;
+                    for projection in sessions.values_mut() {
+                        projection.local_frame = None;
+                        projection.local_frame_binding = None;
+                        if !matches!(projection.local, LocalMediaState::Inactive) {
+                            projection.local = LocalMediaState::Failed(
+                                "the video encoder is unavailable until Fjarsyn restarts".into(),
+                            );
+                        }
+                    }
+                }
+                MediaCodecDirection::Decoder if !self.decoder_restart_required => {
+                    self.decoder_restart_required = true;
+                    for projection in sessions.values_mut() {
+                        projection.remote_frame = None;
+                        projection.remote_frame_binding = None;
+                        if !matches!(projection.remote, RemoteMediaState::Inactive) {
+                            projection.remote = RemoteMediaState::Failed(
+                                "the video decoder is unavailable until Fjarsyn restarts".into(),
+                            );
+                        }
+                    }
+                }
+                MediaCodecDirection::Encoder | MediaCodecDirection::Decoder => {}
+            },
             MediaEvent::SessionClosed { session_id } => {
                 sessions.remove(&session_id);
             }
@@ -106,14 +177,27 @@ impl MediaProjection {
     pub fn reconcile_shares(&mut self, snapshot: &PeerSessionServiceSnapshot) {
         let sessions = Arc::make_mut(&mut self.sessions);
         for (session_id, projection) in sessions {
-            let active_share_id =
-                snapshot.session(*session_id).and_then(|session| match session.remote_share {
-                    RemoteShareState::Active { share_id } => Some(share_id),
-                    RemoteShareState::Inactive => None,
-                });
-            if projection.remote_frame_share_id != active_share_id {
+            let session = snapshot.session(*session_id);
+            let active_local_binding = session.and_then(|session| match session.local_share {
+                LocalShareState::Active { share_id, epoch } => {
+                    Some(ShareMediaBinding { share_id, epoch })
+                }
+                LocalShareState::Inactive => None,
+            });
+            if projection.local_frame_binding != active_local_binding {
+                projection.local_frame = None;
+                projection.local_frame_binding = None;
+            }
+
+            let active_remote_binding = session.and_then(|session| match session.remote_share {
+                RemoteShareState::Active { share_id, epoch } => {
+                    Some(ShareMediaBinding { share_id, epoch })
+                }
+                RemoteShareState::Inactive => None,
+            });
+            if projection.remote_frame_binding != active_remote_binding {
                 projection.remote_frame = None;
-                projection.remote_frame_share_id = None;
+                projection.remote_frame_binding = None;
             }
         }
     }
@@ -123,8 +207,9 @@ impl MediaProjection {
 pub enum MediaEvent {
     LocalState { session_id: SessionId, state: LocalMediaState },
     RemoteState { session_id: SessionId, state: RemoteMediaState },
-    LocalFrame { session_id: SessionId, frame: Arc<Frame> },
-    RemoteFrame { session_id: SessionId, share_id: ShareId, frame: Arc<Frame> },
+    LocalFrame { session_id: SessionId, binding: ShareMediaBinding, frame: Arc<Frame> },
+    RemoteFrame { session_id: SessionId, binding: ShareMediaBinding, frame: Arc<Frame> },
+    CodecRestartRequired { direction: MediaCodecDirection },
     SessionClosed { session_id: SessionId },
 }
 
@@ -150,16 +235,19 @@ impl OwnedPipeline {
     }
 
     async fn shutdown_with_timeout(&mut self, timeout: Duration) {
+        self.shutdown_until(tokio::time::Instant::now() + timeout).await;
+    }
+
+    async fn shutdown_until(&mut self, deadline: tokio::time::Instant) {
         self.request_stop();
         if let Some(mut task) = self.task.take() {
-            match tokio::time::timeout(timeout, &mut task).await {
+            match tokio::time::timeout_at(deadline, &mut task).await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) if error.is_cancelled() => {}
                 Ok(Err(error)) => tracing::warn!("media pipeline task failed: {error}"),
                 Err(_) => {
                     tracing::warn!(
-                        "media pipeline exceeded its shutdown deadline; aborting async workers; \
-                         an in-progress FFmpeg call will finish cooperatively"
+                        "media pipeline exceeded its shared shutdown deadline; aborting async workers"
                     );
                     self.abort_children();
                     task.abort();
@@ -217,6 +305,13 @@ impl Drop for ChildTaskGuard {
 pub(crate) struct LocalShareBinding {
     pub(crate) session_id: SessionId,
     pub(crate) share_id: ShareId,
+    pub(crate) epoch: ShareEpoch,
+}
+
+impl LocalShareBinding {
+    fn media(self) -> ShareMediaBinding {
+        ShareMediaBinding { share_id: self.share_id, epoch: self.epoch }
+    }
 }
 
 struct LocalPipeline {
@@ -239,7 +334,7 @@ pub(super) struct LocalReconciliation {
 }
 
 struct RemotePipeline {
-    share_id: ShareId,
+    binding: ShareMediaBinding,
     worker: OwnedPipeline,
     source_return: oneshot::Receiver<RemoteVideoSource>,
 }
@@ -247,6 +342,9 @@ struct RemotePipeline {
 pub struct SessionMediaService {
     event_tx: mpsc::Sender<super::RuntimeEvent>,
     sessions: PeerSessionServiceHandle,
+    codecs: Handle,
+    encoder_restart_required: bool,
+    decoder_restart_required: bool,
     pending_local_start: Option<PendingLocalStart>,
     pending_local_stop: Option<LocalShareBinding>,
     local: Option<LocalPipeline>,
@@ -272,10 +370,14 @@ impl SessionMediaService {
     pub fn new(
         event_tx: mpsc::Sender<super::RuntimeEvent>,
         sessions: PeerSessionServiceHandle,
+        codecs: Handle,
     ) -> Self {
         Self {
             event_tx,
             sessions,
+            codecs,
+            encoder_restart_required: false,
+            decoder_restart_required: false,
             pending_local_start: None,
             pending_local_stop: None,
             local: None,
@@ -285,16 +387,36 @@ impl SessionMediaService {
     }
 
     pub async fn mark_selecting(&self, session_id: SessionId) {
+        if self.encoder_restart_required {
+            self.emit(MediaEvent::LocalState {
+                session_id,
+                state: LocalMediaState::Failed(
+                    "the video encoder is unavailable until Fjarsyn restarts".into(),
+                ),
+            })
+            .await;
+            return;
+        }
         self.emit(MediaEvent::LocalState { session_id, state: LocalMediaState::Selecting }).await;
     }
 
-    pub async fn begin_local_start(&mut self, session_id: SessionId) {
+    pub async fn begin_local_start(&mut self, session_id: SessionId) -> Result<(), String> {
+        if self.encoder_restart_required {
+            let reason = "the video encoder is unavailable until Fjarsyn restarts".to_owned();
+            self.emit(MediaEvent::LocalState {
+                session_id,
+                state: LocalMediaState::Failed(reason.clone()),
+            })
+            .await;
+            return Err(reason);
+        }
         self.pending_local_stop = None;
         self.pending_local_start = Some(PendingLocalStart {
             session_id,
             expires_at: tokio::time::Instant::now() + Duration::from_secs(30),
         });
         self.emit(MediaEvent::LocalState { session_id, state: LocalMediaState::Starting }).await;
+        Ok(())
     }
 
     pub async fn cancel_local(&mut self, session_id: SessionId) {
@@ -316,12 +438,15 @@ impl SessionMediaService {
 
     pub async fn start_local(
         &mut self,
-        session_id: SessionId,
-        share_id: ShareId,
         item: PlatformCaptureItem,
         sink: EncodedVideoSink,
         config: Config,
     ) -> Result<(), String> {
+        if self.encoder_restart_required {
+            return Err("the video encoder is unavailable until Fjarsyn restarts".into());
+        }
+        let session_id = sink.session_id();
+        let share_id = sink.share_id();
         if self.pending_local_start.as_ref().is_some_and(|pending| pending.session_id == session_id)
         {
             self.pending_local_start = None;
@@ -338,7 +463,7 @@ impl SessionMediaService {
             ));
         }
 
-        let binding = LocalShareBinding { session_id, share_id };
+        let binding = LocalShareBinding { session_id, share_id, epoch: sink.epoch() };
 
         self.emit(MediaEvent::LocalState { session_id, state: LocalMediaState::Starting }).await;
 
@@ -367,32 +492,32 @@ impl SessionMediaService {
                 return Err(error.to_string());
             }
         };
-        let device_handle =
-            if config.video.transcoding_type.get_encoder_info().hw_accel == HWAccelType::D3D11VA {
-                capture.read().await.raw_device_handle()
-            } else {
-                None
-            };
-        let mut encoder = match FFmpegEncoder::new(
-            config.video.target_bitrate,
-            config.video.target_framerate.to_hz(),
-            config.video.target_resolution,
-            PixelFormat::DEFAULT_CAPTURE,
-            device_handle,
-            config.video.transcoding_type,
-        ) {
+        let encoder = match self
+            .codecs
+            .open_encoder(EncoderWorkerConfig {
+                bitrate: config.video.target_bitrate,
+                target_framerate_hz: config.video.target_framerate.to_hz(),
+                target_resolution: config.video.target_resolution,
+                input_format: PixelFormat::DEFAULT_CAPTURE,
+                device: capture.read().await.codec_device(),
+                transcoding_type: config.video.transcoding_type,
+            })
+            .await
+        {
             Ok(encoder) => encoder,
             Err(error) => {
                 let _ = capture.write().await.stop_capture();
                 return Err(error.to_string());
             }
         };
+        let EncoderSessionParts {
+            input: encoder_input,
+            output: mut encoder_output,
+            worker: encoder_worker,
+        } = encoder.into_parts();
 
         let project_local_preview = config.capture.enable_ui_preview;
-        let transcode = config.video.transcoding_type;
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        let (frame_tx, mut frame_rx) = mpsc::channel::<Arc<Frame>>(2);
-        let (encoded_tx, mut encoded_rx) = mpsc::channel::<EncodedVideoSample>(3);
 
         let mut capture_cancel = cancel_rx.clone();
         let capture_cancel_tx = cancel_tx.clone();
@@ -400,6 +525,7 @@ impl SessionMediaService {
         let capture_task = tokio::spawn(async move {
             loop {
                 let frame = tokio::select! {
+                    biased;
                     _ = capture_cancel.changed() => return Ok::<(), String>(()),
                     frame = stream.next() => match frame {
                         Some(frame) => frame,
@@ -412,62 +538,66 @@ impl SessionMediaService {
                 let frame = Arc::new(frame);
                 if project_local_preview {
                     let _ = capture_events.try_send(super::RuntimeEvent::Media(
-                        MediaEvent::LocalFrame { session_id, frame: frame.clone() },
+                        MediaEvent::LocalFrame {
+                            session_id,
+                            binding: binding.media(),
+                            frame: frame.clone(),
+                        },
                     ));
                 }
-                match frame_tx.try_send(frame) {
+                match encoder_input.try_send(frame) {
                     Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
                     Err(mpsc::error::TrySendError::Closed(_)) => return Ok(()),
                 }
             }
         });
 
-        // FFmpeg is deliberately isolated from the async executor. Capture and
-        // network tasks remain responsive while the blocking worker performs one
-        // synchronous codec call at a time. Tokio cannot abort a call already in
-        // progress; shutdown closes its bounded input and lets that call finish.
+        // The service owns the dedicated OS thread and watchdog. This async task
+        // observes only its terminal result; dropping it requests a non-blocking
+        // stop and never joins an in-flight native call on a Tokio worker.
         let encoder_cancel_tx = cancel_tx.clone();
-        let encoder_task = tokio::task::spawn_blocking(move || {
-            let result = (|| {
-                while let Some(frame) = frame_rx.blocking_recv() {
-                    let Some(duration) = frame.duration else {
-                        continue;
-                    };
-                    let nal_units =
-                        encoder
-                            .encode(&frame, transcode, frame.size.x, frame.size.y)
-                            .map_err(|error| format!("failed to encode screen frame: {error}"))?;
-                    for nal in nal_units {
-                        match encoded_tx.try_send(EncodedVideoSample::new(nal, duration)) {
-                            Ok(()) => {}
-                            Err(mpsc::error::TrySendError::Full(_)) => break,
-                            Err(mpsc::error::TrySendError::Closed(_)) => return Ok(()),
-                        }
-                    }
-                }
-                Ok(())
-            })();
+        let encoder_task = tokio::spawn(async move {
+            let result = encoder_worker
+                .wait()
+                .await
+                .map_err(|error| format!("encoder worker failed: {error}"));
             let _ = encoder_cancel_tx.send(true);
             result
         });
 
         let mut network_cancel = cancel_rx;
         let network_cancel_tx = cancel_tx.clone();
+        let encoder_health = self.codecs.clone();
         let network_task = tokio::spawn(async move {
             loop {
-                let sample = tokio::select! {
+                let encoded = tokio::select! {
+                    biased;
                     _ = network_cancel.changed() => return Ok::<(), String>(()),
-                    sample = encoded_rx.recv() => match sample {
-                        Some(sample) => sample,
+                    encoded = encoder_output.recv() => match encoded {
+                        Some(Ok(encoded)) => encoded,
+                        Some(Err(error)) => {
+                            let _ = network_cancel_tx.send(true);
+                            return Err(format!("failed to encode screen frame: {error}"));
+                        }
                         None => return Ok(()),
                     },
                 };
-                tokio::select! {
-                    _ = network_cancel.changed() => return Ok(()),
-                    result = sink.send(sample) => {
-                        if let Err(error) = result {
-                            let _ = network_cancel_tx.send(true);
-                            return Err(format!("video transport closed: {error}"));
+                for nal in encoded.nal_units {
+                    if matches!(
+                        encoder_health.snapshot().encode,
+                        CodecDirectionState::RestartRequired(_)
+                    ) {
+                        return Ok(());
+                    }
+                    let sample = EncodedVideoSample::new(nal, encoded.duration);
+                    tokio::select! {
+                        biased;
+                        _ = network_cancel.changed() => return Ok(()),
+                        result = sink.send(sample) => {
+                            if let Err(error) = result {
+                                let _ = network_cancel_tx.send(true);
+                                return Err(format!("video transport closed: {error}"));
+                            }
                         }
                     }
                 }
@@ -476,7 +606,11 @@ impl SessionMediaService {
 
         let pipeline_events = self.event_tx.clone();
         let failure_capture = capture.clone();
-        let child_aborts = vec![capture_task.abort_handle(), network_task.abort_handle()];
+        let child_aborts = vec![
+            capture_task.abort_handle(),
+            encoder_task.abort_handle(),
+            network_task.abort_handle(),
+        ];
         let supervisor_aborts = child_aborts.clone();
         let task = tokio::spawn(async move {
             let mut child_guard = ChildTaskGuard::new(supervisor_aborts);
@@ -545,8 +679,8 @@ impl SessionMediaService {
         } else {
             self.sessions.snapshot().session(session_id).and_then(|session| {
                 match session.local_share {
-                    LocalShareState::Active { share_id } => {
-                        Some(LocalShareBinding { session_id, share_id })
+                    LocalShareState::Active { share_id, epoch } => {
+                        Some(LocalShareBinding { session_id, share_id, epoch })
                     }
                     LocalShareState::Inactive => None,
                 }
@@ -580,8 +714,8 @@ impl SessionMediaService {
             .sessions
             .iter()
             .filter_map(|session| match session.local_share {
-                LocalShareState::Active { share_id } => {
-                    Some(LocalShareBinding { session_id: session.session_id, share_id })
+                LocalShareState::Active { share_id, epoch } => {
+                    Some(LocalShareBinding { session_id: session.session_id, share_id, epoch })
                 }
                 LocalShareState::Inactive => None,
             })
@@ -645,13 +779,16 @@ impl SessionMediaService {
     pub async fn start_remote(
         &mut self,
         session_id: SessionId,
-        share_id: ShareId,
+        binding: ShareMediaBinding,
         config: Config,
     ) -> Result<(), String> {
+        if self.decoder_restart_required {
+            return Err("the video decoder is unavailable until Fjarsyn restarts".into());
+        }
         if self
             .remote
             .get(&session_id)
-            .is_some_and(|pipeline| pipeline.share_id == share_id && !pipeline.worker.is_finished())
+            .is_some_and(|pipeline| pipeline.binding == binding && !pipeline.worker.is_finished())
         {
             return Ok(());
         }
@@ -661,29 +798,87 @@ impl SessionMediaService {
             self.standby_remote.insert(session_id, source);
         }
         let Some(mut source) = self.standby_remote.remove(&session_id) else {
-            return Err("remote video standby source is unavailable".into());
+            let reason = "remote video standby source is unavailable".to_owned();
+            self.emit(MediaEvent::RemoteState {
+                session_id,
+                state: RemoteMediaState::Failed(reason.clone()),
+            })
+            .await;
+            return Err(reason);
         };
+        let decoder = match self
+            .codecs
+            .open_decoder(DecoderWorkerConfig {
+                transcoding_type: config.video.transcoding_type,
+                output_format: PixelFormat::DEFAULT_CAPTURE,
+            })
+            .await
+        {
+            Ok(decoder) => decoder,
+            Err(error) => {
+                self.standby_remote.insert(session_id, source);
+                let reason = error.to_string();
+                self.emit(MediaEvent::RemoteState {
+                    session_id,
+                    state: RemoteMediaState::Failed(reason.clone()),
+                })
+                .await;
+                return Err(reason);
+            }
+        };
+        let DecoderSessionParts {
+            input: decoder_input,
+            output: mut decoder_output,
+            worker: decoder_worker,
+        } = decoder.into_parts();
         self.emit(MediaEvent::RemoteState { session_id, state: RemoteMediaState::Starting }).await;
         let (cancel_tx, cancel_rx) = watch::channel(false);
-        let (packet_tx, mut packet_rx) = mpsc::channel::<bytes::Bytes>(8);
-        let (frame_tx, mut frame_rx) = mpsc::channel::<Arc<Frame>>(2);
         let (source_return_tx, source_return) = oneshot::channel();
 
         let mut source_cancel = cancel_rx.clone();
         let source_cancel_tx = cancel_tx.clone();
         let source_task = tokio::spawn(async move {
+            let mut found_sequence_parameter_set = false;
             let result = loop {
                 let sample = tokio::select! {
+                    biased;
                     _ = source_cancel.changed() => break Ok::<(), String>(()),
-                    sample = source.recv() => match sample {
-                        Ok(sample) => sample,
+                    sample = source.recv_for(binding.epoch) => match sample {
+                        Ok(RemoteVideoRead::Sample(sample)) => sample,
+                        Ok(RemoteVideoRead::EpochAdvanced { next_epoch }) => {
+                            tracing::debug!(
+                                %session_id,
+                                share_epoch = binding.epoch.value(),
+                                next_share_epoch = next_epoch.value(),
+                                "remote media advanced before its control event was projected; parking the old decoder"
+                            );
+                            // Keep this pipeline alive until reconciliation sees
+                            // the new control epoch. Completing here would cause
+                            // the old binding to be recreated every tick while
+                            // the future sample remains pending in the source.
+                            park_until_pipeline_replacement(&mut source_cancel).await;
+                            break Ok(());
+                        }
+                        Err(fjarsyn_core::peer_session::PeerSessionError::RemoteVideoLagged { skipped }) => {
+                            tracing::debug!(%session_id, skipped, "remote video source lagged; continuing at the retained media boundary");
+                            continue;
+                        }
                         Err(error) => {
                             let _ = source_cancel_tx.send(true);
                             break Err(error.to_string());
                         }
                     },
                 };
-                match packet_tx.try_send(sample.data) {
+                // Media identity was fenced by the RTP epoch before this
+                // decoder queue. SPS gating is solely codec bootstrap: wait
+                // for the new encoder's parameters before decoding.
+                if !found_sequence_parameter_set {
+                    found_sequence_parameter_set = contains_h264_nal_type(&sample.data, 7);
+                    if !found_sequence_parameter_set {
+                        continue;
+                    }
+                }
+                match decoder_input.try_send(sample.data) {
                     Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
                     Err(mpsc::error::TrySendError::Closed(_)) => break Ok(()),
                 }
@@ -695,57 +890,47 @@ impl SessionMediaService {
         });
 
         let decoder_cancel_tx = cancel_tx.clone();
-        let transcode = config.video.transcoding_type;
-        let decoder_task = tokio::task::spawn_blocking(move || {
-            let result = (|| {
-                let mut decoder = FFmpegDecoder::new(transcode, PixelFormat::DEFAULT_CAPTURE)
-                    .map_err(|error| format!("failed to create video decoder: {error}"))?;
-                let mut found_sequence_parameter_set = false;
-                while let Some(packet) = packet_rx.blocking_recv() {
-                    // Each native decoder belongs to one authenticated ShareId.
-                    // Ignore any tail buffered from the prior share until the new
-                    // encoder's SPS arrives, then decode its complete fresh GOP.
-                    if !found_sequence_parameter_set {
-                        found_sequence_parameter_set = contains_h264_nal_type(&packet, 7);
-                        if !found_sequence_parameter_set {
-                            continue;
-                        }
-                    }
-                    if let Some(frame) = decoder
-                        .decode(&packet)
-                        .map_err(|error| format!("failed to decode remote video: {error}"))?
-                    {
-                        match frame_tx.try_send(frame) {
-                            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
-                            Err(mpsc::error::TrySendError::Closed(_)) => return Ok(()),
-                        }
-                    }
-                }
-                Ok(())
-            })();
+        let decoder_task = tokio::spawn(async move {
+            let result = decoder_worker
+                .wait()
+                .await
+                .map_err(|error| format!("decoder worker failed: {error}"));
             let _ = decoder_cancel_tx.send(true);
             result
         });
 
         let mut projection_cancel = cancel_rx;
         let projection_events = self.event_tx.clone();
+        let decoder_health = self.codecs.clone();
         let projection_task = tokio::spawn(async move {
             loop {
                 let frame = tokio::select! {
+                    biased;
                     _ = projection_cancel.changed() => return Ok::<(), String>(()),
-                    frame = frame_rx.recv() => match frame {
-                        Some(frame) => frame,
+                    frame = decoder_output.recv() => match frame {
+                        Some(Ok(frame)) => frame,
+                        Some(Err(error)) => return Err(format!("failed to decode remote video: {error}")),
                         None => return Ok(()),
                     },
                 };
+                if matches!(
+                    decoder_health.snapshot().decode,
+                    CodecDirectionState::RestartRequired(_)
+                ) {
+                    return Ok(());
+                }
                 let _ = projection_events.try_send(super::RuntimeEvent::Media(
-                    MediaEvent::RemoteFrame { session_id, share_id, frame },
+                    MediaEvent::RemoteFrame { session_id, binding, frame },
                 ));
             }
         });
 
         let pipeline_events = self.event_tx.clone();
-        let child_aborts = vec![source_task.abort_handle(), projection_task.abort_handle()];
+        let child_aborts = vec![
+            source_task.abort_handle(),
+            decoder_task.abort_handle(),
+            projection_task.abort_handle(),
+        ];
         let supervisor_aborts = child_aborts.clone();
         let task = tokio::spawn(async move {
             let mut child_guard = ChildTaskGuard::new(supervisor_aborts);
@@ -769,7 +954,7 @@ impl SessionMediaService {
         self.remote.insert(
             session_id,
             RemotePipeline {
-                share_id,
+                binding,
                 worker: OwnedPipeline {
                     stop: Some(cancel_tx),
                     task: Some(task),
@@ -783,19 +968,29 @@ impl SessionMediaService {
     }
 
     pub fn remote_receiver_ready(&self, session_id: SessionId) -> bool {
-        self.standby_remote.contains_key(&session_id) || self.remote.contains_key(&session_id)
+        self.decoder_restart_required
+            || self.standby_remote.contains_key(&session_id)
+            || self.remote.contains_key(&session_id)
+    }
+
+    pub fn encoder_restart_required(&self) -> bool {
+        self.encoder_restart_required
+    }
+
+    pub fn decoder_restart_required(&self) -> bool {
+        self.decoder_restart_required
     }
 
     pub fn install_standby_remote(&mut self, session_id: SessionId, source: RemoteVideoSource) {
-        if !self.remote_receiver_ready(session_id) {
+        if !self.decoder_restart_required && !self.remote_receiver_ready(session_id) {
             self.standby_remote.insert(session_id, source);
         }
     }
 
-    pub fn remote_is_running(&self, session_id: SessionId, share_id: ShareId) -> bool {
+    pub fn remote_is_running(&self, session_id: SessionId, binding: ShareMediaBinding) -> bool {
         self.remote
             .get(&session_id)
-            .is_some_and(|pipeline| pipeline.share_id == share_id && !pipeline.worker.is_finished())
+            .is_some_and(|pipeline| pipeline.binding == binding && !pipeline.worker.is_finished())
     }
 
     pub async fn stop_session(&mut self, session_id: SessionId) {
@@ -817,16 +1012,58 @@ impl SessionMediaService {
         self.emit(MediaEvent::RemoteState { session_id, state: RemoteMediaState::Inactive }).await;
     }
 
-    pub async fn shutdown(&mut self) {
+    pub fn require_codec_restart(&mut self, direction: MediaCodecDirection) -> bool {
+        match direction {
+            MediaCodecDirection::Encoder if !self.encoder_restart_required => {
+                self.encoder_restart_required = true;
+                self.pending_local_start = None;
+                if let Some(local) = self.local.as_mut() {
+                    local.stop_requested = true;
+                    local.worker.request_stop();
+                    stop_capture_outside_runtime(local.capture.clone());
+                }
+                true
+            }
+            MediaCodecDirection::Decoder if !self.decoder_restart_required => {
+                self.decoder_restart_required = true;
+                self.standby_remote.clear();
+                let mut remote = std::mem::take(&mut self.remote);
+                for pipeline in remote.values_mut() {
+                    pipeline.worker.request_stop();
+                }
+                drop(remote);
+                true
+            }
+            MediaCodecDirection::Encoder | MediaCodecDirection::Decoder => false,
+        }
+    }
+
+    pub async fn shutdown_until(&mut self, deadline: tokio::time::Instant) {
         self.pending_local_start = None;
         self.pending_local_stop = None;
-        if let Some(local) = self.local.take() {
-            local.worker.shutdown().await;
-            let _ = local.capture.write().await.stop_capture();
+        let mut local = self.local.take();
+        let mut remote = std::mem::take(&mut self.remote);
+
+        // Signal every pipeline before awaiting any of them. All workers share
+        // one absolute deadline, so shutdown time is independent of pipeline count.
+        if let Some(local) = local.as_mut() {
+            local.worker.request_stop();
         }
-        let remote = std::mem::take(&mut self.remote);
-        futures::future::join_all(remote.into_values().map(|pipeline| pipeline.worker.shutdown()))
-            .await;
+        for pipeline in remote.values_mut() {
+            pipeline.worker.request_stop();
+        }
+
+        let local_shutdown = async {
+            if let Some(local) = local {
+                let LocalPipeline { mut worker, capture, .. } = local;
+                worker.shutdown_until(deadline).await;
+                stop_capture_outside_runtime(capture);
+            }
+        };
+        let remote_shutdown = futures::future::join_all(
+            remote.values_mut().map(|pipeline| pipeline.worker.shutdown_until(deadline)),
+        );
+        tokio::join!(local_shutdown, remote_shutdown);
         self.standby_remote.clear();
     }
 
@@ -838,13 +1075,45 @@ impl SessionMediaService {
         self.pending_local_start = None;
         self.pending_local_stop = None;
         if let Some(local) = self.local.take() {
-            if let Ok(mut capture) = local.capture.try_write() {
-                let _ = capture.stop_capture();
-            }
+            stop_capture_outside_runtime(local.capture);
             drop(local.worker);
         }
         self.standby_remote.clear();
         self.remote.clear();
+    }
+}
+
+/// WGC teardown invokes synchronous COM close calls. Keep those calls away
+/// from Tokio so application shutdown remains bounded even if a driver stalls.
+fn stop_capture_outside_runtime(capture: Arc<RwLock<PlatformCaptureProvider>>) {
+    // Retain a second reference until thread creation succeeds. If the OS
+    // refuses a new cleanup thread, intentionally leak this shutdown-only
+    // reference rather than synchronously dropping a potentially stuck WGC
+    // provider on the async runtime.
+    let fallback = capture.clone();
+    let spawn =
+        std::thread::Builder::new().name("fjarsyn-capture-cleanup".into()).spawn(move || {
+            use windows::Win32::System::Com::{
+                COINIT_MULTITHREADED, CoInitializeEx, CoUninitialize,
+            };
+
+            if let Err(error) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.ok() {
+                tracing::warn!(%error, "failed to initialize capture cleanup COM apartment; deferring cleanup to process exit");
+                std::mem::forget(capture);
+                return;
+            }
+            {
+                let mut provider = capture.blocking_write();
+                if let Err(error) = provider.stop_capture() {
+                    tracing::warn!(%error, "failed to stop capture during detached cleanup");
+                }
+            }
+            drop(capture);
+            unsafe { CoUninitialize() };
+        });
+    if let Err(error) = spawn {
+        tracing::warn!(%error, "failed to spawn capture cleanup thread; deferring cleanup to process exit");
+        std::mem::forget(fallback);
     }
 }
 
@@ -863,6 +1132,10 @@ async fn shutdown_remote_pipeline(pipeline: RemotePipeline) -> Option<RemoteVide
             None
         }
     }
+}
+
+async fn park_until_pipeline_replacement(cancel: &mut watch::Receiver<bool>) {
+    let _ = cancel.changed().await;
 }
 
 fn contains_h264_nal_type(data: &[u8], target: u8) -> bool {
@@ -989,11 +1262,76 @@ mod tests {
 
     use super::*;
 
+    fn test_frame() -> Arc<Frame> {
+        Arc::new(Frame {
+            data: FrameData::Software(bytes::Bytes::new()),
+            format: PixelFormat::BGRA8,
+            size: Vector2::new(0, 0),
+            duration: None,
+        })
+    }
+
+    #[test]
+    fn codec_quarantine_is_directional_and_rejects_late_frames() {
+        let session_id = SessionId::new();
+        let binding = ShareMediaBinding { share_id: ShareId::new(), epoch: ShareEpoch::FIRST };
+        let mut projection = MediaProjection::default();
+        projection.apply(MediaEvent::LocalState { session_id, state: LocalMediaState::Active });
+        projection.apply(MediaEvent::RemoteState { session_id, state: RemoteMediaState::Active });
+        projection.apply(MediaEvent::LocalFrame { session_id, binding, frame: test_frame() });
+        projection.apply(MediaEvent::RemoteFrame { session_id, binding, frame: test_frame() });
+
+        projection
+            .apply(MediaEvent::CodecRestartRequired { direction: MediaCodecDirection::Encoder });
+
+        assert!(projection.encoder_restart_required());
+        assert!(!projection.decoder_restart_required());
+        assert!(projection.session(session_id).local_frame.is_none());
+        assert!(projection.session(session_id).remote_frame.is_some());
+        projection.apply(MediaEvent::LocalState { session_id, state: LocalMediaState::Inactive });
+        assert!(matches!(projection.session(session_id).local, LocalMediaState::Failed(_)));
+        projection.apply(MediaEvent::LocalFrame { session_id, binding, frame: test_frame() });
+        assert!(projection.session(session_id).local_frame.is_none());
+
+        projection
+            .apply(MediaEvent::CodecRestartRequired { direction: MediaCodecDirection::Decoder });
+        projection
+            .apply(MediaEvent::CodecRestartRequired { direction: MediaCodecDirection::Decoder });
+
+        assert!(projection.codec_restart_required());
+        assert!(projection.session(session_id).remote_frame.is_none());
+        projection.apply(MediaEvent::RemoteState { session_id, state: RemoteMediaState::Inactive });
+        assert!(matches!(projection.session(session_id).remote, RemoteMediaState::Failed(_)));
+        projection.apply(MediaEvent::RemoteFrame { session_id, binding, frame: test_frame() });
+        assert!(projection.session(session_id).remote_frame.is_none());
+
+        projection.apply(MediaEvent::SessionClosed { session_id });
+        assert!(projection.codec_restart_required());
+        assert!(projection.sessions.is_empty());
+    }
+
+    #[test]
+    fn ordinary_codec_failure_does_not_request_an_application_restart() {
+        let session_id = SessionId::new();
+        let mut projection = MediaProjection::default();
+
+        projection.apply(MediaEvent::LocalState {
+            session_id,
+            state: LocalMediaState::Failed("ordinary encoder error".into()),
+        });
+        projection.apply(MediaEvent::RemoteState {
+            session_id,
+            state: RemoteMediaState::Failed("ordinary decoder error".into()),
+        });
+
+        assert!(!projection.codec_restart_required());
+    }
+
     #[test]
     fn local_pipeline_cleanup_keeps_the_original_share_identity() {
         let session_id = SessionId::new();
         let share_id = ShareId::new();
-        let binding = LocalShareBinding { session_id, share_id };
+        let binding = LocalShareBinding { session_id, share_id, epoch: ShareEpoch::FIRST };
 
         assert_eq!(binding.session_id, session_id);
         assert_eq!(binding.share_id, share_id);
@@ -1001,7 +1339,11 @@ mod tests {
 
     #[test]
     fn local_reconciliation_supervises_stop_until_exact_share_is_inactive() {
-        let binding = LocalShareBinding { session_id: SessionId::new(), share_id: ShareId::new() };
+        let binding = LocalShareBinding {
+            session_id: SessionId::new(),
+            share_id: ShareId::new(),
+            epoch: ShareEpoch::FIRST,
+        };
 
         let plan = plan_local_reconciliation(
             &[binding],
@@ -1016,7 +1358,11 @@ mod tests {
 
     #[test]
     fn local_reconciliation_tears_down_native_only_after_core_is_inactive() {
-        let binding = LocalShareBinding { session_id: SessionId::new(), share_id: ShareId::new() };
+        let binding = LocalShareBinding {
+            session_id: SessionId::new(),
+            share_id: ShareId::new(),
+            epoch: ShareEpoch::FIRST,
+        };
 
         let plan = plan_local_reconciliation(
             &[],
@@ -1032,8 +1378,16 @@ mod tests {
     #[test]
     fn pending_start_protects_ambiguous_share_but_orphans_are_stopped() {
         let pending_session = SessionId::new();
-        let pending = LocalShareBinding { session_id: pending_session, share_id: ShareId::new() };
-        let orphan = LocalShareBinding { session_id: SessionId::new(), share_id: ShareId::new() };
+        let pending = LocalShareBinding {
+            session_id: pending_session,
+            share_id: ShareId::new(),
+            epoch: ShareEpoch::FIRST,
+        };
+        let orphan = LocalShareBinding {
+            session_id: SessionId::new(),
+            share_id: ShareId::new(),
+            epoch: ShareEpoch::FIRST,
+        };
 
         let plan = plan_local_reconciliation(&[pending, orphan], None, Some(pending_session), None);
 
@@ -1043,8 +1397,10 @@ mod tests {
     #[test]
     fn changed_share_id_never_reuses_an_obsolete_native_pipeline() {
         let session_id = SessionId::new();
-        let native_binding = LocalShareBinding { session_id, share_id: ShareId::new() };
-        let core_binding = LocalShareBinding { session_id, share_id: ShareId::new() };
+        let native_binding =
+            LocalShareBinding { session_id, share_id: ShareId::new(), epoch: ShareEpoch::FIRST };
+        let core_binding =
+            LocalShareBinding { session_id, share_id: ShareId::new(), epoch: ShareEpoch::FIRST };
 
         let plan = plan_local_reconciliation(
             &[core_binding],
@@ -1059,7 +1415,11 @@ mod tests {
 
     #[test]
     fn control_only_stop_intent_remains_until_the_exact_share_is_inactive() {
-        let binding = LocalShareBinding { session_id: SessionId::new(), share_id: ShareId::new() };
+        let binding = LocalShareBinding {
+            session_id: SessionId::new(),
+            share_id: ShareId::new(),
+            epoch: ShareEpoch::FIRST,
+        };
 
         let pending = plan_local_reconciliation(&[binding], None, None, Some(binding));
         assert_eq!(pending.stop_core, vec![binding]);
@@ -1091,9 +1451,14 @@ mod tests {
     }
 
     #[test]
-    fn stopped_share_rejects_a_late_queued_remote_frame() {
+    fn remote_frames_require_the_exact_authenticated_share_epoch() {
         let session_id = SessionId::new();
         let share_id = ShareId::new();
+        let binding_a = ShareMediaBinding { share_id, epoch: ShareEpoch::FIRST };
+        let binding_b = ShareMediaBinding {
+            share_id,
+            epoch: ShareEpoch::try_from(ShareEpoch::FIRST.value() + 1).unwrap(),
+        };
         let snapshot = |remote_share| PeerSessionServiceSnapshot {
             sessions: Arc::new(vec![PeerSessionSnapshot {
                 session_id,
@@ -1103,29 +1468,99 @@ mod tests {
                 remote_share,
             }]),
         };
-        let frame = || {
-            Arc::new(Frame {
-                data: FrameData::Software(bytes::Bytes::new()),
-                format: PixelFormat::BGRA8,
-                size: Vector2::new(0, 0),
-                duration: None,
-            })
-        };
-        let active = snapshot(RemoteShareState::Active { share_id });
+        let active_a = snapshot(RemoteShareState::Active {
+            share_id: binding_a.share_id,
+            epoch: binding_a.epoch,
+        });
+        let active_b = snapshot(RemoteShareState::Active {
+            share_id: binding_b.share_id,
+            epoch: binding_b.epoch,
+        });
         let stopped = snapshot(RemoteShareState::Inactive);
         let mut projection = MediaProjection::default();
 
-        projection.apply(MediaEvent::RemoteFrame { session_id, share_id, frame: frame() });
-        projection.reconcile_shares(&active);
+        projection.apply(MediaEvent::RemoteFrame {
+            session_id,
+            binding: binding_a,
+            frame: test_frame(),
+        });
+        projection.reconcile_shares(&active_a);
+        assert!(projection.session(session_id).remote_frame.is_some());
+
+        projection.reconcile_shares(&active_b);
+        assert!(projection.session(session_id).remote_frame.is_none());
+
+        projection.apply(MediaEvent::RemoteFrame {
+            session_id,
+            binding: binding_a,
+            frame: test_frame(),
+        });
+        projection.reconcile_shares(&active_b);
+        assert!(projection.session(session_id).remote_frame.is_none());
+
+        projection.apply(MediaEvent::RemoteFrame {
+            session_id,
+            binding: binding_b,
+            frame: test_frame(),
+        });
+        projection.reconcile_shares(&active_b);
         assert!(projection.session(session_id).remote_frame.is_some());
 
         projection.reconcile_shares(&stopped);
-        projection.apply(MediaEvent::RemoteFrame { session_id, share_id, frame: frame() });
+        projection.apply(MediaEvent::RemoteFrame {
+            session_id,
+            binding: binding_b,
+            frame: test_frame(),
+        });
         projection.reconcile_shares(&stopped);
 
         let session = projection.session(session_id);
         assert!(session.remote_frame.is_none());
-        assert_eq!(session.remote_frame_share_id, None);
+        assert_eq!(session.remote_frame_binding, None);
+    }
+
+    #[test]
+    fn local_preview_frames_require_the_exact_share_epoch() {
+        let session_id = SessionId::new();
+        let share_id = ShareId::new();
+        let binding_a = ShareMediaBinding { share_id, epoch: ShareEpoch::FIRST };
+        let binding_b = ShareMediaBinding {
+            share_id,
+            epoch: ShareEpoch::try_from(ShareEpoch::FIRST.value() + 1).unwrap(),
+        };
+        let snapshot = |binding: Option<ShareMediaBinding>| PeerSessionServiceSnapshot {
+            sessions: Arc::new(vec![PeerSessionSnapshot {
+                session_id,
+                peer_id: PeerId::new("peer-a").unwrap(),
+                phase: PeerSessionPhase::Connected,
+                local_share: binding.map_or(LocalShareState::Inactive, |binding| {
+                    LocalShareState::Active { share_id: binding.share_id, epoch: binding.epoch }
+                }),
+                remote_share: RemoteShareState::Inactive,
+            }]),
+        };
+        let mut projection = MediaProjection::default();
+
+        projection.apply(MediaEvent::LocalFrame {
+            session_id,
+            binding: binding_a,
+            frame: test_frame(),
+        });
+        projection.reconcile_shares(&snapshot(Some(binding_a)));
+        assert!(projection.session(session_id).local_frame.is_some());
+
+        projection.reconcile_shares(&snapshot(Some(binding_b)));
+        assert!(projection.session(session_id).local_frame.is_none());
+        projection.apply(MediaEvent::LocalFrame {
+            session_id,
+            binding: binding_a,
+            frame: test_frame(),
+        });
+        projection.reconcile_shares(&snapshot(Some(binding_b)));
+
+        let session = projection.session(session_id);
+        assert!(session.local_frame.is_none());
+        assert_eq!(session.local_frame_binding, None);
     }
 
     #[tokio::test]
@@ -1157,5 +1592,21 @@ mod tests {
         tokio::task::yield_now().await;
 
         assert!(child_dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn future_epoch_parks_the_old_pipeline_until_reconciliation_replaces_it() {
+        let (cancel_tx, mut cancel_rx) = watch::channel(false);
+        let parked = tokio::spawn(async move {
+            park_until_pipeline_replacement(&mut cancel_rx).await;
+        });
+        tokio::task::yield_now().await;
+        assert!(!parked.is_finished());
+
+        cancel_tx.send_replace(true);
+        tokio::time::timeout(Duration::from_secs(1), parked)
+            .await
+            .expect("parked pipeline did not observe replacement")
+            .unwrap();
     }
 }

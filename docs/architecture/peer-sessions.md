@@ -51,7 +51,7 @@ UI
             |-- reliable ordered control data channel
             |-- reliable ordered messaging data channel
             |-- H.264 media sender and receiver
-            |-- signaling connection during negotiation only
+            |-- signaling connection during negotiation or ICE recovery only
             `-- owned async/network tasks and deterministic shutdown
 ```
 
@@ -59,9 +59,11 @@ UI
 
 Every async/network task has one owner, a cancellation path and a bounded,
 awaited shutdown path. `Drop` may provide best-effort cancellation but is not
-the primary lifecycle mechanism. A codec call already executing inside
-`spawn_blocking` is cooperative rather than forcibly interruptible; that native
-FFmpeg boundary is recorded as follow-up hardening.
+the primary lifecycle mechanism. Synchronous codec work runs on dedicated,
+service-owned OS threads rather than Tokio workers. Watchdogs bound the async
+owner's wait and quarantine an unresponsive codec direction, but Rust does not
+attempt to kill a thread inside FFmpeg; process isolation remains follow-up
+hardening for forcible termination and native-crash containment.
 
 ## Service responsibilities
 
@@ -74,6 +76,8 @@ FFmpeg boundary is recorded as follow-up hardening.
   hints for each explicit Connect command and try a bounded candidate set.
 - Resolve simultaneous connection attempts deterministically.
 - Verify that every signal matches its registered peer and session.
+- Route restart signaling only to the exact authenticated active session, without
+  creating another session or incoming-request prompt.
 - Publish immutable service snapshots and semantic events.
 - Route connected-session commands to the correct `PeerSession`.
 - Shut down and join every session and signaling task within the service deadline.
@@ -88,7 +92,9 @@ It does not encode frames, persist messages, render UI or expose transport objec
 - Send and receive the versioned control and messaging protocols.
 - Expose a bounded media-sample capability without exposing WebRTC internals.
 - Reject commands and runtime events for the wrong or obsolete session.
-- Close its temporary signaling path after the required WebRTC capabilities open.
+- Own ICE-restart attempts and monotonically increasing transport generations.
+- Close each temporary signaling path after the required WebRTC capabilities
+  open or recover.
 - Cancel and join its RTC/network child tasks on disconnect or failure.
 
 ### PresenceService
@@ -132,30 +138,59 @@ and they are not a complete defense against denial of service by a hostile LAN.
 
 The native runtime owns capture selection, encoding, decoding and frame projections for a session. Screens only observe its state. Navigating away must not create, destroy or duplicate media workers. Only a local user command may start local capture; remote control messages can only update remote-share state.
 
-Native async media supervisors are bounded and joined. Closing their bounded
-inputs makes codecs exit cooperatively, but an FFmpeg call already running on a
-blocking worker cannot be forcibly interrupted by Tokio.
+All FFmpeg construction and codec calls execute on dedicated, owned OS threads.
+An active call has a ten-second watchdog. A completed call may publish output
+only while its originating pipeline and codec direction are still current; a
+reply that arrives after timeout, cancellation or replacement is discarded.
+
+Encoder and decoder availability are quarantined independently. If an active
+call exceeds its watchdog or its worker is otherwise lost, the affected
+direction enters sticky quarantine for the rest of the process lifetime. A
+stuck encoder therefore does not disable decoding, and a stuck decoder does not
+disable encoding, but no pipeline in the quarantined direction is recreated or
+automatically retried. The UI retains a restart-required failure for that
+direction across reconciliation and navigation; only restarting Fjarsyn clears
+it.
+
+Application shutdown creates one absolute three-second media deadline and
+pre-signals the codec service before waiting for any media lock. Event-worker
+joining, media-lock acquisition, local and remote pipeline cleanup, and final
+codec-service shutdown all consume that same deadline. Responsive workers
+close their bounded inputs, finish cleanup and are joined. At the deadline,
+async owners detach unfinished native workers and application shutdown
+continues; late output remains suppressed. WGC's synchronous COM close runs on
+a detached cleanup thread so a stalled driver cannot block the async deadline.
+`Drop` is still only an immediate best-effort cancellation path.
+
+This boundary deliberately does not claim that an in-flight FFmpeg call is
+interruptible. Rust cannot safely terminate one native thread. A hung thread
+and any FFmpeg, COM or GPU resources it retains remain alive until the call
+returns or the operating-system process exits, and an in-process native crash
+can still terminate Fjarsyn. A supervised codec child process is required to
+forcibly terminate such calls, reclaim their resources and contain crashes.
 
 ## State model
 
 Absence from the session registry means disconnected. Live session phases are:
 
 ```text
-Outgoing: Requesting -> Negotiating -> Connected -> Disconnecting
-Incoming: Incoming  -> Negotiating -> Connected -> Disconnecting
+Outgoing: Requesting -> Negotiating -> Connected <-> Reconnecting -> Disconnecting
+Incoming: Incoming  -> Negotiating -> Connected <-> Reconnecting -> Disconnecting
 
-Any non-terminal phase -> removed from registry on rejection, failure or closure
+Any live phase -> removed from registry on rejection, unrecovered failure or closure
 ```
 
-Failures are events with a reason, followed by removal. They are not reusable connection objects.
+`Reconnecting` is recovery of the existing session, not a new session. An
+unrecovered failure is an event with a reason followed by removal; failed
+connection objects are never placed back into the registry for reuse.
 
 Presence and presentation are derived independently:
 
 ```text
 Presence: Away | Nearby { endpoint_hints, last_seen }
-Session:  Disconnected | Connecting | Incoming | Connected | Disconnecting
+Session:  Disconnected | Connecting | Incoming | Connected | Reconnecting | Disconnecting
 Local share:  Inactive | Selecting | Starting | Active | Stopping | Failed
-Remote share: Inactive | Starting | Active
+Remote share: Inactive | Starting | Active | Failed
 ```
 
 All commands and events after discovery carry the relevant request, attempt or session ID. An event from an obsolete ID cannot mutate current state.
@@ -168,9 +203,11 @@ Signaling is temporary and carries negotiation only. The versioned signed payloa
 - Random session ID.
 - Exact sender peer ID.
 - Exact recipient peer ID; broadcasts are forbidden.
-- One of endpoint hello, endpoint proof, request, acceptance, offer, answer,
-  ICE candidate, ready, ready acknowledgement, rejection or cancellation.
-- The corresponding challenge, SDP, candidate or bounded reason payload.
+- One of endpoint hello, endpoint proof, request, restart, restart
+  acknowledgement, acceptance, offer, answer, ICE candidate, ready, ready
+  acknowledgement, rejection or cancellation.
+- The corresponding challenge, transport generation, SDP, candidate or bounded
+  reason payload.
 
 The signed SDP binds the WebRTC DTLS fingerprint to the trusted Ed25519 contact identity. Signaling never carries chat, receipts, screen-share state or media.
 
@@ -208,9 +245,75 @@ signaling connection closes after the peer connection and required data
 channels are ready. Failure to create the listener or its TLS configuration is
 an explicit service-startup error rather than a silent degraded mode.
 
-The initial implementation treats a terminal transport failure as the end of
-the session; reconnecting creates a fresh authenticated session. An ICE-restart
-protocol can be added later without making signaling persistent.
+### ICE recovery
+
+A connected session treats WebRTC `Disconnected` as transient first. It keeps
+the session in `Connected` for the configured grace period and cancels an
+unengaged recovery if the current transport reconnects. Expiry of that grace,
+or an explicit ICE `Failed` state, moves the same actor to `Reconnecting`. One
+transport loss admits one bounded restart attempt; there is no automatic retry
+loop inside that attempt, and one absolute `ice_restart_timeout` covers the
+fresh signaling connection, restart negotiation and readiness handshake. A
+timeout or failed attempt removes the session unless the old transport
+reconnects before the attempt is engaged.
+
+The roles fixed during initial negotiation also govern every restart. Either
+peer may detect the loss and open restart signaling, so an answerer-only
+failure can recover without waiting for the other ICE agent to notice it. The
+original outgoing peer remains the sole SDP offerer and the original incoming
+peer remains the answerer. If both peers dial simultaneously, the fixed
+offerer's outbound WSS path wins and the answerer aborts and drains its
+competing dial. This avoids offer glare without making recovery depend on
+symmetric failure detection.
+
+Recovery opens a fresh TLS 1.3 WSS connection using fresh mDNS endpoint hints
+and the same exact Ed25519 raw-public-key pin, endpoint proof, frame limits and
+authentication deadlines as initial negotiation. A signed `Restart` must name
+the exact active `SessionId`, trusted peer and next transport generation. The
+listener routes it to that existing actor without inserting a session or
+emitting an incoming-session prompt. Unknown, mismatched, stale and
+out-of-order restart intents fail closed. The actor also retains the public key
+authenticated by the initial session and compares every dialed or attached
+restart connection against it, so a resolver change cannot silently replace a
+live session's peer identity.
+
+Generation zero identifies initial negotiation. Every accepted restart uses
+exactly the next monotonically increasing transport generation. The signed
+`Restart`/`RestartAck`, `Offer`, `Answer`, `IceCandidate`, `Ready` and
+`ReadyAck` payloads carry that generation, so stale or future signaling cannot
+mutate the current transport. Every candidate must also carry the exact ICE
+username fragment from that generation's already-installed remote SDP, and a
+per-generation cap bounds the complete candidate stream. The offerer waits for
+the authenticated `RestartAck` before invoking WebRTC's destructive
+`create_offer(ice_restart = true)` operation. Both offer and answer must rotate
+their prior username fragment and password; unchanged credentials fail closed.
+
+WebRTC state callbacks are wakeups, not generation proof: before accepting a
+connected notification, the actor re-reads the current peer, ICE and DTLS
+states and requires both new descriptions plus a selected candidate pair. The
+underlying ICE restart synchronously clears the old pair, so that selected pair
+must come from connectivity checks after the credential reset. Only then, with
+both required data channels still open and the signed `Ready`/`ReadyAck`
+handshake complete in both directions, is the restart committed. The actor
+returns to `Connected` only after bounded recovery-signaling shutdown.
+Signaling is therefore temporary for both initial negotiation and recovery; no
+persistent per-contact signaling route is introduced.
+
+Recovery retains the same `SessionId`, session actor, `RTCPeerConnection`, data
+channels, media tracks, local and remote `ShareId` state, and native media
+workers. While `Reconnecting`, new outbound chat, receipt and share-control
+commands are gated. Authenticated inbound application frames are retained in a
+bounded buffer and flushed only after successful readiness; an explicit remote
+disconnect is delivered immediately. Encoded outbound video samples are
+consumed and dropped rather than queued, so stale media is not replayed after
+recovery. Existing media ownership and share state resume when the session
+returns to `Connected`.
+
+ICE `Failed` is recoverable because ICE credentials and candidate pairs can be
+replaced without recreating the session capabilities. A closed ICE or peer
+connection, failed or closed DTLS transport, or closed required data channel
+is terminal: ICE restart does not attempt to resurrect destroyed DTLS, SCTP or
+application endpoints.
 
 TLS 1.3 encrypts the WebSocket upgrade, session identifiers, SDP, ICE
 candidates and all signed signaling envelopes. Fjarsyn uses the existing
@@ -250,19 +353,38 @@ LAN.
 
 The peer connection creates these endpoints during initial negotiation:
 
-- `fjarsyn-control-v1`: reliable ordered control messages.
-- `fjarsyn-messaging-v1`: reliable ordered chat and receipt messages.
+- `fjarsyn-control-v2`: reliable ordered control messages.
+- `fjarsyn-messaging-v2`: reliable ordered chat and receipt messages.
 - A pre-negotiated H.264 screen-sharing media track in each direction.
 
 Control and messaging payloads are versioned and size-bounded. DTLS encrypts and authenticates data channels, while DTLS-SRTP protects media. Once the session fingerprint is authenticated through signed signaling, per-message Ed25519 signatures are unnecessary.
 
-Starting a screen share sends a control event and begins writing samples to the existing media track. Stopping sends a control event and stops writing samples. It does not create a call or a new peer connection.
+Starting a screen share sends a control event and begins writing samples to the existing media track. Stopping sends a control event and stops writing samples. It does not create a call, renegotiate the track or create a new peer connection.
 
-Encoded samples are currently session-scoped rather than tagged with a
-`ShareId` media epoch. Receiver source retention and SPS gating protect normal
-stop/restart transitions, but a repeated SPS/IDR in an old buffered tail could
-be attributed to a rapidly started new share. A media-epoch tag or explicit
-keyframe-boundary handshake is required to eliminate that narrow ambiguity.
+Each `ShareStarted`/`ShareStopped` control event carries both the public
+`ShareId` and a non-zero, monotonically increasing `ShareEpoch` for that
+sender's session direction. An `EncodedVideoSink` is an immutable capability
+bound to that exact pair, so a producer from an old share cannot have a queued
+sample relabelled as the current share. The capability is revoked at the share
+boundary, preventing an obsolete producer from backpressuring the next share.
+
+The epoch is also encoded as an eight-byte, big-endian value in Fjarsyn's
+mandatory RTP header extension. Its dynamic extension ID is negotiated in the
+video SDP and must remain stable across ICE restarts. The extension is attached
+to every RTP fragment. A missing, zero or malformed epoch is a protocol error.
+Before depacketization, the receiver drops packets from lower epochs, continues
+the current builder for equal epochs and discards the builder before accepting
+a higher epoch. It never moves back to an older epoch.
+
+Depacketized samples retain their epoch through the bounded session media
+queue. If media for the next share beats its ordered data-channel control event,
+the old decoder pipeline parks without consuming it. Control reconciliation
+then replaces the exact `(ShareId, ShareEpoch)` binding and hands the retained
+first sample to the new decoder. Decoded frames and local previews retain the
+same exact binding through UI projection. SPS gating remains an independent
+H.264 bootstrap check, not a share-identity boundary. SRTP authenticates the
+RTP header and media; the epoch itself is non-secret metadata and is not
+assumed to be encrypted.
 
 ## UI model
 
@@ -275,7 +397,11 @@ Peer { peer_id }
 Settings
 ```
 
-`PeerScreen` shows identity, separate Nearby and Connected state, local history, a connection action, chat, remote video and local sharing controls. The composer and sharing controls are enabled only when their connected-session capabilities are ready.
+`PeerScreen` shows identity, separate Nearby and Connected state, local history,
+a connection action, chat, remote video and local sharing controls. It projects
+`Reconnecting` explicitly while retaining the session's media runtime. The
+composer and sharing controls are enabled only when their connected-session
+capabilities are ready.
 
 Screens hold only presentation state such as the selected peer, draft text, selected panel and preview visibility. They do not own services, peer connections, channels, capture providers, codecs or task handles. Backend events never hijack navigation.
 
@@ -310,14 +436,35 @@ compatibility into the new architecture.
 
 - WSS hides signaling contents but not mDNS, IP/port, timing, volume or
   ICE/STUN/WebRTC traffic metadata.
-- A failed transport ends the session; ICE restart is not implemented.
+- ICE restart repairs an ICE path only. Destruction of the peer connection,
+  DTLS transport or required data channels still ends the session.
+- Each transport loss has one bounded recovery attempt rather than an
+  indefinite retry policy; failure or timeout requires a new deliberate
+  session.
 
 ## Required verification
 
 - Exhaustive pure session-state transition tests.
 - Identity, target, session binding and signaling replay tests.
 - Simultaneous-connect convergence tests.
-- Early ICE queuing tests.
+- Out-of-order ICE rejection, exact-username-fragment binding and total
+  per-generation candidate-cap tests.
+- ICE-restart state tests cover transient-disconnect grace, cancellation before
+  engagement, `Connected -> Reconnecting -> Connected`, bounded timeout and
+  terminal removal after an unsuccessful attempt.
+- Restart protocol tests prove the original outgoing role remains the sole
+  offerer even when the answerer initiates recovery or both peers dial,
+  `RestartAck` precedes ICE-credential rotation, both descriptions rotate, and
+  wrong, replayed or out-of-order transport generations fail closed.
+- Restart admission tests require the exact active session, peer and currently
+  trusted key and prove that recovery cannot create a session or user prompt.
+- Two-peer restart tests preserve the same session ID, actor-owned peer
+  connection, data channels, media tracks, share IDs and media workers while
+  application commands are gated, inbound frames are bounded, and video
+  samples are dropped during recovery.
+- Transport classification tests restart ICE failure but treat closed ICE or
+  peer connections, DTLS failure/closure and required-channel closure as
+  terminal.
 - Messaging requires the correct connected session and peer.
 - Remote control cannot start local capture.
 - mDNS removal cannot close a connected session.
@@ -331,6 +478,11 @@ compatibility into the new architecture.
   TLS 1.3 and ALPN enforcement, plaintext rejection, absence of application
   bytes before server authentication, IPv4/IPv6 operation and wrong-key
   endpoint fallback without duplicate requests.
-- Repeated connect/disconnect and shutdown tests leave no owned tasks or routes.
+- Codec lifecycle tests cover the ten-second active-call watchdog, independent
+  encode/decode quarantine, persistent restart-required projection, suppression
+  of late output and one shared three-second media-shutdown deadline.
+- Repeated connect/disconnect and responsive-worker shutdown tests leave no
+  owned tasks or routes; watchdog-timeout tests instead prove bounded
+  detachment and quarantine without claiming native-thread reclamation.
 - Two-peer loopback tests cover connect, accept/reject, messages, receipts and disconnect.
 - UI projection tests cover every presence/session combination without navigation side effects.

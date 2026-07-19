@@ -13,6 +13,7 @@ pub enum SessionPresentation {
     Incoming,
     Negotiating,
     Connected,
+    Reconnecting,
     Disconnecting,
 }
 
@@ -38,6 +39,7 @@ impl PeerPresentation {
             SessionPresentation::Requesting
                 | SessionPresentation::Negotiating
                 | SessionPresentation::Connected
+                | SessionPresentation::Reconnecting
         )
     }
 
@@ -61,6 +63,7 @@ pub fn project_peer(nearby: bool, phase: Option<PeerSessionPhase>) -> PeerPresen
             Some(PeerSessionPhase::Incoming) => SessionPresentation::Incoming,
             Some(PeerSessionPhase::Negotiating) => SessionPresentation::Negotiating,
             Some(PeerSessionPhase::Connected) => SessionPresentation::Connected,
+            Some(PeerSessionPhase::Reconnecting) => SessionPresentation::Reconnecting,
             Some(PeerSessionPhase::Disconnecting) => SessionPresentation::Disconnecting,
         },
     }
@@ -70,12 +73,13 @@ pub fn project_peer(nearby: bool, phase: Option<PeerSessionPhase>) -> PeerPresen
 mod tests {
     use super::*;
 
-    const PHASES: [Option<PeerSessionPhase>; 6] = [
+    const PHASES: [Option<PeerSessionPhase>; 7] = [
         None,
         Some(PeerSessionPhase::Requesting),
         Some(PeerSessionPhase::Incoming),
         Some(PeerSessionPhase::Negotiating),
         Some(PeerSessionPhase::Connected),
+        Some(PeerSessionPhase::Reconnecting),
         Some(PeerSessionPhase::Disconnecting),
     ];
 
@@ -96,6 +100,9 @@ mod tests {
                         Some(PeerSessionPhase::Incoming) => SessionPresentation::Incoming,
                         Some(PeerSessionPhase::Negotiating) => SessionPresentation::Negotiating,
                         Some(PeerSessionPhase::Connected) => SessionPresentation::Connected,
+                        Some(PeerSessionPhase::Reconnecting) => {
+                            SessionPresentation::Reconnecting
+                        }
                         Some(PeerSessionPhase::Disconnecting) => SessionPresentation::Disconnecting,
                     }
                 );
@@ -121,8 +128,10 @@ mod tests {
         assert!(project_peer(false, Some(PeerSessionPhase::Requesting)).can_disconnect());
         assert!(project_peer(false, Some(PeerSessionPhase::Negotiating)).can_disconnect());
         assert!(project_peer(false, Some(PeerSessionPhase::Connected)).can_disconnect());
+        assert!(project_peer(false, Some(PeerSessionPhase::Reconnecting)).can_disconnect());
         assert!(!project_peer(false, Some(PeerSessionPhase::Disconnecting)).can_disconnect());
         assert!(project_peer(false, Some(PeerSessionPhase::Connected)).capabilities_ready());
+        assert!(!project_peer(false, Some(PeerSessionPhase::Reconnecting)).capabilities_ready());
         assert!(!project_peer(true, Some(PeerSessionPhase::Negotiating)).capabilities_ready());
         assert!(project_peer(false, None).can_mutate_trust());
         for phase in PHASES.into_iter().flatten() {

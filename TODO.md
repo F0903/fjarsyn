@@ -26,9 +26,9 @@ global WebRTC paths are removed rather than supported in parallel.
 - [x] Add bounded fallback across all current mDNS endpoint hints and an IPv6 signaling listener. Presence hints remain unauthenticated, so never treat endpoint selection as identity.
 - [x] Add an application-level cap for presence peers/advertisements and explicit signaling authentication rate limits.
 - [x] Encrypt signaling with TLS 1.3-only WSS, pin the listener's RFC 7250 Ed25519 raw public key to the trusted contact identity and retain signed initiator/session authentication with no plaintext fallback.
-- [ ] Add ICE restart; a terminal transport failure currently closes the session and reconnect creates a new one.
-- [ ] Tag encoded media with a `ShareId`/epoch, or add a keyframe-boundary handshake, so buffered tail frames can never cross a rapid share restart.
-- [ ] Isolate FFmpeg codec calls behind a truly interruptible worker/process boundary. Async supervisors are bounded, but an in-flight `spawn_blocking` FFI call exits cooperatively.
+- [x] Add actor-owned, generation-fenced ICE restart over fresh identity-pinned WSS while preserving the existing session, peer connection, channels, media tracks and share state.
+- [x] Fence every encoded sample with a negotiated, monotonic share epoch so buffered tail frames can never cross a rapid share restart.
+- [x] Move FFmpeg codec calls onto watchdog-supervised, service-owned OS threads with bounded application shutdown, late-output suppression and sticky quarantine of only the affected encode/decode direction until restart.
 
 - Exercise Windows Graphics Capture device-loss and resize/recreate behavior on real hardware.
 - Implement real software pixel conversion before enabling RGBA10, RGBA16 or NV12 preview paths.
@@ -64,7 +64,7 @@ Findings from the full project security, correctness, media-pipeline, dependency
 - [x] Replace mutable reusable peer connections with one actor-owned connection per immutable session.
 - [x] Serialize connect, accept, reject and disconnect operations and tag transport events with an actor generation so stale callbacks cannot affect a newer session.
 - [x] Treat transient WebRTC `Disconnected` separately from terminal `Failed`/`Closed`, with a bounded recovery grace period.
-- [x] Queue early ICE candidates until the corresponding remote description has been installed, and report candidate-application failures.
+- [x] Require the corresponding remote description before accepting ICE candidates, bind each candidate to its exact ICE username fragment, cap the full per-generation stream, and report application failures.
 - [ ] Replace copyable raw shared GPU handles with owned RAII handles that always call `CloseHandle`; keep the underlying texture alive for every submitted frame.
 - [ ] Redesign D3D11-to-D3D12/wgpu texture sharing around a documented synchronization contract.
   - Use the correct shared-resource flags.
@@ -76,9 +76,9 @@ Findings from the full project security, correctness, media-pipeline, dependency
 - [ ] Make `BufferPool` initialization sound: never expose a safe slice before all bytes are initialized, and use exact checked sizes for planar formats such as NV12.
 - [x] Surface capture closure, encoder/decoder initialization failure and worker termination to session/UI state instead of leaving an apparently active but frozen stream.
 - [ ] Correct the FFmpeg send/receive state machines: drain all available frames/packets, distinguish `EAGAIN` from terminal errors and flush delayed data during shutdown.
-- [x] Move synchronous codec work off ordinary Tokio workers onto `spawn_blocking` tasks with bounded async supervision.
-- [ ] Make an already-running FFmpeg FFI call forcibly interruptible rather than relying on cooperative input closure.
-- [ ] Tag media with a share epoch so rapid stop/restart cannot attribute an old buffered SPS/IDR tail to a new `ShareId`.
+- [x] Move synchronous codec work off Tokio's blocking pool onto owned encoder/decoder threads with a 10-second active-call watchdog, late-output suppression, independent sticky direction quarantine and one shared three-second graceful media-shutdown deadline.
+- [ ] Run codec workers in supervised child processes so an already-running FFmpeg FFI call can be forcibly terminated and native faults are contained.
+- [x] Tag media with a share epoch so rapid stop/restart cannot attribute an old buffered SPS/IDR tail to a new `ShareId`.
 
 ### P2 - Privacy, resilience and resource limits
 
@@ -107,4 +107,4 @@ Findings from the full project security, correctness, media-pipeline, dependency
 - [ ] Add CI for formatting, workspace/all-target tests, documentation tests, clippy with warnings denied and a locked release build.
 - [ ] Add native/UI tests and hardware-backed integration coverage for capture, resize/device loss, zero-copy synchronization, codec fallback, source closure and repeated/multi-peer session workflows.
 - [ ] Either make non-Windows capture imports compile correctly behind target gates or explicitly document and enforce Windows-only support in manifests and setup instructions.
-- [ ] Expand regression tests for peer/session binding, replay handling, listener resource limits, early ICE, lifecycle shutdown and stale-event isolation.
+- [ ] Expand regression tests for peer/session binding, replay handling, listener resource limits, ICE credential/candidate fencing, lifecycle shutdown and stale-event isolation.

@@ -222,6 +222,7 @@ impl ContactsScreen {
                         }
                         PeerSessionPhase::Incoming => "Incoming",
                         PeerSessionPhase::Connected => "Connected",
+                        PeerSessionPhase::Reconnecting => "Reconnecting",
                         PeerSessionPhase::Disconnecting => "Disconnecting",
                     })
                     .unwrap_or("Disconnected");

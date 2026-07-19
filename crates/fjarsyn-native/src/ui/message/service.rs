@@ -28,6 +28,10 @@ pub enum RuntimeMessage {
     Initialized(Result<RuntimeSlot, Arc<String>>),
     Event(RuntimeEvent),
     ShutdownFinished(Result<(), Arc<String>>),
+    RestartFinished {
+        shutdown_warning: Option<Arc<String>>,
+        launch_result: Result<(), Arc<String>>,
+    },
 }
 
 #[derive(Debug, Clone)]

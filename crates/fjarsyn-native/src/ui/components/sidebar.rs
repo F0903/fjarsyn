@@ -77,6 +77,7 @@ pub fn sidebar<'a>(ctx: ShellContext<'a>, current_route: Route) -> Element<'a, M
                 Some(PeerSessionPhase::Requesting | PeerSessionPhase::Negotiating) => {
                     iced::Color::from_rgb(0.28, 0.55, 0.92)
                 }
+                Some(PeerSessionPhase::Reconnecting) => iced::Color::from_rgb(0.92, 0.66, 0.20),
                 Some(PeerSessionPhase::Disconnecting) => iced::Color::from_rgb(0.55, 0.55, 0.58),
                 None if nearby => iced::Color::from_rgb(0.28, 0.55, 0.92),
                 None => iced::Color::from_rgb(0.45, 0.45, 0.48),
@@ -238,6 +239,7 @@ fn session_status(phase: Option<PeerSessionPhase>) -> Option<&'static str> {
         Some(PeerSessionPhase::Requesting | PeerSessionPhase::Negotiating) => Some("Connecting"),
         Some(PeerSessionPhase::Incoming) => Some("Incoming request"),
         Some(PeerSessionPhase::Connected) => Some("Connected"),
+        Some(PeerSessionPhase::Reconnecting) => Some("Reconnecting"),
         Some(PeerSessionPhase::Disconnecting) => Some("Disconnecting"),
         None => None,
     }
@@ -254,6 +256,7 @@ mod tests {
         assert_eq!(session_status(Some(PeerSessionPhase::Incoming)), Some("Incoming request"));
         assert_eq!(session_status(Some(PeerSessionPhase::Negotiating)), Some("Connecting"));
         assert_eq!(session_status(Some(PeerSessionPhase::Connected)), Some("Connected"));
+        assert_eq!(session_status(Some(PeerSessionPhase::Reconnecting)), Some("Reconnecting"));
         assert_eq!(session_status(Some(PeerSessionPhase::Disconnecting)), Some("Disconnecting"));
         assert_eq!(session_status(None), None);
     }

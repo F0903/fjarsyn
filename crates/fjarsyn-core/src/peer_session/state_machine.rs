@@ -5,6 +5,8 @@ pub(crate) enum SessionInput {
     AcceptLocal,
     AcceptRemote,
     TransportReady,
+    TransportLost,
+    TransportRecovered,
     DisconnectLocal,
     DisconnectRemote,
     RejectLocal(String),
@@ -54,6 +56,12 @@ impl SessionStateMachine {
                 SessionTransition::Phase(PeerSessionPhase::Negotiating)
             }
             (PeerSessionPhase::Negotiating, SessionInput::TransportReady) => {
+                SessionTransition::Phase(PeerSessionPhase::Connected)
+            }
+            (PeerSessionPhase::Connected, SessionInput::TransportLost) => {
+                SessionTransition::Phase(PeerSessionPhase::Reconnecting)
+            }
+            (PeerSessionPhase::Reconnecting, SessionInput::TransportRecovered) => {
                 SessionTransition::Phase(PeerSessionPhase::Connected)
             }
             (PeerSessionPhase::Incoming, SessionInput::RejectLocal(reason))
@@ -122,11 +130,26 @@ mod tests {
     }
 
     #[test]
+    fn connected_session_can_recover_without_becoming_a_new_session() {
+        let mut machine = SessionStateMachine { phase: PeerSessionPhase::Connected };
+        assert_eq!(
+            machine.apply(SessionInput::TransportLost).unwrap(),
+            SessionTransition::Phase(PeerSessionPhase::Reconnecting)
+        );
+        assert_eq!(
+            machine.apply(SessionInput::TransportRecovered).unwrap(),
+            SessionTransition::Phase(PeerSessionPhase::Connected)
+        );
+    }
+
+    #[test]
     fn invalid_transition_table_rejects_crossed_roles_and_reuse() {
         let cases = [
             (PeerSessionPhase::Requesting, SessionInput::AcceptLocal),
             (PeerSessionPhase::Incoming, SessionInput::AcceptRemote),
             (PeerSessionPhase::Connected, SessionInput::TransportReady),
+            (PeerSessionPhase::Connected, SessionInput::TransportRecovered),
+            (PeerSessionPhase::Reconnecting, SessionInput::TransportLost),
             (PeerSessionPhase::Disconnecting, SessionInput::DisconnectLocal),
             (PeerSessionPhase::Disconnecting, SessionInput::Fail("late".into())),
         ];
@@ -165,6 +188,7 @@ mod tests {
             PeerSessionPhase::Incoming,
             PeerSessionPhase::Negotiating,
             PeerSessionPhase::Connected,
+            PeerSessionPhase::Reconnecting,
             PeerSessionPhase::Disconnecting,
         ];
         let inputs = || {
@@ -172,6 +196,8 @@ mod tests {
                 SessionInput::AcceptLocal,
                 SessionInput::AcceptRemote,
                 SessionInput::TransportReady,
+                SessionInput::TransportLost,
+                SessionInput::TransportRecovered,
                 SessionInput::DisconnectLocal,
                 SessionInput::DisconnectRemote,
                 SessionInput::RejectLocal("local".into()),
@@ -205,6 +231,11 @@ mod tests {
                         | (PeerSessionPhase::Connected, SessionInput::DisconnectLocal)
                         | (PeerSessionPhase::Connected, SessionInput::DisconnectRemote)
                         | (PeerSessionPhase::Connected, SessionInput::Fail(_))
+                        | (PeerSessionPhase::Connected, SessionInput::TransportLost)
+                        | (PeerSessionPhase::Reconnecting, SessionInput::TransportRecovered)
+                        | (PeerSessionPhase::Reconnecting, SessionInput::DisconnectLocal)
+                        | (PeerSessionPhase::Reconnecting, SessionInput::DisconnectRemote)
+                        | (PeerSessionPhase::Reconnecting, SessionInput::Fail(_))
                 );
                 let actual = SessionStateMachine { phase }.apply(input.clone()).is_ok();
                 assert_eq!(actual, expected_valid, "phase={phase:?}, input={input:?}");

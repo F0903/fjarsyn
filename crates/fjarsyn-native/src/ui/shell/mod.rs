@@ -1,5 +1,6 @@
 mod bootstrap;
 mod global;
+mod relaunch;
 mod state;
 mod tasks;
 mod update;

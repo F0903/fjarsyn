@@ -49,6 +49,46 @@ pub fn handle_runtime_msg(app: &mut Fjarsyn, message: RuntimeMessage) -> Task<Me
             }
             iced::exit()
         }
+        RuntimeMessage::RestartFinished { shutdown_warning, launch_result } => {
+            let effect = apply_restart_finished(&mut app.ctx.lifecycle, &launch_result);
+            if effect == RestartFinishedEffect::Ignored {
+                return Task::none();
+            }
+            if let Some(error) = shutdown_warning {
+                tracing::warn!(
+                    "application shutdown completed with errors before restart: {error}"
+                );
+            }
+            match effect {
+                RestartFinishedEffect::Exit => iced::exit(),
+                RestartFinishedEffect::RetryableFailure | RestartFinishedEffect::Ignored => {
+                    Task::none()
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RestartFinishedEffect {
+    Ignored,
+    Exit,
+    RetryableFailure,
+}
+
+fn apply_restart_finished(
+    lifecycle: &mut AppLifecycle,
+    launch_result: &Result<(), Arc<String>>,
+) -> RestartFinishedEffect {
+    if !matches!(lifecycle, AppLifecycle::Restarting) {
+        return RestartFinishedEffect::Ignored;
+    }
+    match launch_result {
+        Ok(()) => RestartFinishedEffect::Exit,
+        Err(error) => {
+            *lifecycle = AppLifecycle::RestartFailed(error.to_string());
+            RestartFinishedEffect::RetryableFailure
+        }
     }
 }
 
@@ -136,5 +176,42 @@ fn close_reason(reason: &SessionCloseReason) -> String {
         }
         SessionCloseReason::TrustRevoked => "the contact's trusted identity changed".into(),
         SessionCloseReason::ServiceShutdown => "Fjarsyn is shutting down".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{AppLifecycle, RestartFinishedEffect, apply_restart_finished};
+
+    #[test]
+    fn stale_restart_completion_is_ignored() {
+        let mut lifecycle = AppLifecycle::Ready;
+
+        let effect = apply_restart_finished(&mut lifecycle, &Err(Arc::new("stale failure".into())));
+
+        assert_eq!(effect, RestartFinishedEffect::Ignored);
+        assert_eq!(lifecycle, AppLifecycle::Ready);
+    }
+
+    #[test]
+    fn successful_replacement_requests_exit_only_after_launch_completion() {
+        let mut lifecycle = AppLifecycle::Restarting;
+
+        let effect = apply_restart_finished(&mut lifecycle, &Ok(()));
+
+        assert_eq!(effect, RestartFinishedEffect::Exit);
+        assert_eq!(lifecycle, AppLifecycle::Restarting);
+    }
+
+    #[test]
+    fn launch_failure_enters_an_inert_retryable_state() {
+        let mut lifecycle = AppLifecycle::Restarting;
+
+        let effect = apply_restart_finished(&mut lifecycle, &Err(Arc::new("launch failed".into())));
+
+        assert_eq!(effect, RestartFinishedEffect::RetryableFailure);
+        assert_eq!(lifecycle, AppLifecycle::RestartFailed("launch failed".into()));
     }
 }

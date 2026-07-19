@@ -11,15 +11,16 @@ mod media;
 mod model;
 mod negotiation;
 mod protocol;
+mod restart;
 mod rtc;
 mod service;
 mod state_machine;
 
 pub use error::PeerSessionError;
-pub use media::{EncodedVideoSample, EncodedVideoSink, RemoteVideoSource};
+pub use media::{EncodedVideoSample, EncodedVideoSink, RemoteVideoRead, RemoteVideoSource};
 pub use model::{
     LocalShareState, MessageId, PeerSessionEvent, PeerSessionPhase, PeerSessionServiceSnapshot,
-    PeerSessionSnapshot, RemoteShareState, SessionCloseReason, SessionId, ShareId,
+    PeerSessionSnapshot, RemoteShareState, SessionCloseReason, SessionId, ShareEpoch, ShareId,
 };
 pub(crate) use service::TrustBarrierOwnerId;
 pub use service::{

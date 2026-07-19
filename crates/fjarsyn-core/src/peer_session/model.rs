@@ -58,6 +58,53 @@ uuid_id!(SessionId);
 uuid_id!(MessageId);
 uuid_id!(ShareId);
 
+/// Monotonic media generation for one peer's screen shares within a session.
+///
+/// `ShareId` is the application identity presented to callers. `ShareEpoch` is
+/// the compact, ordered media-plane boundary carried on RTP packets so a
+/// receiver can distinguish delayed old media from early media for the next
+/// share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ShareEpoch(u64);
+
+impl ShareEpoch {
+    pub const FIRST: Self = Self(1);
+
+    pub const fn value(self) -> u64 {
+        self.0
+    }
+
+    pub(crate) const fn from_value(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub(crate) fn next(self) -> Result<Self, PeerSessionError> {
+        self.0
+            .checked_add(1)
+            .map(Self)
+            .ok_or_else(|| PeerSessionError::Protocol("screen-share epoch overflowed".into()))
+    }
+
+    pub(crate) fn require_valid(self) -> Result<(), PeerSessionError> {
+        if self.0 == 0 {
+            Err(PeerSessionError::Protocol("screen-share epoch must be non-zero".into()))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl TryFrom<u64> for ShareEpoch {
+    type Error = PeerSessionError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        let epoch = Self(value);
+        epoch.require_valid()?;
+        Ok(epoch)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PeerSessionPhase {
@@ -65,6 +112,7 @@ pub enum PeerSessionPhase {
     Incoming,
     Negotiating,
     Connected,
+    Reconnecting,
     Disconnecting,
 }
 
@@ -75,6 +123,7 @@ impl PeerSessionPhase {
             Self::Incoming => "incoming",
             Self::Negotiating => "negotiating",
             Self::Connected => "connected",
+            Self::Reconnecting => "reconnecting",
             Self::Disconnecting => "disconnecting",
         }
     }
@@ -86,6 +135,7 @@ pub enum LocalShareState {
     Inactive,
     Active {
         share_id: ShareId,
+        epoch: ShareEpoch,
     },
 }
 
@@ -95,6 +145,7 @@ pub enum RemoteShareState {
     Inactive,
     Active {
         share_id: ShareId,
+        epoch: ShareEpoch,
     },
 }
 
@@ -224,5 +275,12 @@ mod tests {
 
         assert_eq!(snapshot.session(session_id).unwrap().peer_id, peer_id);
         assert_eq!(snapshot.session_for_peer(&peer_id).unwrap().session_id, session_id);
+    }
+
+    #[test]
+    fn share_epoch_is_nonzero_and_never_wraps() {
+        assert!(ShareEpoch::try_from(0).is_err());
+        assert_eq!(ShareEpoch::try_from(1).unwrap(), ShareEpoch::FIRST);
+        assert!(ShareEpoch::try_from(u64::MAX).unwrap().next().is_err());
     }
 }
