@@ -1,7 +1,8 @@
 # Peer pairing and fingerprint verification
 
 Fjarsyn pairs peers without a server, account directory or QR-code requirement.
-The transport is a copyable, versioned text invite:
+The canonical Rust value is `pairing::Invite`; its transport representation is
+a copyable, versioned text invite:
 
 ```text
 fjarsyn:pair:v1:<peer-id-base64url>:<ed25519-public-key-base64url>
@@ -71,10 +72,11 @@ observable handshake fingerprint/capabilities, and later ICE/STUN/WebRTC
 traffic patterns remain observable.
 
 Replacing a contact key requires importing a new invite for the same PeerId
-and repeating the fingerprint comparison. `ContactTrustService` suspends new
-session admission and drains any existing authenticated session while the
-pinned key changes. New signaling connections immediately require the
-replacement key as their TLS pin.
+and repeating the fingerprint comparison.
+`contacts::ContactsService` suspends new session admission and
+drains any existing authenticated session while the pinned key changes. New
+signaling connections immediately require the replacement key as their TLS
+pin.
 
 A future QR view may encode the exact same invite as a convenience. Scanning a
 QR code would transport the invite but would not replace fingerprint

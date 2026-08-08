@@ -21,6 +21,18 @@ overlay network that carries mDNS and peer-to-peer traffic.
 
 The accepted runtime and security boundaries are documented in
 [`docs/architecture/peer-sessions.md`](docs/architecture/peer-sessions.md).
+The workspace's Rust naming, file-placement, and module-facade convention is
+documented in
+[`docs/architecture/rust-modules.md`](docs/architecture/rust-modules.md).
+
+## Workspace
+
+- `fjarsyn-engine` is the headless application engine. It owns the connected
+  session capabilities, including screen-share orchestration and media
+  pipelines.
+- `fjarsyn-desktop` composes the engine into the Windows desktop application,
+  selects platform capture sources, projects engine state for presentation,
+  and builds the `fjarsyn` executable.
 
 ## Building
 
@@ -28,15 +40,16 @@ To build the project, you first need to follow the sections below:
 
 ### Setting Up FFmpeg Build Dependencies
 
-To setup FFmpeg build dependencies, follow the platform-specific instructions below:
+To set up FFmpeg build dependencies, follow the platform-specific instructions below:
 
 #### Windows
 
-To set up the build dependencies for FFmpeg (ffmpeg-next static linking with MSVC buildchain) on Windows, follow these steps:
+To set up the build dependencies for FFmpeg (ffmpeg-next static linking with the MSVC toolchain) on Windows, follow these steps:
 
 1. Install LLVM with winget: `winget install --id LLVM.LLVM`
 2. Make sure you have vcpkg installed. [(instructions for the bash shell)](https://learn.microsoft.com/en-us/vcpkg/get_started/get-started?pivots=shell-bash#1---set-up-vcpkg)
-3. Install FFmpeg for static linking through vcpkg: `vcpkg install ffmpeg[core,avcodec,avformat,swresample,swscale,gpl,x264,x265,aom,dav1d,nvcodec] --triplet x64-windows-static-md --recurse`
+3. Install the H.264 codec and scaling pieces used by Fjarsyn through vcpkg:
+   `vcpkg install ffmpeg[core,avcodec,avformat,swscale,gpl,x264,nvcodec] --triplet x64-windows-static-md --recurse`
 4. The project should now be able to build.
 
 Fjarsyn currently targets Windows because screen capture and GPU interop use

@@ -12,11 +12,12 @@ global WebRTC paths are removed rather than supported in parallel.
 
 - [x] Define the peer-session ownership, state, protocol and UI boundaries.
 - [x] Make contacts trusted identities only; remove saved network addresses.
-- [x] Separate unauthenticated mDNS presence into an owned `PresenceService`.
-- [x] Implement the actor-owned `PeerSessionService` and per-peer WebRTC sessions.
+- [x] Separate unauthenticated mDNS presence into a hosted `PresenceService`.
+- [x] Implement the hosted `PeerSessionService` and per-peer WebRTC sessions.
 - [x] Move chat and receipts exclusively onto the authenticated messaging data channel.
 - [x] Keep screen sharing on WebRTC media tracks under an application-owned media runtime.
-- [x] Replace call/message screens with the contact-oriented `PeerScreen` flow.
+- [x] Replace call/message screens with the contact-oriented
+  `ui::screens::peer::Screen` flow.
 - [x] Delete all legacy call, signaling-chat and global mutable WebRTC paths.
 - [x] Pass state-machine, protocol, persistence, lifecycle, UI projection and loopback tests.
 
@@ -73,10 +74,12 @@ Findings from the full project security, correctness, media-pipeline, dependency
 - [ ] Make hardware encoder/decoder capability probing and failure explicit.
   - Preserve or restore CPU readback when falling back to software.
   - Track capture-device generations and rebuild dependent encoders/importers after WGC device recovery.
-- [ ] Make `BufferPool` initialization sound: never expose a safe slice before all bytes are initialized, and use exact checked sizes for planar formats such as NV12.
+- [ ] Finish buffer-pool and allocation-size hardening.
+  - [x] Never expose a safe slice before all bytes are initialized.
+  - [ ] Use exact checked sizes for planar formats such as NV12.
 - [x] Surface capture closure, encoder/decoder initialization failure and worker termination to session/UI state instead of leaving an apparently active but frozen stream.
 - [ ] Correct the FFmpeg send/receive state machines: drain all available frames/packets, distinguish `EAGAIN` from terminal errors and flush delayed data during shutdown.
-- [x] Move synchronous codec work off Tokio's blocking pool onto owned encoder/decoder threads with a 10-second active-call watchdog, late-output suppression, independent sticky direction quarantine and one shared three-second graceful media-shutdown deadline.
+- [x] Move synchronous codec work off Tokio's blocking pool onto owned encoder/decoder threads with a 10-second active-call watchdog, late-output suppression, independent sticky direction quarantine and participation in one shared three-second engine-shutdown deadline.
 - [ ] Run codec workers in supervised child processes so an already-running FFmpeg FFI call can be forcibly terminated and native faults are contained.
 - [x] Tag media with a share epoch so rapid stop/restart cannot attribute an old buffered SPS/IDR tail to a new `ShareId`.
 
@@ -92,7 +95,7 @@ Findings from the full project security, correctness, media-pipeline, dependency
 - [ ] Give each GPU frame viewer its own aspect-ratio uniform state, or use correctly isolated dynamic offsets for multi-view rendering.
 - [ ] Surface GPU import failures and provide a controlled CPU fallback instead of rendering a silent blank frame.
 - [ ] Stop hidden local previews from continuing to drive capture-rate UI updates and rendering work.
-- [ ] Replace capture-picker `yield_now` busy polling with event-driven waiting or bounded backoff.
+- [x] Replace capture-picker `yield_now` busy polling with bounded backoff.
 - [x] Refresh discovery metadata and remove advertisements on `mdns-sd` TTL/removal events.
 - [x] Bound application-level presence registry/advertisement cardinality under a LAN flood.
 - [x] Check affected-row counts for contact update/delete operations so stale IDs cannot leave the UI cache inconsistent with SQLite.
@@ -100,7 +103,13 @@ Findings from the full project security, correctness, media-pipeline, dependency
 
 ### P3 - Dependencies, portability and release gates
 
-- [ ] Triage and upgrade the RustSec-flagged dependency paths for `quick-xml`, `rsa`, `bincode`, `paste` and `ttf-parser`; document any target-inactive or accepted residual risk.
+- [ ] Complete remediation of the RustSec-flagged dependency paths.
+  - [x] Remove the unused `quick-xml` and `paste` paths through renderer/platform
+    feature pruning; neither remains in `Cargo.lock`.
+  - [ ] Upgrade or replace active `bincode` (WebRTC DTLS) and `ttf-parser`
+    (Iced text rendering) paths.
+  - [ ] Document or eliminate lock-only `rsa`, which is retained by SQLx's
+    inactive MySQL package but is absent from the all-target dependency graph.
 - [ ] Add `cargo audit`/OSV and dependency-policy checks to CI, including all supported target graphs.
 - [ ] Check in a `vcpkg.json` with a baseline so the exact native FFmpeg build is reproducible and auditable.
 - [ ] Pin the Rust toolchain instead of following floating `nightly`; determine whether nightly is still required.
