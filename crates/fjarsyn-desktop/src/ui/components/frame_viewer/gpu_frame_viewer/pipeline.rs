@@ -1,13 +1,17 @@
+use std::time::Instant;
+
 use fjarsyn_engine::media::frame::Frame;
 use iced::{Rectangle, widget::shader};
 
-use super::frame_cache::FrameCache;
+use super::{completion_pump::CompletionPump, frame_cache::FrameCache};
 
 pub(super) struct Pipeline {
     pipeline: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     bind_group_layout: wgpu::BindGroupLayout,
     frames: FrameCache,
+    queue: wgpu::Queue,
+    completion_pump: CompletionPump,
 }
 
 impl Pipeline {
@@ -27,8 +31,26 @@ impl Pipeline {
         frame: &Frame,
         bounds: &Rectangle,
     ) -> bool {
-        let Some(bind_group) = self.frames.bind_group(frame, bounds) else {
+        let Some(prepared) = self.frames.prepared_view(frame, bounds) else {
             return false;
+        };
+        let bind_group = match prepared.prepare_draw(&self.queue, frame) {
+            Ok(Some(guard)) => {
+                // Register before recording the draw. If recording unwinds and
+                // the encoder is discarded, wgpu discards this callback too and
+                // the guard safely releases a draw that was never submitted.
+                self.completion_pump.retain_until_submitted_work_done(render_pass, guard);
+                prepared.bind_group
+            }
+            Ok(None) => prepared.bind_group,
+            Err(error) => {
+                self.frames.report_draw_failure(frame, &error, Instant::now());
+                let Some(failure_bind_group) = prepared.failure_bind_group else {
+                    tracing::error!("An imported frame has no synchronization-failure placeholder");
+                    return false;
+                };
+                failure_bind_group
+            }
         };
 
         render_pass.set_pipeline(&self.pipeline);
@@ -120,7 +142,14 @@ impl shader::Pipeline for Pipeline {
             ..Default::default()
         });
 
-        Self { pipeline, sampler, bind_group_layout, frames: FrameCache::new(device, queue) }
+        Self {
+            pipeline,
+            sampler,
+            bind_group_layout,
+            frames: FrameCache::new(device, queue),
+            queue: queue.clone(),
+            completion_pump: CompletionPump::new(device),
+        }
     }
 
     fn trim(&mut self) {

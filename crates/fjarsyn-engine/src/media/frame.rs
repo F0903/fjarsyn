@@ -7,9 +7,9 @@ use crate::media::{Dimensions, PixelFormat, buffer_pool::Buffer};
 mod gpu_resource;
 
 pub(crate) use gpu_resource::GpuResource;
-pub use gpu_resource::GpuResourceId;
 #[cfg(target_os = "windows")]
 pub(crate) use gpu_resource::{D3d11FrameProducer, D3d11FrameWriter};
+pub use gpu_resource::{GpuFrameId, GpuTextureId};
 
 #[inline]
 fn ensure_rgba8(bitmap: &mut [u8], format: &mut PixelFormat) {
@@ -38,8 +38,12 @@ impl GpuFrameData {
         Self { resource, mapped_buffer: mapped_buffer.map(Buffer::freeze) }
     }
 
-    pub fn resource_id(&self) -> GpuResourceId {
-        self.resource.id()
+    pub fn frame_id(&self) -> GpuFrameId {
+        self.resource.frame_id()
+    }
+
+    pub fn texture_id(&self) -> GpuTextureId {
+        self.resource.texture_id()
     }
 
     pub(crate) fn resource(&self) -> &Arc<GpuResource> {
@@ -61,7 +65,7 @@ pub enum FrameData {
     /// CPU-accessible memory buffer.
     Software(bytes::Bytes),
 
-    /// One immutable GPU resource with optional retained CPU fallback pixels.
+    /// One leased GPU texture publication with optional retained CPU fallback pixels.
     Gpu(GpuFrameData),
 }
 
@@ -106,8 +110,12 @@ impl Frame {
         }
     }
 
-    pub fn gpu_resource_id(&self) -> Option<GpuResourceId> {
-        self.gpu().map(GpuFrameData::resource_id)
+    pub fn gpu_frame_id(&self) -> Option<GpuFrameId> {
+        self.gpu().map(GpuFrameData::frame_id)
+    }
+
+    pub fn gpu_texture_id(&self) -> Option<GpuTextureId> {
+        self.gpu().map(GpuFrameData::texture_id)
     }
 
     #[cfg(target_os = "windows")]

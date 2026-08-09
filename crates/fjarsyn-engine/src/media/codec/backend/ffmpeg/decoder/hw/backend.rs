@@ -8,6 +8,12 @@ use crate::media::{
     frame::Frame,
 };
 
+pub(in crate::media::codec::backend::ffmpeg::decoder) enum FrameOutput {
+    Unsupported,
+    Backpressured,
+    Ready(Frame),
+}
+
 pub(in crate::media::codec::backend::ffmpeg::decoder) struct Backend {
     #[cfg(target_os = "windows")]
     kind: Kind,
@@ -107,7 +113,7 @@ impl Backend {
         &self,
         decoded_frame: &frame::Video,
         destination_format: PixelFormat,
-    ) -> Result<Option<Frame>> {
+    ) -> Result<FrameOutput> {
         #[cfg(target_os = "windows")]
         match &self.kind {
             Kind::D3d11va(backend) => backend.try_decode_frame(decoded_frame, destination_format),
@@ -116,7 +122,7 @@ impl Backend {
         #[cfg(not(target_os = "windows"))]
         {
             let _ = (decoded_frame, destination_format);
-            Ok(None)
+            Ok(FrameOutput::Unsupported)
         }
     }
 

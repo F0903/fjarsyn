@@ -100,14 +100,24 @@ pub(in crate::media::capture::windows::wgc) fn process_frame(
     shared_desc.Usage = D3D11_USAGE_DEFAULT;
     shared_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE.0 as u32;
     shared_desc.CPUAccessFlags = 0;
-    let gpu_resource = pool.frame_producer.as_mut().map(|producer| {
-        let writer = producer.begin_frame(shared_desc)?;
-        copy_texture(&context, &texture, writer.texture());
-        writer.finish(&context)
-    });
-    let gpu_resource = match gpu_resource.transpose() {
+    let gpu_resource = match pool.frame_producer.as_mut() {
+        Some(producer) => match producer.try_begin_frame(shared_desc) {
+            Ok(Some(writer)) => {
+                copy_texture(&context, &texture, writer.texture());
+                writer.finish(&context).map(Some)
+            }
+            Ok(None) => {
+                tracing::debug!("GPU frame pool is full; dropping GPU export for this frame");
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        },
+        None => Ok(None),
+    };
+    let gpu_resource = match gpu_resource {
         Ok(resource) => resource,
         Err(error) if Error::is_recoverable_device_loss_error(&error) => {
+            pool.frame_producer = None;
             return Err(error.into());
         }
         Err(error) if frame_buffer.is_some() => {
@@ -118,8 +128,15 @@ pub(in crate::media::capture::windows::wgc) fn process_frame(
             pool.frame_producer = None;
             None
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => {
+            pool.frame_producer = None;
+            return Err(error.into());
+        }
     };
+
+    if gpu_resource.is_none() && frame_buffer.is_none() {
+        return Ok(());
+    }
 
     if let Some(buffer) = &mut frame_buffer {
         let read_staging_texture = &pool.staging_textures[write_idx];

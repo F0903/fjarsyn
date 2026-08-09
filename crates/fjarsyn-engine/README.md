@@ -21,10 +21,10 @@ details. The private `ScreenShareService`, for example, owns the local
 start/stop transaction and the local and remote media pipelines while callers
 interact through `screen_share::ServiceHandle`.
 
-GPU frames are immutable engine-owned resources. Capture and hardware decode
-publish the exact shared D3D11 texture together with its ownership, stable
-identity, and ready-fence synchronization; consumers never coordinate through
-copyable raw handles.
+GPU frames are bounded engine-owned texture leases. Capture and hardware decode
+publish the exact shared D3D11 texture together with separate content/texture
+identities and ready-fence synchronization; a slot is reused only after all
+retained frames and submitted desktop draws release it.
 
 `fjarsyn_engine::Engine::start` is the canonical composition boundary. Engine
 constructs the application graph in its private `init_services` operation and

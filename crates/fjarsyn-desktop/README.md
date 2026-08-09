@@ -29,10 +29,10 @@ mutations, without broadcasting or cloning every message through both layers.
 The active-screen router also matches every nested screen family exhaustively,
 so adding one requires an explicit routing decision.
 
-Frame presentation imports immutable engine-owned GPU resources through the
-engine's typed D3D12 interop boundary. The desktop caches them by stable
-resource identity, keeps each prepared viewer's uniform state isolated, and
-uses retained CPU pixels or an explicit placeholder when import fails.
+Frame presentation imports bounded engine-owned GPU texture leases through the
+engine's typed D3D12 interop boundary. The desktop caches physical imports by
+texture identity, retains each exact frame through submitted GPU work, keeps
+viewer uniforms isolated, and uses CPU pixels or a placeholder on import failure.
 
 The desktop also owns `settings.json`, the renderer power preference, and
 editable settings drafts; it passes only secret-free network, capture, and

@@ -1,4 +1,4 @@
-//! GPU frame import, producer-readiness synchronization, and preview policy.
+//! GPU texture import, producer-readiness synchronization, and preview policy.
 
 use crate::media::{PixelFormat, frame::Frame};
 
@@ -8,33 +8,69 @@ mod import_error;
 
 pub use import_error::ImportError;
 
-/// A wgpu texture imported from one exact immutable engine frame resource.
+/// A wgpu texture imported from one pooled engine texture allocation.
 ///
-/// The import retains the native producer resource and shared fence for at
-/// least its own cached lifetime. Import also queues an internal readiness
-/// marker that retains those native owners until the producer wait completes,
-/// so a cloned wgpu view cannot outlive the synchronization it depends on.
+/// One import may be reused by several non-overlapping `GpuFrameId` values.
+/// Every actual draw must call [`Self::prepare_draw`] so producer readiness and
+/// consumer completion remain attached to that exact frame.
 pub struct ImportedFrameTexture {
     texture: wgpu::Texture,
-    resource_id: crate::media::frame::GpuResourceId,
+    texture_id: crate::media::frame::GpuTextureId,
+    #[cfg(target_os = "windows")]
+    ready_fence: windows::Win32::Graphics::Direct3D12::ID3D12Fence,
+    #[cfg(target_os = "windows")]
+    device: windows::Win32::Graphics::Direct3D12::ID3D12Device,
+}
+
+impl ImportedFrameTexture {
+    /// Creates a sampling view for this imported pooled texture.
+    ///
+    /// The returned view may outlive this wrapper, so the type system cannot
+    /// couple it to the publication lease on its own.
+    ///
+    /// # Safety
+    ///
+    /// Every command buffer that samples the returned view must first call
+    /// [`Self::prepare_draw`] with the exact `Frame` publication and retain the
+    /// returned guard until that command buffer has completed on the GPU. The
+    /// view must not be sampled after its frame lease is released without
+    /// preparing a newer publication backed by the same texture.
+    pub unsafe fn create_view(&self) -> wgpu::TextureView {
+        self.texture.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    pub const fn texture_id(&self) -> crate::media::frame::GpuTextureId {
+        self.texture_id
+    }
+
+    /// Queues this frame's producer-fence wait immediately before an actual
+    /// draw and returns the opaque lease that must be retained until that
+    /// draw's command buffer finishes on the GPU.
+    pub fn prepare_draw(
+        &self,
+        queue: &wgpu::Queue,
+        frame: &Frame,
+    ) -> Result<ImportedFrameDrawGuard, ImportError> {
+        #[cfg(target_os = "windows")]
+        {
+            dx12::prepare_draw(self, queue, frame)
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (queue, frame);
+            Err(ImportError::UnsupportedBackend)
+        }
+    }
+}
+
+/// Opaque ownership retained until one imported draw completes on the GPU.
+#[must_use = "the draw guard must be retained until its submitted GPU work completes"]
+pub struct ImportedFrameDrawGuard {
     #[cfg(target_os = "windows")]
     _source: std::sync::Arc<crate::media::frame::GpuResource>,
     #[cfg(target_os = "windows")]
     _ready_fence: windows::Win32::Graphics::Direct3D12::ID3D12Fence,
-}
-
-impl ImportedFrameTexture {
-    /// Creates a sampling view for this immutable imported texture.
-    ///
-    /// The view owns the imported D3D12 resource. Producer-side ownership and
-    /// readiness are independently retained until the queued wait completes.
-    pub fn create_view(&self) -> wgpu::TextureView {
-        self.texture.create_view(&wgpu::TextureViewDescriptor::default())
-    }
-
-    pub const fn resource_id(&self) -> crate::media::frame::GpuResourceId {
-        self.resource_id
-    }
 }
 
 pub fn supports_zero_copy_preview(format: PixelFormat) -> bool {
@@ -61,24 +97,22 @@ pub fn requires_cpu_readback(
             && format.supports_software_preview())
 }
 
-/// Imports `frame` and queues its producer-fence wait on the same D3D12 queue
-/// that will later sample it.
+/// Imports the pooled texture allocation that backs `frame`.
 ///
 /// Import failures are typed so a renderer can upload retained CPU pixels or
 /// present an explicit degraded state instead of silently drawing nothing.
 pub fn import_frame_texture(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
     frame: &Frame,
 ) -> Result<ImportedFrameTexture, ImportError> {
     #[cfg(target_os = "windows")]
     {
-        dx12::import_frame_texture(device, queue, frame)
+        dx12::import_frame_texture(device, frame)
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (device, queue, frame);
+        let _ = (device, frame);
         Err(ImportError::UnsupportedBackend)
     }
 }

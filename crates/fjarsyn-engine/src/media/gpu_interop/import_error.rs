@@ -12,6 +12,8 @@ pub enum ImportError {
     InspectQueueDevice(#[source] windows::core::Error),
     #[error("the renderer device and queue belong to different D3D12 devices")]
     DeviceQueueMismatch,
+    #[error("the imported texture does not back this GPU frame")]
+    FrameTextureMismatch,
     #[error("failed to open the shared GPU texture: {0}")]
     OpenTexture(#[source] windows::core::Error),
     #[error("failed to open the shared producer fence: {0}")]

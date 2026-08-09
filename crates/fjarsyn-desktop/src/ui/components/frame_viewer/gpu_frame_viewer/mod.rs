@@ -1,5 +1,6 @@
 //! Wgpu pipeline and primitive backing the GPU frame viewer.
 
+mod completion_pump;
 mod frame_cache;
 #[path = "gpu_frame_viewer.rs"]
 mod implementation;

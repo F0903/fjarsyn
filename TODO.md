@@ -10,10 +10,9 @@ Findings from the full architecture and maintainability scan on 2026-08-08.
 
 ### Media ownership and pipeline correctness
 
-- [ ] Replace per-frame shared-texture allocation with a bounded, measured GPU frame pool.
-  - Reuse a slot only after an explicit D3D12 consumer-completion signal; producer readiness alone is insufficient.
-  - Define backpressure/drop behavior when every slot is still in use and verify memory/handle bounds at 1080p and 4K target framerates.
-  - Measure and remove per-frame texture/handle creation, repeated shared-fence opening, and the current empty queue submission/completion-callback overhead as part of the pooled release protocol.
+- [ ] Measure and tune the six-slot GPU frame pools under realistic load.
+  - Record committed GPU memory, native handles, pool-pressure drops and draw-completion latency at 1080p and 4K with concurrent local/remote producers.
+  - Use those measurements to confirm or adjust the fixed capacity and the desktop's 32-import cache target without weakening nonblocking backpressure.
 - [ ] Make encoded-video loss explicitly keyframe-aware.
   - Never silently discard an arbitrary encoded H.264 frame and continue publishing dependent P-frames as if the stream were intact.
   - Retain the WebRTC sender and consume RTCP loss feedback so the encoder can force a new IDR.
@@ -67,9 +66,9 @@ Findings from the full architecture and maintainability scan on 2026-08-08.
 ### Verification
 
 - [ ] Add Windows adapter-backed coverage for the shared GPU-frame contract
-  across capture and decoder producers: immutable import,
+  across capture and decoder producers: pooled import and exact slot recycling,
   D3D11-fence-to-D3D12-queue ordering, resource and handle lifetime across
-  reset/recovery, and CPU-upload/placeholder fallback. Also cover WGC
+  reset/recovery, bounded pool pressure, and CPU-upload/placeholder fallback. Also cover WGC
   resize/device loss/source closure, hardware codec scaling/fallback and
   repeated capture teardown.
 - [ ] Add focused screen-share controller/runtime tests for start rollback, pipeline failure, exact-once teardown and shutdown ordering.

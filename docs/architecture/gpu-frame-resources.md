@@ -2,129 +2,146 @@
 
 This document defines the Windows GPU-frame boundary shared by capture,
 hardware decoding, the engine's D3D11-to-D3D12 importer, and desktop frame
-presentation. The contract is producer-independent: Windows Graphics Capture
-and D3D11VA publish through the same resource type and consumers do not infer
-ownership or readiness from a particular source.
+presentation. Windows Graphics Capture and D3D11VA publish through the same
+resource contract, so consumers do not infer ownership or synchronization
+from a particular producer.
 
-## Published frame boundary
+## Bounded published-frame boundary
 
-A published GPU frame owns one `Arc`-backed immutable `GpuResource`. The
-resource contains the exact D3D11 texture exported by its texture NT handle,
-the producer's shared ready-fence timeline, and the fence value for that
-frame. These values are constructed together and cannot be paired
-independently by a caller.
+Each producer owns a fixed pool of six reusable shared D3D11 texture slots.
+Pool reservation is nonblocking and never publishes or leases a seventh slot.
+`D3d11FrameWriter` owns the mutable phase of one reserved slot: the producer
+writes or converts into that exact texture, signals its shared ready-fence
+timeline, and transfers the slot lease into the published `Frame`.
 
-`D3d11FrameWriter` is the only mutable phase. A producer creates a fresh shared
-texture, writes or converts into that texture, and calls `finish` exactly once.
-`finish` queues the ready-fence signal and transfers the resource into the
-immutable published state. The source capture or decode surface is never
-substituted for the shared texture named by the frame.
+A pooled texture is immutable for the complete lifetime of its published frame
+lease. A later frame may reuse the physical texture only after every retained
+`Frame` and every submitted desktop draw using it has completed. Dropping a
+writer before publication returns its slot immediately. Dropping the producer
+does not wait for outstanding leases; late lease drops simply destroy their
+native resources instead of returning them to a dead owner.
 
-Published textures are not rotating ring-buffer slots. A later frame receives
-a different resource, so retaining or rendering an older frame can never race
-with a producer overwriting it. Resource lifetime, rather than a reusable-slot
-return protocol, determines when the native allocation may be reclaimed.
+When all six slots are occupied, the producer drops the newest GPU output
+instead of blocking, growing native memory, or overwriting a retained frame.
+WGC may still publish the already-requested CPU staging copy. D3D11VA treats
+pool pressure as a dropped presentation frame and does not mistake it for an
+unsupported hardware path that should trigger expensive software conversion.
+
+For four-byte preview textures, six retained slots consume about 47.5 MiB at
+1920×1080 and 189.8 MiB at 3840×2160 per producer, before driver alignment and
+small synchronization objects. Replacing an idle incompatible slot constructs
+its successor before releasing the old allocation so failure preserves the
+working slot; resize or format replacement may therefore transiently hold a
+seventh allocation (about 55.4 MiB or 221.5 MiB respectively). Total use still
+scales with the number of active local and remote producers, so hardware
+verification must measure real committed-memory and handle counts.
 
 A GPU frame may additionally retain CPU-readable pixels. That representation
-exists for consumers that need software access and for best-effort preview
-fallback; it is not required by the GPU ownership or synchronization contract.
-When WGC readback is requested, its staging path is independently publishable:
-if shared-texture or fence export is unavailable, capture emits a software
-frame rather than making successful GPU export a prerequisite for progress.
+supports software consumers and best-effort preview fallback; it is not a
+prerequisite for the GPU contract. When WGC readback is requested, its staging
+path remains independently publishable if shared-texture export is unavailable
+or the GPU pool is temporarily full.
 
 ## Native ownership and identity
 
-Each shared texture NT handle and each producer-timeline fence NT handle has
-one RAII owner. Native handles are borrowed only while opening the resource on
-the consumer device. Cloning a frame clones its `Arc` ownership; it does not
-copy a raw handle or create an independent obligation to close it. Partial
-construction, pool reset, and final resource drop therefore all use the same
-once-only handle cleanup.
+Each texture and producer-timeline NT handle has one RAII owner. Handles are
+borrowed only while opening D3D12 objects and are closed exactly once. Cloning
+a frame clones an `Arc` lease; it never copies raw-handle ownership. Partial
+construction, pool replacement, device reset, and final drop therefore share
+the same cleanup path.
 
-The imported wgpu texture retains the engine resource and the opened D3D12
-fence for its complete cached lifetime. The importer also places a marker
-submission after its raw queue wait and independently retains those native
-owners until that marker completes. A cloned wgpu view can therefore outlive
-the import wrapper without outliving producer readiness; after the marker,
-the opened D3D12 resource itself owns the shared allocation. Dropping a
-capture pool, codec output pool, or original `Frame` cannot invalidate an
-import that is still in use.
+Two opaque process-local identities deliberately describe different things:
 
-`GpuResourceId` is the only cache identity. Each immutable resource receives
-one opaque process-local ID from a shared monotonic allocator, including across
-producer, fence-timeline, and native-device rebuilds. Raw NT handle values are
-never identities: Windows may reuse their numeric values after close, and they
-convey neither content nor ownership. The ID is not serialized and is not a
-security token.
+- `GpuFrameId` identifies one publication and its pixel content. Every
+  successful publication receives a fresh value.
+- `GpuTextureId` identifies one physical pooled texture allocation. It remains
+  stable when that allocation is safely reused for later frame IDs.
 
-## Producer-consumer synchronization
+The desktop keys imported native objects and reusable GPU views by
+`GpuTextureId`; each draw still receives the exact `GpuFrameId`-bearing frame
+lease, while content-specific CPU fallbacks use `GpuFrameId` as their key. Raw
+NT handle values are never identities: Windows may reuse their numeric values
+after close, and they express neither content nor ownership. Neither ID is
+serialized or treated as a security token.
 
-The readiness sequence is:
+## Producer and consumer synchronization
 
-1. The D3D11 producer creates the frame's shared texture and records all writes
-   to that exact texture.
-2. On the same immediate context, it queues an `ID3D11DeviceContext4::Signal`
-   on the shared fence with the frame's monotonically increasing ready value,
-   flushes the context, and only then publishes the frame.
-3. The D3D12 importer opens both the texture and fence, validates the native
-   texture descriptor against the frame, and queues
-   `ID3D12CommandQueue::Wait` for that ready value.
-4. Iced records and submits the texture read on the same D3D12 queue. The queued
-   wait orders that read after the D3D11 writes without blocking the UI thread.
+The forward readiness sequence is:
 
-The imported object retains the opened texture and fence objects needed by the
-queued work. No D3D12-to-D3D11 completion signal is necessary because a
-published texture is immutable and is never returned to a producer for reuse.
+1. The producer nonblockingly reserves a free texture slot.
+2. D3D11 records all writes to that exact texture.
+3. On the same protected immediate context, it queues
+   `ID3D11DeviceContext4::Signal` with a monotonically increasing fence value,
+   flushes, and publishes the frame lease.
+4. The desktop opens and validates the shared texture and fence once for the
+   stable texture ID.
+5. Immediately before each actual draw, the importer queues
+   `ID3D12CommandQueue::Wait` for that frame's ready value on the same queue
+   Iced will use to submit the texture read.
+
+The reverse completion boundary is ownership, not another shared fence. Every
+actual imported draw registers `RenderPass::on_submitted_work_done` on Iced's
+exact command buffer and moves an opaque draw guard into that callback. The
+guard retains the published frame lease until the D3D12 queue has completed
+that submission. Multiple viewers or submissions therefore retain independent
+guards, and the slot becomes reusable only after the last CPU owner and GPU
+consumer have released it.
+
+The desktop runs a lightweight completion pump only while callbacks are
+pending so an otherwise idle renderer cannot leave a full pool permanently
+stalled. The pump polls for completion; it never blocks application shutdown
+waiting for the GPU. If completion cannot be observed after device loss,
+bounded backpressure is safer than early slot reuse.
 
 An import is valid only on the D3D12 backend and a compatible adapter. Format,
 dimensions, matching device/queue ownership, texture descriptor, shared-handle
 opening, fence opening, and queue-wait failures are typed `ImportError` values
 rather than an absent texture or a silently blank draw.
 
+Creating the clonable raw wgpu view is an explicit unsafe boundary: safe code
+cannot express the lifetime relationship between that view and a later command
+buffer. The desktop adapter contains the single audited call site and pairs
+every sampled view with its exact frame wait and completion guard.
+
 ## Desktop presentation and fallback
 
-Format support indicates that a zero-copy import may be attempted; it does not
-guarantee that a particular device, adapter, or frame will import successfully.
-The desktop source cache is keyed by `GpuResourceId`, while prepared view state
-is keyed by both resource identity and its geometry-derived uniforms. Each
-prepared view owns its uniform buffer, so two viewers in one render cycle
-cannot overwrite one another's placement.
+Format support means a zero-copy import may be attempted; it does not guarantee
+that a particular backend, adapter, or frame will import successfully. The
+desktop retains imported physical textures by `GpuTextureId` with a 32-entry
+least-recently-used target. It evicts only under pressure, and imports used by
+the current prepare/draw cycle are never evicted merely to meet that target.
+The cache does not own a published-frame lease and therefore cannot by itself
+delay pool reuse. The exact `Frame` supplied to a draw provides the readiness
+value and the completion guard.
 
-When an import fails, the viewer uploads retained RGBA8 or BGRA8 CPU pixels to
-an ordinary wgpu texture when they are available and have the expected layout.
-If no supported CPU representation exists, it draws an explicit unavailable
-placeholder and reports the typed import failure. The fallback does not imply
-always-on CPU readback: hardware paths may intentionally omit CPU pixels when
-zero-copy preview is expected.
+Prepared views use texture identity for reusable imports, frame identity for
+content-specific CPU fallbacks, and geometry-derived uniforms in both cases.
+Each view owns its uniform buffer, so two viewers prepared in one render cycle
+cannot overwrite one another's placement. Cached imports may survive several
+pool rotations, while per-publication fallback state is discarded after its
+render cycle.
 
-The desktop cache retains the active sources and prepared views plus, during
-the next prepare/draw pass, at most the immediately preceding render-cycle
-set. End-of-frame trimming releases every inactive imported wgpu object and
-its retained engine resource naturally. It keeps no wall-clock frame history,
-does not close raw handles directly, and cannot evict a primitive between
-prepare and draw.
-
-Fresh per-frame allocations are the correctness-first implementation of this
-contract, not the final throughput optimization. Any future texture pool must
-remain bounded and may reuse a slot only after an explicit D3D12 consumer
-completion signal proves that presentation has finished with it. Producer
-readiness alone is not permission to overwrite a published resource.
+When import fails, the viewer uploads retained RGBA8 or BGRA8 CPU pixels to an
+ordinary wgpu texture when they are available and have the exact expected
+layout. Without supported CPU pixels, it draws an explicit unavailable
+placeholder and rate-limits the typed failure report. Hardware paths may omit
+CPU pixels when zero-copy preview is expected, so this is a conditional
+fallback rather than a promise of always-on readback.
 
 ## Recovery and verification
 
-Resize and device recovery may rebuild a producer timeline. Frames from the
-old producer remain internally coherent for as long as they are retained,
-while globally unique resource IDs prevent cache aliasing with its replacement.
-WGC resource-pool reuse also requires the exact current D3D11 device identity;
-callbacks carrying frames from a superseded device are dropped before they
-can touch the replacement pool.
-Higher-level codec and device recovery still has to rebuild every dependent
-native capability that cannot survive the device change.
+Resize and device recovery may replace a pooled texture or rebuild the entire
+producer timeline. New allocations receive new texture IDs, while old frame
+and draw leases remain internally coherent until released. WGC pool reuse also
+requires the exact current D3D11 device identity; callbacks carrying frames
+from a superseded device are rejected before touching the replacement pool.
+Higher-level codec recovery must still rebuild dependent native capabilities
+that cannot survive a device change.
 
-Every GPU producer must be verified against the same invariants: it writes the
-exact exported texture, publishes only after queuing the ready signal, never
-mutates a published resource, and releases all native ownership on final drop.
-Windows adapter-backed coverage must additionally exercise D3D11-fence to
-D3D12-queue ordering, import and readback of known pixels, retained old frames,
-handle lifetime across reset and recovery, and the desktop CPU-upload and
-placeholder fallback paths.
+Every producer must be verified against the same invariants: it writes the
+exact exported texture, publishes only after the ready signal, never mutates a
+leased slot, drops rather than blocks at capacity, and releases all ownership
+on final drop. Windows adapter-backed coverage must additionally exercise
+D3D11-fence-to-D3D12-queue ordering, retained old content across several pool
+rotations, exact draw-completion release, resize and device recovery, bounded
+memory and handle counts at 1080p and 4K, and CPU-upload/placeholder fallback.

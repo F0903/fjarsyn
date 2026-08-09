@@ -69,8 +69,10 @@ impl Decoder {
         let mut decoded_frame = frame::Video::empty();
         match self.decoder.receive_frame(&mut decoded_frame) {
             Ok(_) => {
-                if let Some(frame) = self.try_decode_hw_frame(&decoded_frame) {
-                    return frame.map(Some);
+                match self.try_decode_hw_frame(&decoded_frame) {
+                    HardwareFrame::Ready(frame) => return Ok(Some(frame)),
+                    HardwareFrame::Backpressured => return Ok(None),
+                    HardwareFrame::Fallback => {}
                 }
 
                 self.decode_software_frame(decoded_frame).map(Some)
@@ -81,18 +83,21 @@ impl Decoder {
         }
     }
 
-    fn try_decode_hw_frame(&self, decoded_frame: &frame::Video) -> Option<Result<Arc<Frame>>> {
-        let hw_backend = self.hw_backend.as_ref()?;
+    fn try_decode_hw_frame(&self, decoded_frame: &frame::Video) -> HardwareFrame {
+        let Some(hw_backend) = self.hw_backend.as_ref() else {
+            return HardwareFrame::Fallback;
+        };
 
         match hw_backend.try_decode_frame(decoded_frame, self.dst_format) {
-            Ok(Some(frame)) => Some(Ok(Arc::new(frame))),
-            Ok(None) => None,
+            Ok(hw::FrameOutput::Ready(frame)) => HardwareFrame::Ready(Arc::new(frame)),
+            Ok(hw::FrameOutput::Backpressured) => HardwareFrame::Backpressured,
+            Ok(hw::FrameOutput::Unsupported) => HardwareFrame::Fallback,
             Err(err) => {
                 tracing::warn!(
                     "Falling back to software decode output after GPU path failed: {}",
                     err
                 );
-                None
+                HardwareFrame::Fallback
             }
         }
     }
@@ -182,6 +187,12 @@ impl Decoder {
             None,
         )
     }
+}
+
+enum HardwareFrame {
+    Fallback,
+    Backpressured,
+    Ready(Arc<Frame>),
 }
 
 impl std::fmt::Debug for Decoder {

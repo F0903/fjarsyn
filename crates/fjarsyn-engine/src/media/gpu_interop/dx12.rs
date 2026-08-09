@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use wgpu::hal::api::Dx12;
 use windows::{
     Win32::Graphics::{
@@ -15,42 +13,8 @@ use windows::{
     core::{IUnknown, Interface},
 };
 
-use super::{ImportError, ImportedFrameTexture};
-use crate::media::{
-    Dimensions, PixelFormat,
-    frame::{Frame, GpuResource},
-};
-
-struct PendingQueueWait {
-    owners: Option<(Arc<GpuResource>, ID3D12Fence)>,
-    armed: bool,
-}
-
-impl PendingQueueWait {
-    fn new(source: Arc<GpuResource>, fence: ID3D12Fence) -> Self {
-        Self { owners: Some((source, fence)), armed: false }
-    }
-
-    fn arm(&mut self) {
-        self.armed = true;
-    }
-
-    fn disarm(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for PendingQueueWait {
-    fn drop(&mut self) {
-        if self.armed {
-            // A panic after Queue::Wait succeeds must not release the fence or
-            // producer resource while that external GPU wait may still refer
-            // to them. Leaking only on unwind/device failure is the safe last
-            // resort; the normal path transfers bounded ownership to marker.
-            std::mem::forget(self.owners.take());
-        }
-    }
-}
+use super::{ImportError, ImportedFrameDrawGuard, ImportedFrameTexture};
+use crate::media::{Dimensions, PixelFormat, frame::Frame};
 
 pub(super) fn supports_zero_copy_preview(format: PixelFormat) -> bool {
     format.supports_zero_copy_preview()
@@ -58,7 +22,6 @@ pub(super) fn supports_zero_copy_preview(format: PixelFormat) -> bool {
 
 pub(super) fn import_frame_texture(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
     frame: &Frame,
 ) -> Result<ImportedFrameTexture, ImportError> {
     let gpu = frame.gpu().ok_or(ImportError::NoGpuResource)?;
@@ -67,21 +30,13 @@ pub(super) fn import_frame_texture(
     let (format, dxgi_format) =
         texture_formats_for(frame.format).ok_or(ImportError::UnsupportedFormat(frame.format))?;
     let (width, height) = valid_dimensions(frame.size)?;
-    let readiness_marker = device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Imported Frame Readiness Marker"),
-        })
-        .finish();
-
     // SAFETY: The resource and fence handles were created for the D3D11
-    // producer on this adapter. The returned wgpu texture owns the opened
-    // D3D12 resource, while the marker submission below retains the native
-    // source and fence until their queued readiness dependency has completed.
+    // producer on this adapter. The returned wgpu texture and fence own the
+    // opened D3D12 objects; each draw separately retains its exact frame lease
+    // until the containing command buffer completes.
     unsafe {
         let hal_device = device.as_hal::<Dx12>().ok_or(ImportError::UnsupportedBackend)?;
-        let hal_queue = queue.as_hal::<Dx12>().ok_or(ImportError::UnsupportedBackend)?;
-        let raw_device = hal_device.raw_device();
-        validate_device_queue(raw_device, hal_queue.as_raw())?;
+        let raw_device = hal_device.raw_device().clone();
 
         let mut raw_resource: Option<ID3D12Resource> = None;
         raw_device
@@ -100,25 +55,6 @@ pub(super) fn import_frame_texture(
             ImportError::DescriptorMismatch("opening the producer fence returned no fence".into())
         })?;
 
-        // Attach ownership to the exact marker before enqueuing the external
-        // wait. If any earlier operation fails, dropping the unsubmitted
-        // marker simply drops these clones because no wait remains pending.
-        let readiness_source = source.clone();
-        let readiness_fence = ready_fence.clone();
-        let mut pending_wait = PendingQueueWait::new(source.clone(), ready_fence.clone());
-        readiness_marker.on_submitted_work_done(move || {
-            drop((readiness_source, readiness_fence));
-        });
-
-        // Iced records this primitive after prepare and submits it later on the
-        // same queue. Placing the wait now orders that future texture read after
-        // the D3D11 producer signal without blocking the CPU/UI thread.
-        hal_queue
-            .as_raw()
-            .Wait(&ready_fence, native.ready_value())
-            .map_err(ImportError::WaitForProducer)?;
-        pending_wait.arm();
-
         let hal_texture = wgpu::hal::dx12::Device::texture_from_raw(
             raw_resource,
             format,
@@ -127,13 +63,10 @@ pub(super) fn import_frame_texture(
             1,
             1,
         );
-        drop(hal_queue);
         drop(hal_device);
-        queue.submit([readiness_marker]);
-        pending_wait.disarm();
 
         let texture_desc = wgpu::TextureDescriptor {
-            label: Some("Imported Immutable Frame Texture"),
+            label: Some("Imported Pooled Frame Texture"),
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
@@ -146,11 +79,41 @@ pub(super) fn import_frame_texture(
 
         Ok(ImportedFrameTexture {
             texture,
-            resource_id: source.id(),
-            _source: source,
-            _ready_fence: ready_fence,
+            texture_id: source.texture_id(),
+            ready_fence,
+            device: raw_device,
         })
     }
+}
+
+pub(super) fn prepare_draw(
+    imported: &ImportedFrameTexture,
+    queue: &wgpu::Queue,
+    frame: &Frame,
+) -> Result<ImportedFrameDrawGuard, ImportError> {
+    let gpu = frame.gpu().ok_or(ImportError::NoGpuResource)?;
+    if gpu.texture_id() != imported.texture_id {
+        return Err(ImportError::FrameTextureMismatch);
+    }
+    let source = gpu.resource().clone();
+    let ready_value = source.windows().ready_value();
+
+    // SAFETY: the queue/device identity is checked before touching the raw
+    // queue. Queue::Wait is enqueued during the actual primitive draw, before
+    // Iced submits the command buffer that samples this texture.
+    unsafe {
+        let hal_queue = queue.as_hal::<Dx12>().ok_or(ImportError::UnsupportedBackend)?;
+        validate_device_queue(&imported.device, hal_queue.as_raw())?;
+
+        // Duplicate waits are harmless and avoid a reservation race where one
+        // caller records a value before its native Wait has actually succeeded.
+        hal_queue
+            .as_raw()
+            .Wait(&imported.ready_fence, ready_value)
+            .map_err(ImportError::WaitForProducer)?;
+    }
+
+    Ok(ImportedFrameDrawGuard { _source: source, _ready_fence: imported.ready_fence.clone() })
 }
 
 fn validate_device_queue(

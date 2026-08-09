@@ -326,10 +326,11 @@ their bounded inputs, finish cleanup, and are joined. Owners that reach their
 deadline detach or cancel unfinished work without awaiting a new cleanup tail;
 late output remains suppressed.
 
-GPU-backed preview frames cross the engine/desktop boundary as immutable,
-owned resources rather than independently paired textures and raw handles. A
-shared D3D11 fence orders production before D3D12/wgpu sampling, and the
-desktop uses stable resource identity for bounded import and per-view caches.
+GPU-backed preview frames cross the engine/desktop boundary as bounded texture
+leases rather than independently paired textures and raw handles. A shared
+D3D11 fence orders production before D3D12/wgpu sampling, an exact-submission
+completion guard prevents early slot reuse, and separate frame/texture
+identities distinguish content from the cached physical import.
 Import failure follows an explicit CPU-upload or unavailable-placeholder path.
 The complete producer-independent contract is documented in
 [`gpu-frame-resources.md`](gpu-frame-resources.md).
@@ -679,9 +680,9 @@ compatibility into the new architecture.
 - Screen-share service verification must cover start/stop transaction rollback,
   exact session/share binding, read-only projection output, and shutdown before
   the codec phase after codec cancellation has been prepared.
-- Windows GPU verification must apply the same immutable resource, ownership,
-  ready-fence, import, and fallback invariants to every capture or decoder
-  producer, independent of its native source.
+- Windows GPU verification must apply the same bounded lease, ready-fence,
+  draw-completion, import, pressure-drop, and fallback invariants to every
+  capture or decoder producer, independent of its native source.
 - Repeated connect/disconnect and responsive-worker shutdown tests leave no
   owned tasks or routes; watchdog-timeout tests instead prove bounded
   detachment and quarantine without claiming native-thread reclamation.

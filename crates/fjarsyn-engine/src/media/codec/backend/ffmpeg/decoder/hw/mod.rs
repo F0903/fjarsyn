@@ -4,4 +4,4 @@ mod backend;
 #[cfg(target_os = "windows")]
 mod d3d11va;
 
-pub(super) use backend::Backend;
+pub(super) use backend::{Backend, FrameOutput};

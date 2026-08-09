@@ -452,9 +452,7 @@ impl Screen {
     }
 
     fn frame_viewer(&self, frame: Arc<Frame>) -> Element<'static, Message> {
-        if frame.gpu_resource_id().is_some()
-            && gpu_interop::supports_zero_copy_preview(frame.format)
-        {
+        if frame.gpu_frame_id().is_some() && gpu_interop::supports_zero_copy_preview(frame.format) {
             GpuFrameViewer::new(frame).into()
         } else if frame.format.supports_software_preview() {
             CpuFrameViewer::new(frame).into()

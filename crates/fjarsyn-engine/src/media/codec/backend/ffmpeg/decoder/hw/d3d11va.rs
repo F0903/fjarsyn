@@ -33,7 +33,10 @@ use windows::{
     core::Interface,
 };
 
-use super::super::{Error, Result};
+use super::{
+    super::{Error, Result},
+    FrameOutput,
+};
 use crate::media::{
     Dimensions, PixelFormat,
     codec::backend::ffmpeg::D3d11vaDeviceContext,
@@ -141,16 +144,16 @@ impl Backend {
         &self,
         decoded_frame: &frame::Video,
         dst_format: PixelFormat,
-    ) -> Result<Option<Frame>> {
+    ) -> Result<FrameOutput> {
         if dst_format != PixelFormat::BGRA8 || decoded_frame.format() != format::Pixel::D3D11 {
-            return Ok(None);
+            return Ok(FrameOutput::Unsupported);
         }
 
         unsafe {
             let raw_frame = decoded_frame.as_ptr();
             let texture_ptr = (*raw_frame).data[0] as *mut std::ffi::c_void;
             if texture_ptr.is_null() {
-                return Ok(None);
+                return Ok(FrameOutput::Unsupported);
             }
 
             let src_subresource = (*raw_frame).data[1] as usize as u32;
@@ -176,8 +179,12 @@ impl Backend {
 
             let visible_width = decoded_frame.width();
             let visible_height = decoded_frame.height();
-            let output_resources =
-                self.ensure_output_resources(video_device, visible_width, visible_height)?;
+            let Some(output_resources) =
+                self.ensure_output_resources(video_device, visible_width, visible_height)?
+            else {
+                tracing::debug!("decoded GPU frame pool is full; dropping the newest output");
+                return Ok(FrameOutput::Backpressured);
+            };
 
             let src_resource: ID3D11Resource = src_texture.cast().map_err(|err| {
                 Error::HardwareInterop(format!(
@@ -260,7 +267,7 @@ impl Backend {
                 ppFutureSurfacesRight: std::ptr::null_mut(),
             };
 
-            let gpu_resource = {
+            let publish_result = {
                 // FFmpeg may use this immediate/video context concurrently.
                 // Keep the complete conversion and ready-signal transaction
                 // under its device lock so no work can interleave between the
@@ -300,19 +307,32 @@ impl Backend {
                 drop(std::mem::ManuallyDrop::into_inner(stream.pInputSurface));
                 drop(std::mem::ManuallyDrop::into_inner(stream.pInputSurfaceRight));
 
-                blt_result.map_err(|err| {
-                    Error::HardwareInterop(format!(
-                        "Failed to convert decoded frame with D3D11 video processor: {}",
-                        err
-                    ))
-                })?;
-
-                output_resources.frame_writer.finish(device_context).map_err(|err| {
-                    Error::HardwareInterop(format!("Failed to publish decoded GPU frame: {}", err))
-                })?
+                match blt_result {
+                    Ok(()) => output_resources.frame_writer.finish(device_context).map_err(|err| {
+                        Error::HardwareInterop(format!(
+                            "Failed to publish decoded GPU frame: {err}"
+                        ))
+                    }),
+                    Err(error) => {
+                        output_resources.frame_writer.quarantine();
+                        Err(Error::HardwareInterop(format!(
+                            "Failed to convert decoded frame with D3D11 video processor: {error}"
+                        )))
+                    }
+                }
+            };
+            let gpu_resource = match publish_result {
+                Ok(resource) => resource,
+                Err(error) => {
+                    // Failed conversion or readiness quarantines the physical
+                    // slot. Rebuild immediately so later frames neither reuse
+                    // it nor consume capacity one poisoned slot at a time.
+                    self.output_state.lock().unwrap().frame_producer = None;
+                    return Err(error);
+                }
             };
 
-            Ok(Some(Frame::new_gpu(
+            Ok(FrameOutput::Ready(Frame::new_gpu(
                 gpu_resource,
                 None,
                 PixelFormat::BGRA8,
@@ -349,7 +369,7 @@ impl Backend {
         video_device: &ID3D11VideoDevice,
         width: u32,
         height: u32,
-    ) -> Result<OutputResources> {
+    ) -> Result<Option<OutputResources>> {
         if width == 0
             || height == 0
             || i32::try_from(width).is_err()
@@ -419,19 +439,23 @@ impl Backend {
             .frame_producer
             .as_mut()
             .expect("decoded-frame producer was initialized")
-            .begin_frame(desc)
+            .try_begin_frame(desc)
             .map_err(|err| {
                 Error::HardwareInterop(format!(
-                    "Failed to create immutable decoded-frame texture: {}",
+                    "Failed to reserve a decoded-frame GPU texture: {}",
                     err
                 ))
             })?;
 
-        Ok(OutputResources {
+        let Some(frame_writer) = frame_writer else {
+            return Ok(None);
+        };
+
+        Ok(Some(OutputResources {
             frame_writer,
             enumerator: state.video_enumerator.as_ref().unwrap().clone(),
             processor: state.video_processor.as_ref().unwrap().clone(),
-        })
+        }))
     }
 
     fn configure_color_space(
