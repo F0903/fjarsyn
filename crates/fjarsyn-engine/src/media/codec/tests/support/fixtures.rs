@@ -48,11 +48,19 @@ pub(in crate::media::codec::tests) fn decoder_config() -> DecoderWorkerConfig {
 }
 
 pub(in crate::media::codec::tests) fn test_frame() -> Arc<Frame> {
+    test_frame_with_duration(Some(Duration::from_millis(16)))
+}
+
+pub(in crate::media::codec::tests) fn test_frame_without_duration() -> Arc<Frame> {
+    test_frame_with_duration(None)
+}
+
+fn test_frame_with_duration(duration: Option<Duration>) -> Arc<Frame> {
     Arc::new(Frame {
         data: FrameData::Software(Bytes::from_static(&[0, 0, 0, 0])),
         format: PixelFormat::BGRA8,
         size: Dimensions::new(1, 1),
-        duration: Some(Duration::from_millis(16)),
+        duration,
     })
 }
 

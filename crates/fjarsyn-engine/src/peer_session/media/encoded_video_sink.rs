@@ -1,6 +1,6 @@
 use tokio::sync::{mpsc, watch};
 
-use super::EncodedVideoSample;
+use super::{EncodedVideoSample, KeyframeRequests};
 use crate::peer_session::{Error, SessionId, ShareEpoch, ShareId};
 
 /// One outbound encoded sample bound to the share instance that produced it.
@@ -23,6 +23,7 @@ pub(crate) struct EncodedVideoSink {
     epoch: ShareEpoch,
     tx: mpsc::Sender<OutboundVideoSample>,
     active_share: watch::Receiver<Option<(ShareId, ShareEpoch)>>,
+    keyframe_requests: KeyframeRequests,
 }
 
 impl EncodedVideoSink {
@@ -32,8 +33,9 @@ impl EncodedVideoSink {
         epoch: ShareEpoch,
         tx: mpsc::Sender<OutboundVideoSample>,
         active_share: watch::Receiver<Option<(ShareId, ShareEpoch)>>,
+        keyframe_requests: KeyframeRequests,
     ) -> Self {
-        Self { session_id, share_id, epoch, tx, active_share }
+        Self { session_id, share_id, epoch, tx, active_share, keyframe_requests }
     }
 
     pub(crate) fn session_id(&self) -> SessionId {
@@ -46,6 +48,11 @@ impl EncodedVideoSink {
 
     pub(crate) fn epoch(&self) -> ShareEpoch {
         self.epoch
+    }
+
+    /// Consumes one coalesced force-keyframe request for this exact share.
+    pub(crate) fn take_keyframe_request(&self) -> bool {
+        self.keyframe_requests.take(self.share_id, self.epoch)
     }
 
     pub(crate) async fn send(&self, sample: EncodedVideoSample) -> Result<(), Error> {

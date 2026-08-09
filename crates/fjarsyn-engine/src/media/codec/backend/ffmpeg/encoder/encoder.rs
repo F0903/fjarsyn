@@ -88,9 +88,10 @@ impl Encoder {
         &mut self,
         frame: &Frame,
         transcoding_type: TranscodeType,
-        width: i32,
-        height: i32,
+        force_keyframe: bool,
     ) -> Result<Vec<Vec<u8>>> {
+        let width = frame.size.width;
+        let height = frame.size.height;
         let dst_format = transcoding_type.encoder_info().scaler_format;
 
         if self.encoder.is_none()
@@ -109,11 +110,11 @@ impl Encoder {
             && let Some(texture) = frame.d3d11_texture()
             && self.hw_device_ctx.is_some()
         {
-            self.encode_d3d11(texture, width, height, dst_w, dst_h)?;
+            self.encode_d3d11(texture, width, height, dst_w, dst_h, force_keyframe)?;
             return self.collect_nal_units();
         }
 
-        self.encode_software(frame, width, height, dst_w, dst_h, dst_format)?;
+        self.encode_software(frame, dst_w, dst_h, dst_format, force_keyframe)?;
         self.collect_nal_units()
     }
 
@@ -220,13 +221,26 @@ impl Encoder {
         let encoder = self.encoder.as_mut().unwrap();
         let mut nal_units = Vec::new();
         let mut packet = Packet::empty();
-        while encoder.receive_packet(&mut packet).is_ok() {
-            if let Some(data) = packet.data() {
-                nal_units.push(data.as_ref().to_vec());
+        loop {
+            match encoder.receive_packet(&mut packet) {
+                Ok(()) => {
+                    if let Some(data) = packet.data() {
+                        nal_units.push(data.as_ref().to_vec());
+                    }
+                }
+                Err(error) if receive_is_drained(&error) => break,
+                Err(error) => return Err(Error::Encode(error)),
             }
         }
         Ok(nal_units)
     }
+}
+
+fn receive_is_drained(error: &ffmpeg::Error) -> bool {
+    matches!(
+        error,
+        ffmpeg::Error::Other { errno } if *errno == ffmpeg::error::EAGAIN
+    ) || matches!(error, ffmpeg::Error::Eof)
 }
 
 impl std::fmt::Debug for Encoder {
@@ -248,5 +262,110 @@ impl Drop for Encoder {
                 ffmpeg_next::ffi::av_buffer_unref(&mut ctx);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+    use ffmpeg_next as ffmpeg;
+
+    use super::{Encoder, receive_is_drained};
+    use crate::media::{
+        Dimensions, PixelFormat,
+        codec::TranscodeType,
+        frame::{Frame, FrameData},
+        video::TargetResolution,
+    };
+
+    const SPS_NAL_TYPE: u8 = 7;
+    const PPS_NAL_TYPE: u8 = 8;
+    const IDR_NAL_TYPE: u8 = 5;
+
+    #[test]
+    fn only_eagain_and_eof_finish_packet_draining() {
+        assert!(receive_is_drained(&ffmpeg::Error::Other { errno: ffmpeg::error::EAGAIN }));
+        assert!(receive_is_drained(&ffmpeg::Error::Eof));
+        assert!(!receive_is_drained(&ffmpeg::Error::InvalidData));
+    }
+
+    #[test]
+    fn later_forced_software_keyframe_repeats_sps_pps_and_idr() {
+        let mut encoder = Encoder::new(
+            1_000_000,
+            30.0,
+            TargetResolution::Source,
+            None,
+            TranscodeType::H264Software,
+        )
+        .unwrap();
+        let frame = solid_software_frame(16, 16);
+
+        let initial = encoder.encode(&frame, TranscodeType::H264Software, false).unwrap();
+        assert_bootstrap_access_unit(&initial);
+
+        for _ in 0..2 {
+            let dependent = encoder.encode(&frame, TranscodeType::H264Software, false).unwrap();
+            let nal_types = access_unit_nal_types(&dependent);
+            assert!(!nal_types.contains(&SPS_NAL_TYPE));
+            assert!(!nal_types.contains(&PPS_NAL_TYPE));
+            assert!(!nal_types.contains(&IDR_NAL_TYPE));
+        }
+
+        let forced = encoder.encode(&frame, TranscodeType::H264Software, true).unwrap();
+        assert_bootstrap_access_unit(&forced);
+    }
+
+    fn solid_software_frame(width: i32, height: i32) -> Frame {
+        let pixel_count = usize::try_from(width * height).unwrap();
+        let pixels = [20, 40, 60, 255].repeat(pixel_count);
+        Frame {
+            data: FrameData::Software(Bytes::from(pixels)),
+            format: PixelFormat::RGBA8,
+            size: Dimensions::new(width, height),
+            duration: None,
+        }
+    }
+
+    fn assert_bootstrap_access_unit(packets: &[Vec<u8>]) {
+        let packet_nal_types =
+            packets.iter().map(|packet| annex_b_nal_types(packet)).collect::<Vec<_>>();
+        assert!(
+            packet_nal_types.iter().any(|nal_types| {
+                nal_types.contains(&SPS_NAL_TYPE)
+                    && nal_types.contains(&PPS_NAL_TYPE)
+                    && nal_types.contains(&IDR_NAL_TYPE)
+            }),
+            "no self-contained SPS/PPS/IDR access unit in {packet_nal_types:?}"
+        );
+    }
+
+    fn access_unit_nal_types(packets: &[Vec<u8>]) -> Vec<u8> {
+        packets.iter().flat_map(|packet| annex_b_nal_types(packet)).collect()
+    }
+
+    fn annex_b_nal_types(data: &[u8]) -> Vec<u8> {
+        let mut nal_types = Vec::new();
+        let mut offset = 0;
+        while let Some((start, start_code_len)) = find_start_code(data, offset) {
+            let nal_offset = start + start_code_len;
+            if let Some(header) = data.get(nal_offset) {
+                nal_types.push(header & 0x1f);
+            }
+            offset = nal_offset.saturating_add(1);
+        }
+        nal_types
+    }
+
+    fn find_start_code(data: &[u8], from: usize) -> Option<(usize, usize)> {
+        (from..data.len()).find_map(|offset| {
+            if data[offset..].starts_with(&[0, 0, 0, 1]) {
+                Some((offset, 4))
+            } else if data[offset..].starts_with(&[0, 0, 1]) {
+                Some((offset, 3))
+            } else {
+                None
+            }
+        })
     }
 }

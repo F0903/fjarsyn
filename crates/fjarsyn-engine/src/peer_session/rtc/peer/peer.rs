@@ -20,6 +20,7 @@ use webrtc::{
     rtp_transceiver::{
         RTCPFeedback,
         rtp_codec::{RTCRtpCodecCapability, RTCRtpCodecParameters, RTPCodecType},
+        rtp_sender::RTCRtpSender,
     },
     track::track_local::{TrackLocal, track_local_static_sample::TrackLocalStaticSample},
 };
@@ -30,7 +31,10 @@ use super::{
     network_policy::NetworkPolicy,
     rtc_operation,
 };
-use crate::peer_session::{Error, TransportGeneration, media::RemoteVideoSample};
+use crate::peer_session::{
+    Error, TransportGeneration,
+    media::{KeyframeRequests, RemoteVideoSample},
+};
 
 fn register_h264_codecs(media_engine: &mut MediaEngine) -> Result<(), Error> {
     let rtcp_feedback = vec![
@@ -66,6 +70,7 @@ pub(in crate::peer_session) struct Peer {
     pub(super) pc: Arc<RTCPeerConnection>,
     pub(super) network_policy: NetworkPolicy,
     pub(super) video_track: Arc<TrackLocalStaticSample>,
+    pub(super) video_sender: Arc<RTCRtpSender>,
     pub(super) control: Option<Arc<RTCDataChannel>>,
     pub(super) messaging: Option<Arc<RTCDataChannel>>,
     pub(super) generation: TransportGeneration,
@@ -104,6 +109,7 @@ impl Peer {
         event_tx: mpsc::Sender<Event>,
         fatal_tx: watch::Sender<Option<String>>,
         remote_video_tx: broadcast::Sender<RemoteVideoSample>,
+        keyframe_requests: KeyframeRequests,
     ) -> Result<Self, Error> {
         let network_policy = NetworkPolicy::new(config.network_scope, &config.ice_servers)?;
         let mut media_engine = MediaEngine::default();
@@ -137,26 +143,30 @@ impl Peer {
             "screen".to_owned(),
             Self::STREAM_ID.to_owned(),
         ));
-        if let Err(error) = rtc_operation(
+        let video_sender = match rtc_operation(
             config.operation_timeout,
             pc.add_track(Arc::clone(&video_track) as Arc<dyn TrackLocal + Send + Sync>),
         )
         .await
         {
-            // A partially constructed peer connection owns internal WebRTC tasks.
-            // Close it explicitly before returning the construction error.
-            let _ = tokio::time::timeout(config.operation_timeout, pc.close()).await;
-            return Err(error);
-        }
+            Ok(sender) => sender,
+            Err(error) => {
+                // A partially constructed peer connection owns internal WebRTC tasks.
+                // Close it explicitly before returning the construction error.
+                let _ = tokio::time::timeout(config.operation_timeout, pc.close()).await;
+                return Err(error);
+            }
+        };
 
         let events = EventDispatcher::new(event_tx, fatal_tx);
         let callback_generation = Arc::new(AtomicU64::new(TransportGeneration::INITIAL.value()));
         Self::register_peer_callbacks(&pc, events.clone(), callback_generation.clone());
 
-        Ok(Self {
+        let mut peer = Self {
             pc,
             network_policy,
             video_track,
+            video_sender,
             control: None,
             messaging: None,
             generation: TransportGeneration::INITIAL,
@@ -175,7 +185,9 @@ impl Peer {
             events,
             tasks: JoinSet::new(),
             remote_video_claimed: false,
-        })
+        };
+        peer.start_sender_feedback(keyframe_requests);
+        Ok(peer)
     }
 
     #[cfg(test)]
@@ -252,7 +264,10 @@ mod tests {
             max_data_message_bytes: 16 * 1024,
             operation_timeout: Duration::from_secs(1),
         };
-        let mut peer = Peer::new(config.clone(), event_tx, fatal_tx, video_tx).await.unwrap();
+        let mut peer =
+            Peer::new(config.clone(), event_tx, fatal_tx, video_tx, KeyframeRequests::default())
+                .await
+                .unwrap();
         let candidate = RTCIceCandidateInit {
             candidate: "candidate:1 1 udp 1 127.0.0.1 9 typ host".into(),
             ..Default::default()
@@ -262,8 +277,15 @@ mod tests {
             peer.add_remote_candidate(TransportGeneration::INITIAL, candidate.clone()).await,
             Err(Error::Protocol(_))
         ));
-        let mut offerer =
-            Peer::new(config, offer_event_tx, offer_fatal_tx, offer_video_tx).await.unwrap();
+        let mut offerer = Peer::new(
+            config,
+            offer_event_tx,
+            offer_fatal_tx,
+            offer_video_tx,
+            KeyframeRequests::default(),
+        )
+        .await
+        .unwrap();
         let offer = offerer.create_offer().await.unwrap();
         let remote_ufrag = IceCredentials::from_sdp(&offer).unwrap().username_fragment().to_owned();
         peer.apply_offer_and_create_answer(offer).await.unwrap();
@@ -321,6 +343,7 @@ mod tests {
             event_tx,
             fatal_tx,
             video_tx,
+            KeyframeRequests::default(),
         )
         .await
         .unwrap();
@@ -349,10 +372,24 @@ mod tests {
             max_data_message_bytes: 16 * 1024,
             operation_timeout: Duration::from_secs(5),
         };
-        let mut offerer =
-            Peer::new(config.clone(), offer_events, offer_fatal, offer_video).await.unwrap();
-        let mut answerer =
-            Peer::new(config, answer_events, answer_fatal, answer_video).await.unwrap();
+        let mut offerer = Peer::new(
+            config.clone(),
+            offer_events,
+            offer_fatal,
+            offer_video,
+            KeyframeRequests::default(),
+        )
+        .await
+        .unwrap();
+        let mut answerer = Peer::new(
+            config,
+            answer_events,
+            answer_fatal,
+            answer_video,
+            KeyframeRequests::default(),
+        )
+        .await
+        .unwrap();
 
         offerer.prepare_offerer_channels().await.unwrap();
         let initial_offer = offerer.create_offer().await.unwrap();

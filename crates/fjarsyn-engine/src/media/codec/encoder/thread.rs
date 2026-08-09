@@ -15,7 +15,11 @@ use crate::media::{
 };
 
 pub(in crate::media::codec) enum Command {
-    Encode { frame: Arc<Frame>, reply: oneshot::Sender<Result<Vec<Vec<u8>>, String>> },
+    Encode {
+        frame: Arc<Frame>,
+        force_keyframe: bool,
+        reply: oneshot::Sender<Result<Vec<Vec<u8>>, String>>,
+    },
 }
 
 pub(in crate::media::codec) struct Thread {
@@ -61,8 +65,10 @@ impl Thread {
                         return Err(error);
                     }
                 };
-                while let Some(Command::Encode { frame, reply }) = command_rx.blocking_recv() {
-                    let result = encoder.encode(&frame);
+                while let Some(Command::Encode { frame, force_keyframe, reply }) =
+                    command_rx.blocking_recv()
+                {
+                    let result = encoder.encode(&frame, force_keyframe);
                     let terminal = result.as_ref().err().cloned();
                     let _ = reply.send(result);
                     if let Some(error) = terminal {

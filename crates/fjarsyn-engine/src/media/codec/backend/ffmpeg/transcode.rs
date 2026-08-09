@@ -49,6 +49,7 @@ impl TranscodeType {
         self,
         opts: &mut ffmpeg_next::Dictionary,
     ) {
+        opts.set("forced-idr", "1");
         match self {
             Self::H264Software => {
                 opts.set("preset", "ultrafast");
@@ -58,6 +59,22 @@ impl TranscodeType {
                 opts.set("preset", "p1");
                 opts.set("tune", "ull");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_h264_encoder_uses_idr_frames_for_forced_keyframes() {
+        for transcoding_type in [TranscodeType::H264Software, TranscodeType::H264Nvenc] {
+            let mut options = ffmpeg_next::Dictionary::new();
+
+            transcoding_type.set_encoder_options(&mut options);
+
+            assert_eq!(options.get("forced-idr"), Some("1"));
         }
     }
 }

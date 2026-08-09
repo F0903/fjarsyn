@@ -16,7 +16,7 @@ pub(in crate::media::codec) trait DecoderBackend {
 }
 
 pub(in crate::media::codec) trait EncoderBackend {
-    fn encode(&mut self, frame: &Frame) -> Result<Vec<Vec<u8>>, String>;
+    fn encode(&mut self, frame: &Frame, force_keyframe: bool) -> Result<Vec<Vec<u8>>, String>;
 }
 
 pub(in crate::media::codec) trait BackendFactory:
@@ -77,9 +77,9 @@ struct FfmpegEncoderBackend {
 }
 
 impl EncoderBackend for FfmpegEncoderBackend {
-    fn encode(&mut self, frame: &Frame) -> Result<Vec<Vec<u8>>, String> {
+    fn encode(&mut self, frame: &Frame, force_keyframe: bool) -> Result<Vec<Vec<u8>>, String> {
         self.encoder
-            .encode(frame, self.transcoding_type, frame.size.width, frame.size.height)
+            .encode(frame, self.transcoding_type, force_keyframe)
             .map_err(|error| error.to_string())
     }
 }

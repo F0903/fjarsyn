@@ -1,21 +1,12 @@
-use std::{collections::BTreeMap, panic::AssertUnwindSafe};
+use std::collections::BTreeMap;
 
-use futures::FutureExt;
-use tokio::sync::{mpsc, oneshot, watch};
-
-use super::{
-    super::{ChildTaskGuard, OwnedPipeline, task_failure},
-    Pipeline, contains_nal_type,
-};
+use super::Pipeline;
 use crate::{
     media::{
         PixelFormat,
-        codec::{
-            DecoderSessionParts, DecoderWorkerConfig, DirectionState,
-            ServiceHandle as CodecServiceHandle,
-        },
+        codec::{DecoderWorkerConfig, ServiceHandle as CodecServiceHandle},
     },
-    peer_session::{self, RemoteVideoRead, RemoteVideoSource, SessionId},
+    peer_session::{RemoteVideoSource, SessionId},
     screen_share::{Config, Output, RemoteState, ShareBinding, Update},
 };
 
@@ -55,7 +46,7 @@ impl Controller {
         {
             self.standby.insert(session_id, source);
         }
-        let Some(mut source) = self.standby.remove(&session_id) else {
+        let Some(source) = self.standby.remove(&session_id) else {
             let reason = "remote video standby source is unavailable".to_owned();
             self.emit(Update::RemoteState {
                 session_id,
@@ -64,14 +55,11 @@ impl Controller {
             .await;
             return Err(reason);
         };
-        let decoder = match self
-            .codecs
-            .open_decoder(DecoderWorkerConfig {
-                transcoding_type: config.video.transcoding_type,
-                output_format: PixelFormat::DEFAULT_CAPTURE,
-            })
-            .await
-        {
+        let decoder_config = DecoderWorkerConfig {
+            transcoding_type: config.video.transcoding_type,
+            output_format: PixelFormat::DEFAULT_CAPTURE,
+        };
+        let decoder = match self.codecs.open_decoder(decoder_config).await {
             Ok(decoder) => decoder,
             Err(error) => {
                 self.standby.insert(session_id, source);
@@ -84,139 +72,18 @@ impl Controller {
                 return Err(reason);
             }
         };
-        let DecoderSessionParts {
-            input: decoder_input,
-            output: mut decoder_output,
-            worker: decoder_worker,
-        } = decoder.into_parts();
         self.emit(Update::RemoteState { session_id, state: RemoteState::Starting }).await;
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        let (source_return_tx, source_return) = oneshot::channel();
-
-        let mut source_cancel = cancel_rx.clone();
-        let source_cancel_tx = cancel_tx.clone();
-        let source_task = tokio::spawn(async move {
-            let mut found_sequence_parameter_set = false;
-            let result = loop {
-                let sample = tokio::select! {
-                    biased;
-                    _ = source_cancel.changed() => break Ok::<(), String>(()),
-                    sample = source.recv_for(binding.epoch) => match sample {
-                        Ok(RemoteVideoRead::Sample(sample)) => sample,
-                        Ok(RemoteVideoRead::EpochAdvanced { next_epoch }) => {
-                            tracing::debug!(
-                                %session_id,
-                                share_epoch = binding.epoch.value(),
-                                next_share_epoch = next_epoch.value(),
-                                "remote media advanced before its control event was projected; parking the old decoder"
-                            );
-                            Pipeline::park_until_replacement(&mut source_cancel).await;
-                            break Ok(());
-                        }
-                        Err(peer_session::Error::RemoteVideoLagged { skipped }) => {
-                            tracing::debug!(
-                                %session_id,
-                                skipped,
-                                "remote video source lagged; continuing at the retained media boundary"
-                            );
-                            continue;
-                        }
-                        Err(error) => {
-                            let _ = source_cancel_tx.send(true);
-                            break Err(error.to_string());
-                        }
-                    },
-                };
-                if !found_sequence_parameter_set {
-                    found_sequence_parameter_set = contains_nal_type(&sample.data, 7);
-                    if !found_sequence_parameter_set {
-                        continue;
-                    }
-                }
-                match decoder_input.try_send(sample.data) {
-                    Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
-                    Err(mpsc::error::TrySendError::Closed(_)) => break Ok(()),
-                }
-            };
-            if result.is_ok() {
-                let _ = source_return_tx.send(source);
-            }
-            result
-        });
-
-        let decoder_cancel_tx = cancel_tx.clone();
-        let decoder_task = tokio::spawn(async move {
-            let result = decoder_worker
-                .wait()
-                .await
-                .map_err(|error| format!("decoder worker failed: {error}"));
-            let _ = decoder_cancel_tx.send(true);
-            result
-        });
-
-        let mut output_cancel = cancel_rx;
-        let frame_output = self.output.clone();
-        let decoder_health = self.codecs.clone();
-        let frame_output_task = tokio::spawn(async move {
-            loop {
-                let frame = tokio::select! {
-                    biased;
-                    _ = output_cancel.changed() => return Ok::<(), String>(()),
-                    frame = decoder_output.recv() => match frame {
-                        Some(Ok(frame)) => frame,
-                        Some(Err(error)) => {
-                            return Err(format!("failed to decode remote video: {error}"));
-                        }
-                        None => return Ok(()),
-                    },
-                };
-                if matches!(decoder_health.snapshot().decode, DirectionState::RestartRequired(_)) {
-                    return Ok(());
-                }
-                frame_output.publish(Update::RemoteFrame { session_id, binding, frame });
-            }
-        });
-
-        let pipeline_output = self.output.clone();
-        let child_aborts = vec![
-            source_task.abort_handle(),
-            decoder_task.abort_handle(),
-            frame_output_task.abort_handle(),
-        ];
-        let supervisor_aborts = child_aborts.clone();
-        let task = tokio::spawn(async move {
-            let failure = AssertUnwindSafe(async move {
-                let mut child_guard = ChildTaskGuard::new(supervisor_aborts);
-                let (source, decoder, frame_output) =
-                    tokio::join!(source_task, decoder_task, frame_output_task);
-                child_guard.disarm();
-                [
-                    task_failure("remote video source", source),
-                    task_failure("decoder", decoder),
-                    task_failure("decoded-frame output", frame_output),
-                ]
-                .into_iter()
-                .flatten()
-                .next()
-            })
-            .catch_unwind()
-            .await
-            .unwrap_or_else(|_| Some("remote media pipeline supervisor panicked".into()));
-            let state = failure.map(RemoteState::Failed).unwrap_or(RemoteState::Inactive);
-            pipeline_output.publish(Update::RemoteState { session_id, state });
-        });
-
         self.pipelines.insert(
             session_id,
-            Pipeline {
+            Pipeline::spawn(
+                session_id,
                 binding,
-                worker: OwnedPipeline {
-                    stop: Some(cancel_tx),
-                    task: Some(task),
-                    children: child_aborts,
-                },
-                source_return,
-            },
+                source,
+                decoder,
+                decoder_config,
+                self.codecs.clone(),
+                self.output.clone(),
+            ),
         );
         self.emit(Update::RemoteState { session_id, state: RemoteState::Active }).await;
         Ok(())

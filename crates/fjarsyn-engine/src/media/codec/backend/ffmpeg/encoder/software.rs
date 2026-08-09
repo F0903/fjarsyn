@@ -1,4 +1,4 @@
-use ffmpeg::util::format;
+use ffmpeg::util::{format, picture};
 use ffmpeg_next as ffmpeg;
 
 use super::{Encoder, Error, Result};
@@ -8,14 +8,15 @@ impl Encoder {
     pub(super) fn encode_software(
         &mut self,
         frame: &Frame,
-        width: i32,
-        height: i32,
         dst_w: u32,
         dst_h: u32,
         dst_format: format::Pixel,
+        force_keyframe: bool,
     ) -> Result<()> {
         let encoder = self.encoder.as_mut().unwrap();
         let mut input_frame = ffmpeg::frame::Video::empty();
+        let width = frame.size.width;
+        let height = frame.size.height;
 
         let pixels =
             frame.software_pixels().ok_or(Error::Conversion(ffmpeg::Error::InvalidData))?;
@@ -50,6 +51,9 @@ impl Encoder {
         }
 
         dst_frame.set_pts(Some(self.frame_count));
+        if force_keyframe {
+            dst_frame.set_kind(picture::Type::I);
+        }
         self.frame_count += 1;
 
         encoder.send_frame(&dst_frame).map_err(Error::Encode)

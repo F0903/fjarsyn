@@ -12,7 +12,7 @@ use super::super::{
 use crate::peer_session::{
     CloseReason, Error, LocalShareState, Phase, RemoteShareState, SessionState, ShareEpoch,
     ShareId,
-    media::{encoded_video_channel, remote_video_channel},
+    media::{KeyframeRequests, encoded_video_channel, remote_video_channel},
     negotiation,
     protocol::NegotiationSignal,
     rtc::{self, Peer},
@@ -40,6 +40,7 @@ pub(in crate::peer_session) fn spawn(
     let (snapshot_tx, snapshot_rx) = watch::channel(snapshot);
     let (encoded_video_tx, video_rx) = encoded_video_channel(config.media_capacity);
     let (active_video_tx, active_video_rx) = watch::channel(None);
+    let keyframe_requests = KeyframeRequests::default();
     let (remote_video_tx, initial_remote_video_rx) =
         remote_video_channel(config.remote_video_capacity);
     let (rtc_event_tx, rtc_event_rx) = mpsc::channel(config.command_capacity.max(8));
@@ -55,6 +56,7 @@ pub(in crate::peer_session) fn spawn(
         snapshot_rx,
         encoded_video_tx,
         active_video_rx,
+        keyframe_requests: keyframe_requests.clone(),
         remote_video_tx: remote_video_tx.clone(),
         initial_remote_video_rx: Arc::new(Mutex::new(Some(initial_remote_video_rx))),
         fatal_tx,
@@ -75,6 +77,7 @@ pub(in crate::peer_session) fn spawn(
         command_rx,
         video_rx,
         active_video_tx,
+        keyframe_requests,
         remote_video_tx,
         rtc_event_tx,
         rtc_event_rx,
@@ -114,6 +117,7 @@ pub(super) struct Runtime {
     pub(super) command_rx: mpsc::Receiver<Command>,
     pub(super) video_rx: mpsc::Receiver<crate::peer_session::media::OutboundVideoSample>,
     pub(super) active_video_tx: watch::Sender<Option<(ShareId, ShareEpoch)>>,
+    pub(super) keyframe_requests: KeyframeRequests,
     pub(super) remote_video_tx: broadcast::Sender<crate::peer_session::media::RemoteVideoSample>,
     pub(super) rtc_event_tx: mpsc::Sender<rtc::Event>,
     pub(super) rtc_event_rx: mpsc::Receiver<rtc::Event>,
@@ -220,7 +224,10 @@ impl Runtime {
                         None => self.terminal_reason = Some(CloseReason::ServiceShutdown),
                     }
                 }
-                tagged = self.video_rx.recv() => {
+                tagged = self.video_rx.recv(), if may_poll_outbound_video(
+                    self.state.phase(),
+                    self.disconnected_since,
+                ) => {
                     let Some(tagged) = tagged else { continue };
                     if self.local_share == (LocalShareState::Active {
                         share_id: tagged.share_id,
@@ -295,6 +302,10 @@ fn disconnect_grace_expired(since: Instant, now: Instant, grace: std::time::Dura
     now.duration_since(since) >= grace
 }
 
+fn may_poll_outbound_video(phase: Phase, disconnected_since: Option<Instant>) -> bool {
+    phase == Phase::Connected && disconnected_since.is_none()
+}
+
 fn reject_queued_session_commands(command_rx: &mut mpsc::Receiver<Command>) {
     command_rx.close();
     while let Ok(command) = command_rx.try_recv() {
@@ -317,6 +328,14 @@ mod tests {
             !disconnect_grace_expired(since, since + std::time::Duration::from_secs(4), grace,)
         );
         assert!(disconnect_grace_expired(since, since + grace, grace));
+    }
+
+    #[test]
+    fn outbound_video_is_retained_until_the_transport_is_connected() {
+        assert!(may_poll_outbound_video(Phase::Connected, None));
+        assert!(!may_poll_outbound_video(Phase::Connected, Some(Instant::now())));
+        assert!(!may_poll_outbound_video(Phase::Reconnecting, None));
+        assert!(!may_poll_outbound_video(Phase::Disconnecting, None));
     }
 
     #[tokio::test]

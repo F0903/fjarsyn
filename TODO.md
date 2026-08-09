@@ -13,18 +13,14 @@ Findings from the full architecture and maintainability scan on 2026-08-08.
 - [ ] Measure and tune the six-slot GPU frame pools under realistic load.
   - Record committed GPU memory, native handles, pool-pressure drops and draw-completion latency at 1080p and 4K with concurrent local/remote producers.
   - Use those measurements to confirm or adjust the fixed capacity and the desktop's 32-import cache target without weakening nonblocking backpressure.
-- [ ] Make encoded-video loss explicitly keyframe-aware.
-  - Never silently discard an arbitrary encoded H.264 frame and continue publishing dependent P-frames as if the stream were intact.
-  - Retain the WebRTC sender and consume RTCP loss feedback so the encoder can force a new IDR.
-  - After a discontinuity, withhold dependent input until the decoder has a valid SPS/PPS plus keyframe boundary.
-- [ ] Extract local and remote screen-share pipeline construction into real pipeline owners.
-  - Keep controllers focused on selection, bindings, durable state and reconciliation.
+- [ ] Extract local screen-share pipeline construction into a real pipeline owner.
+  - Keep its controller focused on selection, bindings, durable state and reconciliation; the remote controller already delegates construction and recovery to its pipeline owner.
   - Make capture teardown an exactly-once ownership transition; normal stop currently can schedule detached cleanup more than once for the same provider.
   - Isolate synchronous WGC/D3D/COM setup and teardown behind a dedicated capture host thread so a stalled driver call cannot pin a Tokio worker beyond the advertised deadline.
 - [ ] Introduce a validated `FrameLayout`/dimension boundary used by capture, codec and GPU-import paths.
   - Reject non-positive or excessive dimensions before casts or allocation.
   - Use checked pixel counts, exact plane sizes and strides for formats such as NV12, and explicit allocation ceilings.
-  - Drain all FFmpeg outputs per input, distinguish `EAGAIN`, EOF and terminal errors in both directions, and flush delayed output during shutdown.
+  - Complete explicit FFmpeg state machines: drain every decoder output per input, retry sends after `EAGAIN`, preserve terminal errors, and flush delayed encoder/decoder output during shutdown. Encoder packet draining already distinguishes `EAGAIN`/EOF from terminal receive failures.
   - Add codec contract tests for `EAGAIN`, multiple outputs, delayed output and terminal errors.
 - [ ] Propagate WGC capture-item closure and terminal capture failures into screen-share state instead of leaving an active but permanently frozen share.
 
@@ -71,9 +67,9 @@ Findings from the full architecture and maintainability scan on 2026-08-08.
   reset/recovery, bounded pool pressure, and CPU-upload/placeholder fallback. Also cover WGC
   resize/device loss/source closure, hardware codec scaling/fallback and
   repeated capture teardown.
-- [ ] Add focused screen-share controller/runtime tests for start rollback, pipeline failure, exact-once teardown and shutdown ordering.
+- [ ] Add focused screen-share controller/runtime tests for start rollback, pipeline failure, exact-once teardown, shutdown ordering, and remote discontinuity recovery with decoder replacement and old-output suppression.
 - [ ] Add full shell integration tests for `EngineAdapter`/coordinator failure and disposal of stale successful initialization owners.
-- [ ] Add peer-session integration tests proving live global/per-IP admission permits remain held and are released correctly, and that stale RTC callbacks cannot affect a replacement/restarted transport.
+- [ ] Add peer-session integration tests proving live global/per-IP admission permits remain held and are released correctly, stale RTC callbacks cannot affect a replacement/restarted transport, and outbound encoded samples remain bounded/backpressured across ICE recovery.
 
 ## Future features
 

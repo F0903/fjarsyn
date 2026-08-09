@@ -9,7 +9,7 @@ use super::{ActorInstanceId, Command, restart::Attachment};
 use crate::peer_session::{
     EncodedVideoSink, Error, LocalShareState, RemoteVideoSource, SessionId, SessionState,
     ShareEpoch, ShareId,
-    media::{OutboundVideoSample, RemoteVideoSample},
+    media::{KeyframeRequests, OutboundVideoSample, RemoteVideoSample},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +28,7 @@ pub(in crate::peer_session) struct Handle {
     pub(super) snapshot_rx: watch::Receiver<SessionState>,
     pub(super) encoded_video_tx: mpsc::Sender<OutboundVideoSample>,
     pub(super) active_video_rx: watch::Receiver<Option<(ShareId, ShareEpoch)>>,
+    pub(super) keyframe_requests: KeyframeRequests,
     pub(super) remote_video_tx: broadcast::Sender<RemoteVideoSample>,
     pub(super) initial_remote_video_rx: Arc<Mutex<Option<broadcast::Receiver<RemoteVideoSample>>>>,
     pub(super) fatal_tx: watch::Sender<Option<Control>>,
@@ -61,6 +62,7 @@ impl Handle {
                     epoch,
                     self.encoded_video_tx.clone(),
                     self.active_video_rx.clone(),
+                    self.keyframe_requests.clone(),
                 ))
             }
             _ => Err(Error::ShareMismatch(share_id)),

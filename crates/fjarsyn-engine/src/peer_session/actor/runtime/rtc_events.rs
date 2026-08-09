@@ -72,6 +72,7 @@ impl Runtime {
                             if self.state.phase() == Phase::Negotiating {
                                 self.fail("peer connection disconnected during negotiation".into());
                             } else if self.state.phase() == Phase::Connected {
+                                self.keyframe_requests.request();
                                 self.disconnected_since.get_or_insert_with(Instant::now);
                             }
                             Ok(())
@@ -140,6 +141,7 @@ impl Runtime {
                 if self.state.phase() == Phase::Negotiating {
                     self.fail("ICE disconnected during negotiation".into());
                 } else if self.state.phase() == Phase::Connected {
+                    self.keyframe_requests.request();
                     self.disconnected_since.get_or_insert_with(Instant::now);
                 }
                 Ok(())

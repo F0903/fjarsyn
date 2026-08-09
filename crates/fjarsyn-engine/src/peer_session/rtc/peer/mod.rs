@@ -10,6 +10,7 @@ mod ice_credentials;
 #[path = "peer.rs"]
 mod implementation;
 mod network_policy;
+mod sender_feedback;
 mod signaling;
 mod video;
 

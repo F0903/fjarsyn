@@ -36,6 +36,23 @@ impl DecoderInput {
         }
         self.sender.try_send(packet)
     }
+
+    /// Waits for bounded decoder-input capacity instead of discarding an
+    /// arbitrary encoded access unit when the worker is busy.
+    pub async fn send(&self, packet: Bytes) -> Result<(), mpsc::error::SendError<Bytes>> {
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(mpsc::error::SendError(packet));
+        }
+        let permit = match self.sender.reserve().await {
+            Ok(permit) => permit,
+            Err(_) => return Err(mpsc::error::SendError(packet)),
+        };
+        if !self.accepting.load(Ordering::Acquire) {
+            return Err(mpsc::error::SendError(packet));
+        }
+        permit.send(packet);
+        Ok(())
+    }
 }
 
 pub struct DecoderOutput {
@@ -81,6 +98,10 @@ impl DecoderSession {
         self.input.try_send(packet)
     }
 
+    pub async fn send(&self, packet: Bytes) -> Result<(), mpsc::error::SendError<Bytes>> {
+        self.input.send(packet).await
+    }
+
     pub async fn recv(&mut self) -> Option<Result<Arc<Frame>, WorkerError>> {
         self.output.recv().await
     }
@@ -99,5 +120,48 @@ impl DecoderSession {
 
     pub fn into_parts(self) -> DecoderSessionParts {
         DecoderSessionParts { input: self.input, output: self.output, worker: self.worker }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    use bytes::Bytes;
+    use tokio::sync::mpsc;
+
+    use super::DecoderInput;
+
+    #[tokio::test]
+    async fn awaited_send_applies_capacity_backpressure() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let input = DecoderInput::new(sender, Arc::new(AtomicBool::new(true)));
+        input.send(Bytes::from_static(b"first")).await.unwrap();
+
+        let blocked = tokio::spawn({
+            let input = input.clone();
+            async move { input.send(Bytes::from_static(b"second")).await }
+        });
+        tokio::task::yield_now().await;
+        assert!(!blocked.is_finished());
+
+        assert_eq!(receiver.recv().await.unwrap(), Bytes::from_static(b"first"));
+        blocked.await.unwrap().unwrap();
+        assert_eq!(receiver.recv().await.unwrap(), Bytes::from_static(b"second"));
+    }
+
+    #[tokio::test]
+    async fn awaited_send_rejects_a_stopped_worker() {
+        let accepting = Arc::new(AtomicBool::new(true));
+        let (sender, _receiver) = mpsc::channel(1);
+        let input = DecoderInput::new(sender, accepting.clone());
+        accepting.store(false, Ordering::Release);
+
+        let packet = Bytes::from_static(b"stale");
+        let error = input.send(packet.clone()).await.unwrap_err();
+        assert_eq!(error.0, packet);
     }
 }

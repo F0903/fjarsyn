@@ -20,6 +20,7 @@ pub(in crate::media::codec::tests) enum EncoderPlan {
     CallError,
     Block(BlockingGate),
     DropBlock(BlockingGate),
+    RecordKeyframeFlags(Arc<Mutex<Vec<bool>>>),
 }
 
 #[derive(Clone)]
@@ -73,7 +74,7 @@ impl BackendFactory for ScriptedBackendFactory {
 struct ScriptedEncoder(EncoderPlan);
 
 impl EncoderBackend for ScriptedEncoder {
-    fn encode(&mut self, _frame: &Frame) -> Result<Vec<Vec<u8>>, String> {
+    fn encode(&mut self, _frame: &Frame, force_keyframe: bool) -> Result<Vec<Vec<u8>>, String> {
         match &self.0 {
             EncoderPlan::Pass => Ok(vec![vec![1, 2, 3]]),
             EncoderPlan::CallError => Err("scripted encoder call failure".into()),
@@ -82,6 +83,10 @@ impl EncoderBackend for ScriptedEncoder {
                 Ok(vec![vec![4, 5, 6]])
             }
             EncoderPlan::DropBlock(_) => Ok(vec![vec![1, 2, 3]]),
+            EncoderPlan::RecordKeyframeFlags(calls) => {
+                calls.lock().unwrap().push(force_keyframe);
+                Ok(vec![vec![1, 2, 3]])
+            }
             EncoderPlan::CreateError | EncoderPlan::CreateBlock(_) => {
                 unreachable!("creation plan is handled by factory")
             }

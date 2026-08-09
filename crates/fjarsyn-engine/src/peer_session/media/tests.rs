@@ -4,8 +4,8 @@ use bytes::Bytes;
 use tokio::sync::watch;
 
 use super::{
-    EncodedVideoSample, EncodedVideoSink, RemoteVideoRead, RemoteVideoSample, RemoteVideoSource,
-    encoded_video_channel, remote_video_channel,
+    EncodedVideoSample, EncodedVideoSink, KeyframeRequests, RemoteVideoRead, RemoteVideoSample,
+    RemoteVideoSource, encoded_video_channel, remote_video_channel,
 };
 use crate::peer_session::{Error, SessionId, ShareEpoch, ShareId};
 
@@ -20,7 +20,14 @@ async fn outbound_sink_immutably_binds_share_and_epoch_at_enqueue() {
     let epoch = ShareEpoch::from_value(7);
     let (tx, mut rx) = encoded_video_channel(2);
     let (_active_tx, active_rx) = watch::channel(Some((share_id, epoch)));
-    let sink = EncodedVideoSink::new(session_id, share_id, epoch, tx, active_rx);
+    let sink = EncodedVideoSink::new(
+        session_id,
+        share_id,
+        epoch,
+        tx,
+        active_rx,
+        KeyframeRequests::default(),
+    );
 
     sink.send(sample(b"frame")).await.unwrap();
     let tagged = rx.recv().await.unwrap();
@@ -38,7 +45,15 @@ async fn revoked_sink_cannot_keep_a_new_share_backpressured() {
     let epoch_b = epoch_a.next().unwrap();
     let (tx, mut rx) = encoded_video_channel(1);
     let (active_tx, active_rx) = watch::channel(Some((share_a, epoch_a)));
-    let sink_a = EncodedVideoSink::new(session_id, share_a, epoch_a, tx.clone(), active_rx.clone());
+    let requests = KeyframeRequests::default();
+    let sink_a = EncodedVideoSink::new(
+        session_id,
+        share_a,
+        epoch_a,
+        tx.clone(),
+        active_rx.clone(),
+        requests.clone(),
+    );
 
     sink_a.send(sample(b"a-queued")).await.unwrap();
     let blocked_a = tokio::spawn({
@@ -52,7 +67,7 @@ async fn revoked_sink_cannot_keep_a_new_share_backpressured() {
     assert_eq!(sink_a.try_send(sample(b"a-stale")), Err(Error::MediaClosed));
 
     assert_eq!(rx.recv().await.unwrap().sample, sample(b"a-queued"));
-    let sink_b = EncodedVideoSink::new(session_id, share_b, epoch_b, tx, active_rx);
+    let sink_b = EncodedVideoSink::new(session_id, share_b, epoch_b, tx, active_rx, requests);
     sink_b.try_send(sample(b"b-current")).unwrap();
     assert_eq!(rx.recv().await.unwrap().sample, sample(b"b-current"));
 }
@@ -99,14 +114,11 @@ async fn remote_source_recovers_from_lag_without_losing_future_epoch_handoff() {
     tx.send(RemoteVideoSample { epoch: epoch_a, sample: sample(b"a-retained") }).unwrap();
     tx.send(RemoteVideoSample { epoch: epoch_b, sample: sample(b"b-bootstrap") }).unwrap();
 
-    assert!(matches!(
-        source.recv_for(epoch_a).await,
-        Err(Error::RemoteVideoLagged { skipped }) if skipped >= 1
-    ));
-    assert_eq!(
-        source.recv_for(epoch_a).await.unwrap(),
-        RemoteVideoRead::Sample(sample(b"a-retained"))
-    );
+    let RemoteVideoRead::Sample(retained) = source.recv_for(epoch_a).await.unwrap() else {
+        panic!("expected the retained current-epoch sample");
+    };
+    assert_eq!(retained.data, Bytes::from_static(b"a-retained"));
+    assert!(retained.starts_after_discontinuity());
     assert_eq!(
         source.recv_for(epoch_a).await.unwrap(),
         RemoteVideoRead::EpochAdvanced { next_epoch: epoch_b }
@@ -115,4 +127,41 @@ async fn remote_source_recovers_from_lag_without_losing_future_epoch_handoff() {
         source.recv_for(epoch_b).await.unwrap(),
         RemoteVideoRead::Sample(sample(b"b-bootstrap"))
     );
+}
+
+#[tokio::test]
+async fn remote_source_preserves_rtp_discontinuity_metadata() {
+    let epoch = ShareEpoch::FIRST;
+    let (tx, rx) = remote_video_channel(2);
+    let mut source = RemoteVideoSource::new(rx);
+    let discontinuous = EncodedVideoSample::received(
+        Bytes::from_static(b"bootstrap"),
+        Duration::from_millis(16),
+        true,
+    );
+
+    tx.send(RemoteVideoSample { epoch, sample: discontinuous.clone() }).unwrap();
+
+    assert_eq!(source.recv_for(epoch).await.unwrap(), RemoteVideoRead::Sample(discontinuous));
+}
+
+#[tokio::test]
+async fn broadcast_lag_marks_a_retained_future_epoch_sample() {
+    let epoch_a = ShareEpoch::FIRST;
+    let epoch_b = epoch_a.next().unwrap();
+    let (tx, rx) = remote_video_channel(1);
+    let mut source = RemoteVideoSource::new(rx);
+
+    tx.send(RemoteVideoSample { epoch: epoch_a, sample: sample(b"a-dropped") }).unwrap();
+    tx.send(RemoteVideoSample { epoch: epoch_b, sample: sample(b"b-retained") }).unwrap();
+
+    assert_eq!(
+        source.recv_for(epoch_a).await.unwrap(),
+        RemoteVideoRead::EpochAdvanced { next_epoch: epoch_b }
+    );
+    let RemoteVideoRead::Sample(retained) = source.recv_for(epoch_b).await.unwrap() else {
+        panic!("expected the retained future-epoch sample");
+    };
+    assert_eq!(retained.data, Bytes::from_static(b"b-retained"));
+    assert!(retained.starts_after_discontinuity());
 }

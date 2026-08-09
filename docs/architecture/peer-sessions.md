@@ -544,6 +544,15 @@ Control and messaging payloads are versioned and size-bounded. DTLS encrypts and
 
 Starting a screen share sends a control event and begins writing samples to the existing media track. Stopping sends a control event and stops writing samples. It does not create a call, renegotiate the track or create a new peer connection.
 
+Encoded H.264 access units are backpressured rather than discarded after
+encoding. The retained WebRTC sender continuously drains RTCP feedback; PLI
+and FIR packets become coalesced, rate-limited keyframe requests bound to the
+exact active share. Starting a share and recovering its transport also request
+a keyframe. The next encodable frame is forced to an IDR, and the encoder
+repeats SPS and PPS in-band so that the recovery access unit is independently
+decodable. Capture frames may still be dropped before encoding when bounded
+input is full; that does not break an already encoded reference chain.
+
 Each `ShareStarted`/`ShareStopped` control event carries both the public
 `ShareId` and a non-zero, monotonically increasing `ShareEpoch` for that
 sender's session direction. An `EncodedVideoSink` is an immutable capability
@@ -564,10 +573,17 @@ queue. If media for the next share beats its ordered data-channel control event,
 the old decoder pipeline parks without consuming it. Control reconciliation
 then replaces the exact `(ShareId, ShareEpoch)` binding and hands the retained
 first sample to the new decoder. Decoded frames and local previews retain the
-same exact binding through UI projection. SPS gating remains an independent
-H.264 bootstrap check, not a share-identity boundary. SRTP authenticates the
-RTP header and media; the epoch itself is non-secret metadata and is not
-assumed to be encrypted.
+same exact binding through UI projection.
+
+RTP packet loss and bounded broadcast-ring overwrite are carried forward as a
+discontinuity marker on the first retained access unit. A discontinuity stops
+publication from the old decoder, shuts that decoder down, and opens a clean
+one. Decoder input is capacity-backpressured, and dependent access units remain
+withheld until one well-formed Annex-B access unit contains SPS, PPS and IDR
+together. Malformed access units re-arm the same fail-closed recovery path.
+This bootstrap check is independent of the share-identity boundary. SRTP
+authenticates the RTP header and media; the epoch itself is non-secret metadata
+and is not assumed to be encrypted.
 
 ## UI model
 
@@ -653,10 +669,12 @@ compatibility into the new architecture.
   wrong, replayed or out-of-order transport generations fail closed.
 - Restart admission tests require the exact active session, peer and currently
   trusted key and prove that recovery cannot create a session or user prompt.
-- Two-peer restart tests preserve the same session ID, actor-owned peer
-  connection, data channels, media tracks, share IDs and engine-owned
-  screen-share pipelines while application commands are gated, inbound frames
-  are bounded, and video samples are dropped during recovery.
+- Two-peer restart verification must preserve the same session ID, actor-owned
+  peer connection, data channels, media tracks, share IDs and engine-owned
+  screen-share pipelines while application commands are gated and inbound
+  frames remain bounded. It must also prove that outbound encoded samples stay
+  queued and propagate backpressure, rather than being consumed and discarded,
+  during recovery.
 - Transport classification tests restart ICE failure but treat closed ICE or
   peer connections, DTLS failure/closure and required-channel closure as
   terminal.
@@ -677,6 +695,11 @@ compatibility into the new architecture.
   encode/decode quarantine, persistent restart-required projection, suppression
   of late output and participation in one shared three-second engine-shutdown
   deadline.
+- Media-continuity tests cover coalesced force-IDR requests, repeated SPS/PPS
+  recovery headers, encoded-output backpressure, RTP and broadcast-loss
+  propagation, and strict decoder bootstrap gating. Focused screen-share
+  pipeline verification must additionally prove decoder replacement and old
+  output suppression before post-loss publication.
 - Screen-share service verification must cover start/stop transaction rollback,
   exact session/share binding, read-only projection output, and shutdown before
   the codec phase after codec cancellation has been prepared.

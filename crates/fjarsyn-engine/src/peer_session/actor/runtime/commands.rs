@@ -165,6 +165,7 @@ impl Runtime {
         .await?;
         self.last_local_share_epoch = Some(epoch);
         self.local_share = LocalShareState::Active { share_id, epoch };
+        self.keyframe_requests.activate(share_id, epoch);
         self.active_video_tx.send_replace(Some((share_id, epoch)));
         self.publish_snapshot().await;
         self.emit(Event::LocalShareChanged {
@@ -189,6 +190,7 @@ impl Runtime {
         })
         .await?;
         self.local_share = LocalShareState::Inactive;
+        self.keyframe_requests.deactivate(share_id, epoch);
         self.active_video_tx.send_replace(None);
         self.publish_snapshot().await;
         self.emit(Event::LocalShareChanged {

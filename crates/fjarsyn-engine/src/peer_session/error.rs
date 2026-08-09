@@ -50,8 +50,6 @@ pub enum Error {
     Protocol(String),
     #[error("peer-session media input has closed")]
     MediaClosed,
-    #[error("remote video consumer fell {skipped} samples behind")]
-    RemoteVideoLagged { skipped: u64 },
     #[error("peer-session shutdown timed out")]
     ShutdownTimeout,
 }

@@ -26,6 +26,7 @@ impl Runtime {
 
         let deadline = Instant::now() + self.config.ice_restart_timeout;
         let generation = self.restart.begin_local(deadline, allowed)?;
+        self.keyframe_requests.request();
         self.apply(state_machine::Input::TransportLost).await?;
         self.application_data.reset_readiness();
         self.disconnected_since = None;
@@ -104,7 +105,10 @@ impl Runtime {
         let admission = if newly_started {
             let deadline = Instant::now() + self.config.ice_restart_timeout;
             match self.restart.begin_remote(generation, deadline) {
-                Ok(()) => self.apply(state_machine::Input::TransportLost).await,
+                Ok(()) => {
+                    self.keyframe_requests.request();
+                    self.apply(state_machine::Input::TransportLost).await
+                }
                 Err(error) => Err(error),
             }
         } else {

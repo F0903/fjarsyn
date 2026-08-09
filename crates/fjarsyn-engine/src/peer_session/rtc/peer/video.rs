@@ -81,15 +81,24 @@ impl Peer {
                 }
                 builder.push(packet);
                 while let Some(sample) = builder.pop() {
+                    let starts_after_discontinuity = media_packets_were_dropped(
+                        sample.prev_dropped_packets,
+                        sample.prev_padding_packets,
+                    );
                     let _ = remote_video_tx.send(RemoteVideoSample {
                         epoch: active_epoch.expect("an accepted RTP packet establishes an epoch"),
-                        sample: EncodedVideoSample { data: sample.data, duration: sample.duration },
+                        sample: EncodedVideoSample::received(
+                            sample.data,
+                            sample.duration,
+                            starts_after_discontinuity,
+                        ),
                     });
                 }
             }
         });
 
         let pc = Arc::downgrade(&self.pc);
+        let operation_timeout = self.operation_timeout;
         self.spawn_child("picture-loss feedback", async move {
             let sender = transceiver.sender().await;
             let parameters = sender.get_parameters().await;
@@ -100,8 +109,18 @@ impl Peer {
                 let Some(pc) = pc.upgrade() else { break };
                 let pli: Box<dyn webrtc::rtcp::packet::Packet + Send + Sync> =
                     Box::new(PictureLossIndication { sender_ssrc, media_ssrc });
-                if pc.write_rtcp(&[pli]).await.is_err() {
-                    break;
+                match tokio::time::timeout(operation_timeout, pc.write_rtcp(&[pli])).await {
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => {
+                        // A temporary transport-path failure must not permanently
+                        // disable recovery feedback. The Peer-owned task is
+                        // aborted during shutdown, and a later tick can use a
+                        // repaired ICE path.
+                        tracing::debug!(%error, "failed to send periodic picture-loss feedback");
+                    }
+                    Err(error) => {
+                        tracing::debug!(%error, "timed out sending periodic picture-loss feedback");
+                    }
                 }
             }
         });
@@ -141,6 +160,10 @@ impl Peer {
     }
 }
 
+fn media_packets_were_dropped(dropped_packets: u16, padding_packets: u16) -> bool {
+    dropped_packets.saturating_sub(padding_packets) != 0
+}
+
 pub(super) fn claim_remote_video_track(
     already_claimed: &mut bool,
     mime_type: &str,
@@ -155,4 +178,17 @@ pub(super) fn claim_remote_video_track(
     }
     *already_claimed = true;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::media_packets_were_dropped;
+
+    #[test]
+    fn only_non_padding_sample_builder_drops_break_media_continuity() {
+        assert!(!media_packets_were_dropped(0, 0));
+        assert!(!media_packets_were_dropped(3, 3));
+        assert!(!media_packets_were_dropped(3, 4));
+        assert!(media_packets_were_dropped(4, 3));
+    }
 }

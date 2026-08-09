@@ -1,4 +1,7 @@
-use ffmpeg::{codec, util::format};
+use ffmpeg::{
+    codec,
+    util::{format, picture},
+};
 use ffmpeg_next as ffmpeg;
 use windows::core::Interface;
 
@@ -87,6 +90,7 @@ impl Encoder {
         height: i32,
         dst_w: u32,
         dst_h: u32,
+        force_keyframe: bool,
     ) -> Result<()> {
         let encoder = self.encoder.as_mut().unwrap();
         let mut input_frame = ffmpeg::frame::Video::empty();
@@ -174,6 +178,9 @@ impl Encoder {
         }
 
         input_frame.set_pts(Some(self.frame_count));
+        if force_keyframe {
+            input_frame.set_kind(picture::Type::I);
+        }
         self.frame_count += 1;
 
         encoder.send_frame(&input_frame).map_err(Error::Encode)

@@ -28,6 +28,7 @@ pub(in crate::media::codec) struct Supervisor {
     output: mpsc::Sender<EncodedFrame>,
     thread: Thread,
     publishing: Arc<AtomicBool>,
+    keyframe_requested: Arc<AtomicBool>,
     started: oneshot::Sender<Result<(), Error>>,
 }
 
@@ -54,6 +55,13 @@ enum CallResult {
     Directive(WorkerDirective),
 }
 
+enum PublishResult {
+    Sent,
+    Stop,
+    Terminated,
+    Directive(WorkerDirective),
+}
+
 impl Supervisor {
     pub(in crate::media::codec) async fn start(
         state: Arc<State>,
@@ -63,6 +71,7 @@ impl Supervisor {
             state.reserve_worker(Direction::Encode)?.into_parts();
         let (input_tx, input) = mpsc::channel(ENCODER_INPUT_CAPACITY);
         let (output, output_rx) = mpsc::channel(ENCODER_OUTPUT_CAPACITY);
+        let keyframe_requested = Arc::new(AtomicBool::new(false));
         let (completion_tx, completion_rx) = watch::channel(WorkerCompletion::Running);
         let thread = match Thread::spawn(
             state.clone(),
@@ -80,20 +89,35 @@ impl Supervisor {
         };
 
         let (started, started_rx) = oneshot::channel();
-        let supervisor =
-            Self { directive, input, output, thread, publishing: publishing.clone(), started };
+        let supervisor = Self {
+            directive,
+            input,
+            output,
+            thread,
+            publishing: publishing.clone(),
+            keyframe_requested: keyframe_requested.clone(),
+            started,
+        };
         state.spawn_supervisor(id, Direction::Encode, supervisor.run()).await;
 
         started_rx.await.unwrap_or(Err(Error::ShuttingDown))?;
         Ok(EncoderSession::new(
-            EncoderInput::new(input_tx, accepting),
+            EncoderInput::new(input_tx, accepting, keyframe_requested),
             EncoderOutput::new(output_rx, completion_rx.clone(), publishing),
             Worker::new(id, &state, completion_rx),
         ))
     }
 
     async fn run(self) {
-        let Self { mut directive, mut input, output, thread, publishing, started } = self;
+        let Self {
+            mut directive,
+            mut input,
+            output,
+            thread,
+            publishing,
+            keyframe_requested,
+            started,
+        } = self;
         let (thread_commands, mut ready, thread_lifecycle) = thread.into_components();
         let mut commands = Some(thread_commands);
         let mut lifecycle = Some(thread_lifecycle);
@@ -225,8 +249,9 @@ impl Supervisor {
             let Some(duration) = frame.duration else {
                 continue;
             };
+            let force_keyframe = keyframe_requested.swap(false, Ordering::AcqRel);
             let (reply, mut response) = oneshot::channel();
-            let command = Command::Encode { frame, reply };
+            let command = Command::Encode { frame, force_keyframe, reply };
             let sent = tokio::select! {
                 biased;
                 changed = directive.changed() => {
@@ -271,9 +296,58 @@ impl Supervisor {
             match call {
                 CallResult::Reply(Ok(nal_units)) => {
                     if !nal_units.is_empty() && publishing.load(Ordering::Acquire) {
-                        match output.try_send(EncodedFrame { nal_units, duration }) {
-                            Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}
-                            Err(mpsc::error::TrySendError::Closed(_)) => break (Ok(()), true),
+                        let encoded_frame = EncodedFrame { nal_units, duration };
+                        let publish = loop {
+                            let reservation = tokio::select! {
+                                biased;
+                                changed = directive.changed() => {
+                                    let directive = if changed.is_ok() {
+                                        directive.borrow().clone()
+                                    } else {
+                                        WorkerDirective::ServiceShutdown
+                                    };
+                                    Err(PublishResult::Directive(directive))
+                                },
+                                result = output.reserve() => {
+                                    result.map_err(|_| PublishResult::Stop)
+                                },
+                                _ = lifecycle
+                                    .as_ref()
+                                    .expect("encoder lifecycle present")
+                                    .wait_until_thread_finished() => {
+                                        Err(PublishResult::Terminated)
+                                    },
+                            };
+                            match reservation {
+                                Ok(permit) => {
+                                    permit.send(encoded_frame);
+                                    break PublishResult::Sent;
+                                }
+                                Err(PublishResult::Directive(WorkerDirective::Run)) => continue,
+                                Err(result) => break result,
+                            }
+                        };
+                        match publish {
+                            PublishResult::Sent => {}
+                            PublishResult::Stop
+                            | PublishResult::Directive(WorkerDirective::Stop)
+                            | PublishResult::Directive(WorkerDirective::ServiceShutdown) => {
+                                break (Ok(()), true);
+                            }
+                            PublishResult::Directive(WorkerDirective::Poisoned(poison)) => {
+                                break (Err(WorkerError::RestartRequired(poison)), false);
+                            }
+                            PublishResult::Directive(WorkerDirective::Run) => {
+                                unreachable!("run directives are retried while publishing")
+                            }
+                            PublishResult::Terminated => {
+                                let poison = state.poison(
+                                    Direction::Encode,
+                                    Operation::Encode,
+                                    PoisonReason::WorkerTerminated,
+                                );
+                                break (Err(WorkerError::RestartRequired(poison)), false);
+                            }
                         }
                     }
                 }

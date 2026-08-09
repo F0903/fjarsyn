@@ -22,14 +22,16 @@ use crate::media::{
 pub struct EncoderInput {
     sender: mpsc::Sender<Arc<Frame>>,
     accepting: Arc<AtomicBool>,
+    keyframe_requested: Arc<AtomicBool>,
 }
 
 impl EncoderInput {
     pub(in crate::media::codec) fn new(
         sender: mpsc::Sender<Arc<Frame>>,
         accepting: Arc<AtomicBool>,
+        keyframe_requested: Arc<AtomicBool>,
     ) -> Self {
-        Self { sender, accepting }
+        Self { sender, accepting, keyframe_requested }
     }
 
     pub fn try_send(&self, frame: Arc<Frame>) -> Result<(), mpsc::error::TrySendError<Arc<Frame>>> {
@@ -37,6 +39,11 @@ impl EncoderInput {
             return Err(mpsc::error::TrySendError::Closed(frame));
         }
         self.sender.try_send(frame)
+    }
+
+    /// Coalesces a request to encode the next encodable frame as a keyframe.
+    pub fn request_keyframe(&self) {
+        self.keyframe_requested.store(true, Ordering::Release);
     }
 }
 
@@ -87,6 +94,11 @@ impl EncoderSession {
 
     pub fn try_send(&self, frame: Arc<Frame>) -> Result<(), mpsc::error::TrySendError<Arc<Frame>>> {
         self.input.try_send(frame)
+    }
+
+    /// Coalesces a request to encode the next encodable frame as a keyframe.
+    pub fn request_keyframe(&self) {
+        self.input.request_keyframe();
     }
 
     pub async fn recv(&mut self) -> Option<Result<EncodedFrame, WorkerError>> {

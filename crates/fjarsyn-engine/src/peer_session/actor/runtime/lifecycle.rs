@@ -17,6 +17,7 @@ impl Runtime {
                     self.rtc_event_tx.clone(),
                     self.rtc_fatal_tx.clone(),
                     self.remote_video_tx.clone(),
+                    self.keyframe_requests.clone(),
                 )
                 .await?,
             );

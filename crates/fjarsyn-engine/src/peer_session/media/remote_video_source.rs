@@ -6,13 +6,13 @@ use crate::peer_session::{Error, ShareEpoch};
 /// Result of reading the session-wide remote media stream for one share epoch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RemoteVideoRead {
+    /// The next current-epoch access unit. Its discontinuity marker combines
+    /// RTP depacketization loss with any broadcast-ring overwrite.
     Sample(EncodedVideoSample),
     /// Media for a later share arrived before its ordered control event was
     /// projected. The first later sample remains retained in the source so the
     /// next decoder can consume its SPS/PPS/IDR boundary.
-    EpochAdvanced {
-        next_epoch: ShareEpoch,
-    },
+    EpochAdvanced { next_epoch: ShareEpoch },
 }
 
 /// One depacketized remote sample carrying its authenticated RTP media epoch.
@@ -27,11 +27,15 @@ pub(in crate::peer_session) struct RemoteVideoSample {
 pub(crate) struct RemoteVideoSource {
     rx: broadcast::Receiver<RemoteVideoSample>,
     pending: Option<RemoteVideoSample>,
+    /// A broadcast overwrite occurred before the next retained sample. Keep
+    /// this sticky across stale samples and epoch handoff until it can be
+    /// attached to the first sample that a decoder may consume.
+    discontinuous: bool,
 }
 
 impl RemoteVideoSource {
     pub(in crate::peer_session) fn new(rx: broadcast::Receiver<RemoteVideoSample>) -> Self {
-        Self { rx, pending: None }
+        Self { rx, pending: None, discontinuous: false }
     }
 
     /// Returns the next encoded sample belonging to exactly `epoch`.
@@ -50,13 +54,24 @@ impl RemoteVideoSource {
                         return Err(Error::MediaClosed);
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        return Err(Error::RemoteVideoLagged { skipped });
+                        self.discontinuous = true;
+                        tracing::debug!(
+                            skipped,
+                            "remote video source lagged; marking retained media discontinuous"
+                        );
+                        continue;
                     }
                 },
             };
             match tagged.epoch.cmp(&epoch) {
                 std::cmp::Ordering::Less => {}
-                std::cmp::Ordering::Equal => return Ok(RemoteVideoRead::Sample(tagged.sample)),
+                std::cmp::Ordering::Equal => {
+                    let mut sample = tagged.sample;
+                    if std::mem::take(&mut self.discontinuous) {
+                        sample.mark_discontinuous();
+                    }
+                    return Ok(RemoteVideoRead::Sample(sample));
+                }
                 std::cmp::Ordering::Greater => {
                     let next_epoch = tagged.epoch;
                     self.pending = Some(tagged);

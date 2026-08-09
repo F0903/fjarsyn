@@ -258,6 +258,7 @@ impl Controller {
         let mut capture_cancel = cancel_rx.clone();
         let capture_cancel_tx = cancel_tx.clone();
         let capture_output = self.output.clone();
+        let keyframe_requests = sink.clone();
         let capture_task = tokio::spawn(async move {
             loop {
                 let frame = tokio::select! {
@@ -278,6 +279,9 @@ impl Controller {
                         binding: binding.media(),
                         frame: frame.clone(),
                     });
+                }
+                if keyframe_requests.take_keyframe_request() {
+                    encoder_input.request_keyframe();
                 }
                 match encoder_input.try_send(frame) {
                     Ok(()) | Err(mpsc::error::TrySendError::Full(_)) => {}

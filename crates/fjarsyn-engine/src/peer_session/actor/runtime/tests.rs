@@ -10,7 +10,7 @@ use crate::{
     identity::PeerId,
     peer_session::{
         LocalShareState, Phase, RemoteShareState, SessionId, SessionState, ShareEpoch,
-        media::{encoded_video_channel, remote_video_channel},
+        media::{KeyframeRequests, encoded_video_channel, remote_video_channel},
     },
 };
 
@@ -39,6 +39,7 @@ async fn first_remote_video_source_keeps_samples_sent_before_subscription() {
         snapshot_rx,
         encoded_video_tx,
         active_video_rx,
+        keyframe_requests: KeyframeRequests::default(),
         remote_video_tx: remote_video_tx.clone(),
         initial_remote_video_rx: Arc::new(Mutex::new(Some(initial_remote_video_rx))),
         fatal_tx,
@@ -87,6 +88,7 @@ async fn fatal_control_bypasses_a_full_session_command_queue() {
         snapshot_rx,
         encoded_video_tx,
         active_video_rx,
+        keyframe_requests: KeyframeRequests::default(),
         remote_video_tx,
         initial_remote_video_rx: Arc::new(Mutex::new(Some(initial_remote_video_rx))),
         fatal_tx,
@@ -124,6 +126,7 @@ async fn shutdown_control_bypasses_a_full_session_command_queue() {
         snapshot_rx,
         encoded_video_tx,
         active_video_rx,
+        keyframe_requests: KeyframeRequests::default(),
         remote_video_tx,
         initial_remote_video_rx: Arc::new(Mutex::new(Some(initial_remote_video_rx))),
         fatal_tx,
@@ -162,6 +165,7 @@ async fn trust_revocation_bypasses_a_full_session_command_queue() {
         snapshot_rx,
         encoded_video_tx,
         active_video_rx,
+        keyframe_requests: KeyframeRequests::default(),
         remote_video_tx,
         initial_remote_video_rx: Arc::new(Mutex::new(Some(initial_remote_video_rx))),
         fatal_tx,
