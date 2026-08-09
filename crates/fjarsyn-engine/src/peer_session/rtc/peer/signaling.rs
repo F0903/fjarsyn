@@ -165,6 +165,7 @@ impl Peer {
         credentials: IceCredentials,
     ) -> Result<(), Error> {
         self.require_generation(generation)?;
+        self.network_policy.validate_remote_sdp(&description.sdp)?;
         let extension_id = self.validate_share_epoch_extension(&description.sdp)?;
         rtc_operation(self.operation_timeout, self.pc.set_remote_description(description)).await?;
         self.share_epoch_extension_id = Some(extension_id);
@@ -204,6 +205,7 @@ impl Peer {
                 "local ICE candidate used the wrong username fragment".into(),
             ));
         }
+        self.network_policy.validate_candidate(&candidate.candidate)?;
         candidate.username_fragment = Some(expected.to_owned());
         Ok(candidate)
     }
@@ -229,6 +231,7 @@ impl Peer {
                 "remote ICE candidate used the wrong username fragment".into(),
             ));
         }
+        self.network_policy.validate_candidate(&candidate.candidate)?;
         if self.remote_candidates_received >= self.max_candidates_per_generation {
             return Err(Error::Protocol(
                 "too many ICE candidates for one transport generation".into(),

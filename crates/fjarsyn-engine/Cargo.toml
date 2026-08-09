@@ -35,3 +35,4 @@ uuid = { workspace = true }
 webrtc = "0.14"
 wgpu = { workspace = true }
 windows = { workspace = true }
+zeroize = { workspace = true }

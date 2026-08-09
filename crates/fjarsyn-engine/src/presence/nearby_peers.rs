@@ -4,18 +4,18 @@ use super::NearbyPeer;
 use crate::identity::PeerId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Snapshot {
+pub struct NearbyPeers {
     revision: u64,
     peers: Arc<[NearbyPeer]>,
 }
 
-impl Default for Snapshot {
+impl Default for NearbyPeers {
     fn default() -> Self {
         Self { revision: 0, peers: Arc::from([]) }
     }
 }
 
-impl Snapshot {
+impl NearbyPeers {
     pub(super) fn new(revision: u64, peers: Arc<[NearbyPeer]>) -> Self {
         Self { revision, peers }
     }

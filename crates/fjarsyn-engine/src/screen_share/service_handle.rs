@@ -1,6 +1,6 @@
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use super::{Command, Config, Error, Event, Selection, Snapshot};
+use super::{Command, Config, Error, Event, Selection, Shares};
 use crate::{media::capture::PlatformItem, peer_session::SessionId};
 
 /// Cloneable interface to the hosted screen-sharing capability.
@@ -8,7 +8,7 @@ use crate::{media::capture::PlatformItem, peer_session::SessionId};
 pub struct ServiceHandle {
     command_tx: mpsc::Sender<Command>,
     config_tx: watch::Sender<Config>,
-    snapshot_rx: watch::Receiver<Snapshot>,
+    snapshot_rx: watch::Receiver<Shares>,
     event_tx: broadcast::Sender<Event>,
 }
 
@@ -16,18 +16,18 @@ impl ServiceHandle {
     pub(super) fn new(
         command_tx: mpsc::Sender<Command>,
         config_tx: watch::Sender<Config>,
-        snapshot_rx: watch::Receiver<Snapshot>,
+        snapshot_rx: watch::Receiver<Shares>,
         event_tx: broadcast::Sender<Event>,
     ) -> Self {
         Self { command_tx, config_tx, snapshot_rx, event_tx }
     }
 
-    pub fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> Shares {
         self.snapshot_rx.borrow().clone()
     }
 
     /// Subscribes to durable screen-share state and latest-frame updates.
-    pub fn subscribe(&self) -> watch::Receiver<Snapshot> {
+    pub fn subscribe(&self) -> watch::Receiver<Shares> {
         self.snapshot_rx.clone()
     }
 

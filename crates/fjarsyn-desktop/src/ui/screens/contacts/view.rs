@@ -17,7 +17,10 @@ const FINGERPRINT_CONFIRMATION: &str =
     "I compared the entire fingerprint over an independent trusted channel.";
 
 impl Screen {
-    pub(super) fn render_view<'a>(&'a self, context: Context<'a>) -> Element<'a, Message> {
+    pub(in crate::ui::screens) fn render_view<'a>(
+        &'a self,
+        context: Context<'a>,
+    ) -> Element<'a, Message> {
         let mut content = column![self.view_header()].spacing(30);
 
         if self.show_add_form {

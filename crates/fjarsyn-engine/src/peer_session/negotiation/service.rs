@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::{Connection, Limits, SessionConnectionContext};
 use crate::{
     identity::{LocalPeerIdentity, PeerId},
-    peer_session::{EndpointResolver, Error, SessionId, TrustedPeerResolver},
+    peer_session::{EndpointResolver, Error, NetworkScope, SessionId, TrustedPeerResolver},
 };
 
 /// Resolves fresh discovery hints and opens an authenticated, identity-pinned
@@ -16,6 +16,7 @@ pub(in crate::peer_session) struct Service {
     trusted_peers: Arc<dyn TrustedPeerResolver>,
     endpoints: Arc<dyn EndpointResolver>,
     limits: Limits,
+    network_scope: NetworkScope,
 }
 
 impl std::fmt::Debug for Service {
@@ -24,6 +25,7 @@ impl std::fmt::Debug for Service {
             .debug_struct("Service")
             .field("local_peer_id", &self.local_peer_id)
             .field("max_endpoint_attempts", &self.limits.max_endpoint_attempts)
+            .field("network_scope", &self.network_scope)
             .finish_non_exhaustive()
     }
 }
@@ -35,8 +37,9 @@ impl Service {
         trusted_peers: Arc<dyn TrustedPeerResolver>,
         endpoints: Arc<dyn EndpointResolver>,
         limits: Limits,
+        network_scope: NetworkScope,
     ) -> Self {
-        Self { local_peer_id, local_identity, trusted_peers, endpoints, limits }
+        Self { local_peer_id, local_identity, trusted_peers, endpoints, limits, network_scope }
     }
 
     pub(in crate::peer_session) async fn connect(
@@ -55,6 +58,7 @@ impl Service {
         }
         Connection::connect_from_hints(
             &endpoint_hints,
+            self.network_scope,
             SessionConnectionContext {
                 session_id,
                 local_peer_id: self.local_peer_id.clone(),

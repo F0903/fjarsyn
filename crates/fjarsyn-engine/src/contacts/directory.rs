@@ -16,8 +16,8 @@ const MAX_CONTACT_NAME_BYTES: usize = 128;
 static NEXT_PROJECTION_SOURCE_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Atomically captured contact projection. The source ID identifies the
-/// originating directory generation, while revisions increase whenever that
-/// generation's resolver cache is successfully replaced.
+/// originating directory instance, while revisions increase whenever that
+/// instance's resolver cache is successfully replaced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Projection {
     pub contacts: Arc<Vec<Contact>>,

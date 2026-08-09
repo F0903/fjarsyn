@@ -1,5 +1,5 @@
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub(crate) enum Error {
     #[error("signaling port cannot be zero")]
     InvalidSignalingPort,
     #[error("mDNS instance name cannot be empty")]

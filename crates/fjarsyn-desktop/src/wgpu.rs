@@ -1,15 +1,19 @@
 //! Process-wide wgpu backend and power-preference configuration.
 
-use fjarsyn_engine::config::PowerPref;
+use crate::settings::PowerPreference;
 
-pub(super) fn apply_wgpu_power_pref(power_pref: PowerPref) {
+pub(super) fn apply_wgpu_power_preference(power_preference: PowerPreference) {
     // SAFETY: application startup sets process environment before tracing,
     // Iced, or any application-owned worker threads are started.
     unsafe {
-        match power_pref {
-            PowerPref::Low => std::env::set_var("WGPU_POWER_PREF", "low"),
-            PowerPref::Max => std::env::set_var("WGPU_POWER_PREF", "high"),
-        }
+        std::env::set_var("WGPU_POWER_PREF", wgpu_power_preference(power_preference));
+    }
+}
+
+fn wgpu_power_preference(power_preference: PowerPreference) -> &'static str {
+    match power_preference {
+        PowerPreference::LowPower => "low",
+        PowerPreference::HighPerformance => "high",
     }
 }
 
@@ -28,5 +32,16 @@ fn configure_windows_default_wgpu_backend() {
         unsafe {
             std::env::set_var("WGPU_BACKEND", "dx12");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_power_preferences_map_to_wgpu_values() {
+        assert_eq!(wgpu_power_preference(PowerPreference::LowPower), "low");
+        assert_eq!(wgpu_power_preference(PowerPreference::HighPerformance), "high");
     }
 }

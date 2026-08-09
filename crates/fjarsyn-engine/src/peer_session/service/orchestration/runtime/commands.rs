@@ -123,7 +123,7 @@ impl Runtime {
         let Some(mut entry) = self.sessions.remove(&session_id) else {
             return;
         };
-        let generation = entry.handle.generation;
+        let instance_id = entry.handle.instance_id;
         let deadline = TokioInstant::now() + self.limits.shutdown_timeout;
         entry.handle.revoke_trust(deadline);
         if tokio::time::timeout_at(deadline, &mut entry.task).await.is_err() {
@@ -137,8 +137,8 @@ impl Runtime {
         // Preserve that ordering even though this service command owns removal.
         for update in drain_pending_session_updates(&mut self.update_rx) {
             match update {
-                Update { generation: update_generation, event }
-                    if update_generation == generation && event.session_id() == session_id =>
+                Update { instance_id: update_instance_id, event }
+                    if update_instance_id == instance_id && event.session_id() == session_id =>
                 {
                     self.emit(event).await;
                 }
@@ -149,7 +149,7 @@ impl Runtime {
         let mut close_reason = CloseReason::TrustRevoked;
         let mut other_terminals = Vec::new();
         while let Ok(terminal) = self.terminal_rx.try_recv() {
-            if terminal.generation == generation && terminal.session_id == session_id {
+            if terminal.instance_id == instance_id && terminal.session_id == session_id {
                 close_reason = terminal.reason;
             } else {
                 other_terminals.push(terminal);

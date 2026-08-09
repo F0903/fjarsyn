@@ -9,7 +9,7 @@ use windows::{
             },
             Direct3D11::{
                 D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice,
-                ID3D11Device, ID3D11DeviceContext,
+                ID3D11Device, ID3D11DeviceContext, ID3D11Multithread,
             },
             Dxgi::IDXGIDevice,
         },
@@ -47,19 +47,18 @@ pub(in crate::media::capture) fn create_d3d_device() -> Result<ID3D11Device> {
         )?;
     }
 
-    let device = device.expect("ID3D11Device");
+    let device = device.ok_or_else(windows::core::Error::empty)?;
+    let context = context.ok_or_else(windows::core::Error::empty)?;
     let dxgi_device: IDXGIDevice = device.cast()?;
 
-    if let Ok(multithread) =
-        device.cast::<windows::Win32::Graphics::Direct3D11::ID3D11Multithread>()
-    {
-        unsafe {
-            let _ = multithread.SetMultithreadProtected(true);
-        }
-        tracing::info!("Enabled D3D11 multithread protection.");
-    } else {
-        tracing::warn!("Failed to get ID3D11Multithread, context may not be thread-safe!");
+    // ID3D11Multithread is exposed by the immediate context, not the device.
+    // A codec lease may cross threads, so failure to establish this invariant
+    // is a device-construction failure rather than a warning we can ignore.
+    let multithread: ID3D11Multithread = context.cast()?;
+    unsafe {
+        let _ = multithread.SetMultithreadProtected(true);
     }
+    tracing::info!("Enabled D3D11 immediate-context multithread protection.");
 
     let adapter = unsafe { dxgi_device.GetAdapter()? };
     let adapter_description = unsafe { adapter.GetDesc()? };

@@ -7,7 +7,7 @@ use super::orchestration::{Command, TrustBarrierOwnerId};
 use crate::{
     identity::PeerId,
     peer_session::{
-        EncodedVideoSink, Error, Event, MessageId, RemoteVideoSource, SessionId, ShareId, Snapshot,
+        EncodedVideoSink, Error, Event, MessageId, RemoteVideoSource, SessionId, Sessions, ShareId,
         actor,
     },
 };
@@ -15,7 +15,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct ServiceHandle {
     command_tx: mpsc::Sender<Command>,
-    snapshot_rx: watch::Receiver<Snapshot>,
+    snapshot_rx: watch::Receiver<Sessions>,
     event_tx: broadcast::Sender<Event>,
     operation_timeout: Duration,
 }
@@ -23,7 +23,7 @@ pub struct ServiceHandle {
 impl ServiceHandle {
     pub(super) fn new(
         command_tx: mpsc::Sender<Command>,
-        snapshot_rx: watch::Receiver<Snapshot>,
+        snapshot_rx: watch::Receiver<Sessions>,
         event_tx: broadcast::Sender<Event>,
         operation_timeout: Duration,
     ) -> Self {
@@ -35,11 +35,11 @@ impl ServiceHandle {
         self.command_tx.clone()
     }
 
-    pub fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> Sessions {
         self.snapshot_rx.borrow().clone()
     }
 
-    pub fn subscribe(&self) -> watch::Receiver<Snapshot> {
+    pub fn subscribe(&self) -> watch::Receiver<Sessions> {
         self.snapshot_rx.clone()
     }
 

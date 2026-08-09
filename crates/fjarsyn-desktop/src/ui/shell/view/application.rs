@@ -4,11 +4,10 @@ use iced::{
     window,
 };
 
-use super::codec;
+use super::{codec, degraded};
 use crate::ui::{
     APP_TITLE, components,
     message::{self, Message, Route},
-    screens::Screen,
     shell::{Fjarsyn, Lifecycle},
     subscription, theme,
 };
@@ -34,7 +33,15 @@ impl Fjarsyn {
             )
             .center(Length::Fill)
             .into(),
-            Lifecycle::Failed(error) => container(
+            Lifecycle::StartupFailed(error) if self.active_screen.is_settings() => {
+                let context = self.state.presentation();
+                container(self.active_screen.startup_recovery_view(context, error))
+                    .padding(padding::top(titlebar_size))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            }
+            Lifecycle::StartupFailed(error) => container(
                 column![
                     text("Fjarsyn could not start").size(24),
                     text(error.clone()).size(12).style(text::secondary),
@@ -52,6 +59,7 @@ impl Fjarsyn {
             )
             .center(Length::Fill)
             .into(),
+            Lifecycle::Degraded(error) => degraded::view(error),
             Lifecycle::Restarting => container(
                 column![
                     text("Restarting Fjarsyn").size(24),
@@ -68,7 +76,7 @@ impl Fjarsyn {
                 column![
                     text("Fjarsyn could not restart").size(24),
                     text(error.clone()).size(12).style(text::secondary),
-                    text("The old application services are already stopped. Try launching a clean process again or close Fjarsyn.")
+                    text("The old engine runtime is already stopped. Try launching a clean process again or close Fjarsyn.")
                         .size(12)
                         .style(text::secondary),
                     row![
@@ -126,7 +134,7 @@ impl Fjarsyn {
 
     pub(in crate::ui) fn subscription(&self) -> Subscription<Message> {
         subscription::subscription(
-            self.runtime.event_rx.clone(),
+            self.runtime.engine.as_ref().map(|runtime| runtime.receivers()),
             self.state.ui.started_at,
             self.state.ui.notifications.next_deadline(),
         )

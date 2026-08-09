@@ -5,9 +5,9 @@ use tokio::{
     time::Instant,
 };
 
-use super::{Command, restart::Attachment};
+use super::{ActorInstanceId, Command, restart::Attachment};
 use crate::peer_session::{
-    EncodedVideoSink, Error, LocalShareState, RemoteVideoSource, SessionId, SessionSnapshot,
+    EncodedVideoSink, Error, LocalShareState, RemoteVideoSource, SessionId, SessionState,
     ShareEpoch, ShareId,
     media::{OutboundVideoSample, RemoteVideoSample},
 };
@@ -22,10 +22,10 @@ pub(super) enum Control {
 #[derive(Debug, Clone)]
 pub(in crate::peer_session) struct Handle {
     pub session_id: SessionId,
-    pub generation: uuid::Uuid,
+    pub instance_id: ActorInstanceId,
     pub(super) command_tx: mpsc::Sender<Command>,
     pub(super) restart_tx: mpsc::Sender<Attachment>,
-    pub(super) snapshot_rx: watch::Receiver<SessionSnapshot>,
+    pub(super) snapshot_rx: watch::Receiver<SessionState>,
     pub(super) encoded_video_tx: mpsc::Sender<OutboundVideoSample>,
     pub(super) active_video_rx: watch::Receiver<Option<(ShareId, ShareEpoch)>>,
     pub(super) remote_video_tx: broadcast::Sender<RemoteVideoSample>,
@@ -45,7 +45,7 @@ impl Handle {
         self.restart_tx.try_send(attachment).map_err(|error| Box::new(error.into_inner()))
     }
 
-    pub(in crate::peer_session) fn snapshot(&self) -> SessionSnapshot {
+    pub(in crate::peer_session) fn snapshot(&self) -> SessionState {
         self.snapshot_rx.borrow().clone()
     }
 

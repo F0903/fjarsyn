@@ -36,8 +36,9 @@ source-file placement, and public module facades throughout the workspace.
   direct services, and the public service facade do not belong in
   `service_host`, and the host provides no dynamic lookup.
 - `fjarsyn_engine::Engine` is the canonical application aggregate. It owns
-  active configuration, identity and persistence state, the generic service
-  host, and the application lifecycle. Its private `init_services` operation
+  active, secret-free runtime settings, private identity and persistence
+  state, the generic service host, and the application lifecycle. Its private
+  `init_services` operation
   is the explicit composition root for the concrete capability graph. The
   root-level `Services` type is a passive, typed facade containing direct
   services and domain-specific handles; it neither constructs nor hosts them.
@@ -49,6 +50,45 @@ source-file placement, and public module facades throughout the workspace.
   Engine's peer-session/presence startup dependency. Capability-owned stores
   remain crate-private unless an intentional external replacement port is
   introduced.
+- `fjarsyn_engine::settings` owns validated headless runtime values for
+  networking, capture, and video. Desktop preferences, editable text drafts,
+  and settings-file persistence belong to `fjarsyn-desktop`. Serialized
+  signing-key material remains behind Engine's private identity store and must
+  not appear in settings, presentation contexts, or UI messages.
+- `fjarsyn-desktop::ui::runtime::EngineRuntime` is the sole desktop owner of
+  `fjarsyn_engine::Engine`, `EngineAdapter`, and the canonical engine-output
+  receiver bundle. Startup returns that owner directly; `RuntimeSlot` is only
+  the cloneable one-shot carrier required by Iced messages, not a second
+  lifecycle object. The shell borrows receiver clones for subscriptions while
+  `EngineRuntime` retains the canonical receivers through adapter and engine
+  shutdown.
+- `fjarsyn-desktop::ui::runtime::engine_adapter` is one private supervision and
+  adaptation boundary. Its `EngineAdapter` owns the coordinator that polls
+  every desktop-consumed engine subscription; state, notice, and failure
+  outputs are bounded and responsibility-specific. Its watch-retained
+  `EngineState` is the latest desktop-visible aggregate assembled from
+  independent capability streams. It is neither exhaustive engine state nor
+  an atomic engine snapshot. Initial hydration is read from the retained
+  receiver before its per-runtime subscriptions enter the Iced graph. Runtime
+  identities fence asynchronous startup completion and every adapter output;
+  terminal engine-adapter failure makes the shell inert until an explicit
+  restart.
+- `fjarsyn-desktop` routes every top-level UI message family exhaustively from
+  its root update loop to one owner. Active screens receive only the nested
+  screen-message family; shell handlers own runtime, lifecycle, persistence,
+  and capability effects. When one asynchronous result must also settle
+  correlated presentation state, its owning shell handler invokes that narrow
+  completion explicitly before applying the canonical result. Aggregate
+  messages are not broadcast or cloned through both layers, and nested screen
+  families are likewise routed exhaustively to their matching active screen.
+- Desktop startup recovery uses no second engine lifecycle object.
+  `Lifecycle::StartupFailed` keeps the engine absent while the active Home or
+  Settings route selects the failure overview or recovery editor. Only
+  settings-local input and one explicit save-and-retry effect are admitted in
+  the editor. Persistence must succeed before `Runtime::expect_new_startup`
+  installs a fresh runtime instance; validation or persistence failure keeps the
+  draft and failed state intact. A repeated engine failure preserves the
+  editor, while successful recovery returns presentation to Home.
 - A directory must represent a real responsibility shared by several
   substantial concerns; do not introduce wrapper submodules around an
   otherwise independent file or turn every small definition into a leaf
@@ -74,11 +114,14 @@ source-file placement, and public module facades throughout the workspace.
   after the responsibility it implements and keep the relationship explicit in
   the parent module. A generic filename such as `session.rs` must not obscure
   that the file is actually an extension of `Provider` or another owner.
-- Public service boundaries use explicit names: `ContactsService` for a direct
-  capability orchestrator and `ServiceHandle` for the interface to an
-  independently hosted service. Hosted implementations use their capability
-  name, such as `PeerSessionService`. Private implementation roles may remain
-  concise when their module path supplies all missing context.
+- Public service boundaries use explicit names: `ContactsService` is itself a
+  direct capability interface, while `ServiceHandle` is the interface to an
+  independently hosted service. Concrete hosted implementations use explicit
+  capability names such as `PeerSessionService`, but remain crate-private
+  Engine composition details. Their construction-only configuration is private
+  as well; public callers receive handles and handle-exposed domain types.
+  Other private implementation roles may remain concise when their module path
+  supplies all missing context.
 - A qualifier remains part of a type name when it conveys information not
   supplied by the canonical module path, such as `PeerId`, `LocalShareState`,
   or `EncoderInput` in the `media::codec` facade.

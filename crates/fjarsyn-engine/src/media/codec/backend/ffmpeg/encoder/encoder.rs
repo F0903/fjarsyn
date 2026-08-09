@@ -31,7 +31,6 @@ fn align_to_even(value: i32) -> i32 {
 }
 
 pub(crate) struct Encoder {
-    pub(super) input_format: PixelFormat,
     pub(super) encoder: Option<encoder::Video>,
     pub(super) scaler: Option<Scaler>,
     pub(super) bitrate: u32,
@@ -55,7 +54,6 @@ impl Encoder {
         bitrate: u32,
         target_framerate_hz: f32,
         target_resolution: TargetResolution,
-        input_format: PixelFormat,
         device: Option<CodecDeviceLease>,
         transcoding_type: TranscodeType,
     ) -> Result<Self> {
@@ -71,7 +69,6 @@ impl Encoder {
         };
 
         Ok(Self {
-            input_format,
             encoder: None,
             scaler: None,
             bitrate,

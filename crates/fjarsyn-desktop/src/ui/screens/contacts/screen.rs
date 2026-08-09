@@ -52,41 +52,39 @@ impl Screen {
         }
     }
 
-    fn handle_message(
+    pub(in crate::ui::screens) fn update(
         &mut self,
         context: Context<'_>,
-        message: message::Message,
+        message: ContactsMessage,
     ) -> Task<message::Message> {
-        let effects = match message {
-            message::Message::Screen(message::Screen::Contacts(message)) => {
-                workflow::execute_contacts_message(self, message, context.local_peer_id())
-            }
-            message::Message::ContactOperation(message::ContactOperation::Saved {
-                operation_id,
-                ref result,
-            }) => {
-                workflow::finish_contact_save(self, operation_id, result.is_ok());
-                return Task::none();
-            }
-            message::Message::ContactOperation(message::ContactOperation::Updated {
-                operation_id,
-                ref result,
-            }) => {
-                workflow::finish_identity_replacement(self, operation_id, result.is_ok());
-                return Task::none();
-            }
-            message::Message::ContactOperation(message::ContactOperation::Deleted {
-                operation_id,
-                id,
-                ref result,
-            }) => {
-                workflow::finish_contact_delete(self, operation_id, id, result.is_ok());
-                return Task::none();
-            }
-            _ => return Task::none(),
-        };
+        let effects = workflow::execute_contacts_message(self, message, context.local_peer_id());
 
         Task::batch(effects.into_iter().map(effect_task))
+    }
+
+    pub(in crate::ui::screens) fn finish_contact_save(
+        &mut self,
+        operation_id: OperationId,
+        succeeded: bool,
+    ) {
+        workflow::finish_contact_save(self, operation_id, succeeded);
+    }
+
+    pub(in crate::ui::screens) fn finish_identity_replacement(
+        &mut self,
+        operation_id: OperationId,
+        succeeded: bool,
+    ) {
+        workflow::finish_identity_replacement(self, operation_id, succeeded);
+    }
+
+    pub(in crate::ui::screens) fn finish_contact_delete(
+        &mut self,
+        operation_id: OperationId,
+        contact_id: i64,
+        succeeded: bool,
+    ) {
+        workflow::finish_contact_delete(self, operation_id, contact_id, succeeded);
     }
 }
 
@@ -108,19 +106,5 @@ fn effect_task(effect: workflow::Effect) -> Task<message::Message> {
         effect => workflow::into_contact_operation(effect)
             .map(|operation| Task::done(message::Message::ContactOperation(operation)))
             .unwrap_or_else(Task::none),
-    }
-}
-
-impl crate::ui::screens::Screen for Screen {
-    fn update(
-        &mut self,
-        context: Context<'_>,
-        message: message::Message,
-    ) -> Task<message::Message> {
-        self.handle_message(context, message)
-    }
-
-    fn view<'a>(&'a self, context: Context<'a>) -> iced::Element<'a, message::Message> {
-        self.render_view(context)
     }
 }

@@ -13,8 +13,8 @@ fn peer_ids_validate_before_entering_the_peer_session_api() {
 fn snapshot_lookups_use_typed_identifiers() {
     let session_id = SessionId::new();
     let peer_id = PeerId::new("peer-a").unwrap();
-    let snapshot = Snapshot {
-        sessions: Arc::new(vec![SessionSnapshot {
+    let snapshot = Sessions {
+        sessions: Arc::new(vec![SessionState {
             session_id,
             peer_id: peer_id.clone(),
             phase: Phase::Connected,

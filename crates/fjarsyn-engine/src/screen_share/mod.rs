@@ -14,7 +14,7 @@ mod runtime;
 mod screen_share_service;
 mod selection;
 mod service_handle;
-mod snapshot;
+mod shares;
 mod start_operation;
 
 use std::time::Duration;
@@ -33,13 +33,13 @@ pub(crate) use screen_share_service::ScreenShareService;
 pub use selection::Selection;
 use selection::SelectionKey;
 pub use service_handle::ServiceHandle;
-pub use snapshot::{SessionSnapshot, Snapshot};
+pub use shares::{SessionMedia, Shares};
 use start_operation::{StartOperation, StartOutcome};
 
 const START_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Maximum time allocated to stopping all capture and codec pipelines.
-pub const PIPELINE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+const PIPELINE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn retains_media_session(phase: crate::peer_session::Phase) -> bool {
     matches!(
@@ -48,7 +48,7 @@ fn retains_media_session(phase: crate::peer_session::Phase) -> bool {
     )
 }
 
-fn permits_local_share_start(session: &crate::peer_session::SessionSnapshot) -> bool {
+fn permits_local_share_start(session: &crate::peer_session::SessionState) -> bool {
     session.phase == crate::peer_session::Phase::Connected
         && matches!(session.local_share, crate::peer_session::LocalShareState::Inactive)
 }

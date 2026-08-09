@@ -4,18 +4,18 @@ use super::{ConversationMap, ConversationMessage, ConversationSummary};
 use crate::identity::PeerId;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Snapshot {
+pub struct Conversations {
     pub conversations: Arc<ConversationMap>,
     pub summaries: Arc<Vec<ConversationSummary>>,
 }
 
-impl Snapshot {
+impl Conversations {
     pub fn messages_for_peer(&self, peer_id: &PeerId) -> Arc<Vec<ConversationMessage>> {
         self.conversations.get(peer_id).cloned().unwrap_or_else(|| Arc::new(Vec::new()))
     }
 }
 
-pub(super) fn build(messages: Vec<ConversationMessage>) -> Snapshot {
+pub(super) fn build(messages: Vec<ConversationMessage>) -> Conversations {
     let mut conversations = std::collections::HashMap::<PeerId, Vec<ConversationMessage>>::new();
     for message in messages {
         conversations.entry(message.peer_id.clone()).or_default().push(message);
@@ -30,7 +30,7 @@ pub(super) fn build(messages: Vec<ConversationMessage>) -> Snapshot {
         .collect::<ConversationMap>();
     let summaries = build_summaries(&conversations);
 
-    Snapshot { conversations: Arc::new(conversations), summaries }
+    Conversations { conversations: Arc::new(conversations), summaries }
 }
 
 fn build_summaries(conversations: &ConversationMap) -> Arc<Vec<ConversationSummary>> {
@@ -49,9 +49,12 @@ fn build_summaries(conversations: &ConversationMap) -> Arc<Vec<ConversationSumma
     Arc::new(summaries)
 }
 
-pub(super) fn with_upserted_message(snapshot: &Snapshot, message: ConversationMessage) -> Snapshot {
+pub(super) fn with_upserted_message(
+    conversations_state: &Conversations,
+    message: ConversationMessage,
+) -> Conversations {
     let peer_id = message.peer_id.clone();
-    let mut conversations = (*snapshot.conversations).clone();
+    let mut conversations = (*conversations_state.conversations).clone();
     let mut messages =
         conversations.get(&peer_id).map(|messages| (**messages).clone()).unwrap_or_default();
 
@@ -64,7 +67,7 @@ pub(super) fn with_upserted_message(snapshot: &Snapshot, message: ConversationMe
     conversations.insert(peer_id, Arc::new(messages));
     let summaries = build_summaries(&conversations);
 
-    Snapshot { conversations: Arc::new(conversations), summaries }
+    Conversations { conversations: Arc::new(conversations), summaries }
 }
 
 fn sort_messages(messages: &mut [ConversationMessage]) {

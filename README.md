@@ -21,6 +21,11 @@ overlay network that carries mDNS and peer-to-peer traffic.
 
 The accepted runtime and security boundaries are documented in
 [`docs/architecture/peer-sessions.md`](docs/architecture/peer-sessions.md).
+Local settings, identity, and chat-history storage are documented in
+[`docs/security/local-data.md`](docs/security/local-data.md).
+Windows GPU-frame ownership, synchronization, import, and presentation fallback
+are documented in
+[`docs/architecture/gpu-frame-resources.md`](docs/architecture/gpu-frame-resources.md).
 The workspace's Rust naming, file-placement, and module-facade convention is
 documented in
 [`docs/architecture/rust-modules.md`](docs/architecture/rust-modules.md).

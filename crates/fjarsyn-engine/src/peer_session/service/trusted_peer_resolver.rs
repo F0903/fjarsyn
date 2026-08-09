@@ -6,6 +6,6 @@ use crate::{
 };
 
 #[async_trait]
-pub trait TrustedPeerResolver: Send + Sync {
+pub(crate) trait TrustedPeerResolver: Send + Sync {
     async fn trusted_peer(&self, peer_id: &PeerId) -> Result<Option<TrustedPeerIdentity>, Error>;
 }

@@ -11,10 +11,10 @@ mod trusted_peer_resolver;
 #[cfg(test)]
 mod tests;
 
-pub use config::Config;
-pub use endpoint_resolver::EndpointResolver;
-pub use limits::Limits;
+pub(crate) use config::Config;
+pub(crate) use endpoint_resolver::EndpointResolver;
+pub(crate) use limits::Limits;
 pub(crate) use orchestration::TrustBarrierOwnerId;
-pub use peer_session_service::PeerSessionService;
+pub(crate) use peer_session_service::PeerSessionService;
 pub use service_handle::ServiceHandle;
-pub use trusted_peer_resolver::TrustedPeerResolver;
+pub(crate) use trusted_peer_resolver::TrustedPeerResolver;

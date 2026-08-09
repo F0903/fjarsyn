@@ -43,7 +43,7 @@ pub(in crate::ui::shell) fn handle_peer_action(
 }
 
 fn session_handle(app: &Fjarsyn) -> Option<peer_session::ServiceHandle> {
-    app.runtime.application.as_ref().map(|runtime| runtime.sessions().clone())
+    app.runtime.engine.as_ref().map(|runtime| runtime.sessions().clone())
 }
 
 fn runtime_unavailable(app: &mut Fjarsyn) -> Task<Message> {

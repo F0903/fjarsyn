@@ -4,10 +4,11 @@ use crate::service_host::ServiceFailure;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartupStage {
+    Settings,
+    Identity,
     Database,
     Contacts,
     PeerSessions,
-    IdentityPersistence,
     Presence,
     Messaging,
 }
@@ -15,10 +16,11 @@ pub enum StartupStage {
 impl fmt::Display for StartupStage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
+            Self::Settings => "settings validation",
+            Self::Identity => "local-identity initialization",
             Self::Database => "database initialization",
             Self::Contacts => "contact loading",
             Self::PeerSessions => "peer-session startup",
-            Self::IdentityPersistence => "local-identity persistence",
             Self::Presence => "presence startup",
             Self::Messaging => "messaging startup",
         })

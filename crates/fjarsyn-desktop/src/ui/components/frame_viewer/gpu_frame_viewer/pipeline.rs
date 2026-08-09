@@ -1,33 +1,13 @@
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
-
-use fjarsyn_engine::media::{
-    frame::{Frame, GpuImportHandle},
-    gpu_interop::{self, ImportedFrameTexture},
-};
+use fjarsyn_engine::media::frame::Frame;
 use iced::{Rectangle, widget::shader};
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Uniforms {
-    ndc_min: [f32; 2],
-    ndc_max: [f32; 2],
-}
+use super::frame_cache::FrameCache;
 
 pub(super) struct Pipeline {
     pipeline: wgpu::RenderPipeline,
     sampler: wgpu::Sampler,
     bind_group_layout: wgpu::BindGroupLayout,
-    uniform_buffer: wgpu::Buffer,
-    cache: std::sync::Mutex<HashMap<GpuImportHandle, CachedFrameTexture>>,
-}
-
-struct CachedFrameTexture {
-    bind_group: wgpu::BindGroup,
-    _texture: ImportedFrameTexture,
-    last_used: Instant,
+    frames: FrameCache,
 }
 
 impl Pipeline {
@@ -38,94 +18,28 @@ impl Pipeline {
         bounds: &Rectangle,
         frame: &Frame,
     ) {
-        let bounds_w = bounds.width;
-        let bounds_h = bounds.height;
-
-        let src_w = frame.size.width as f32;
-        let src_h = frame.size.height as f32;
-
-        let aspect_widget = bounds_w / bounds_h;
-        let aspect_image = src_w / src_h;
-
-        let (scale_x, scale_y) = if aspect_image > aspect_widget {
-            // Image is wider than widget. Fit to width.
-            (1.0, aspect_widget / aspect_image)
-        } else {
-            // Image is taller than widget. Fit to height.
-            (aspect_image / aspect_widget, 1.0)
-        };
-
-        let ndc_x = -scale_x;
-        let ndc_x_max = scale_x;
-        let ndc_y = scale_y; // Top
-        let ndc_y_max = -scale_y; // Bottom
-
-        let uniforms = Uniforms { ndc_min: [ndc_x, ndc_y], ndc_max: [ndc_x_max, ndc_y_max] };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-
-        let Some(import_handle) = frame.gpu_import_handle() else {
-            return;
-        };
-
-        let mut cache = self.cache.lock().unwrap();
-        if let Some(entry) = cache.get_mut(&import_handle) {
-            entry.last_used = Instant::now();
-            return;
-        }
-
-        let now = Instant::now();
-        cache.retain(|_, entry| now.duration_since(entry.last_used) < Duration::from_secs(1));
-
-        let Some(texture) = gpu_interop::import_frame_texture(device, frame) else {
-            return;
-        };
-
-        let view = texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Frame Viewer Bind Group"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.uniform_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
-        cache.insert(
-            import_handle,
-            CachedFrameTexture { bind_group, _texture: texture, last_used: now },
-        );
+        self.frames.prepare(device, queue, &self.bind_group_layout, &self.sampler, bounds, frame);
     }
 
-    pub(super) fn draw_frame(&self, render_pass: &mut wgpu::RenderPass<'_>, frame: &Frame) -> bool {
-        let Some(import_handle) = frame.gpu_import_handle() else {
+    pub(super) fn draw_frame(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        frame: &Frame,
+        bounds: &Rectangle,
+    ) -> bool {
+        let Some(bind_group) = self.frames.bind_group(frame, bounds) else {
             return false;
         };
 
-        let cache = self.cache.lock().unwrap();
-        if let Some(entry) = cache.get(&import_handle) {
-            render_pass.set_pipeline(&self.pipeline);
-            render_pass.set_bind_group(0, &entry.bind_group, &[]);
-            render_pass.draw(0..4, 0..1);
-            true
-        } else {
-            false
-        }
+        render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_bind_group(0, bind_group, &[]);
+        render_pass.draw(0..4, 0..1);
+        true
     }
 }
 
 impl shader::Pipeline for Pipeline {
-    fn new(device: &wgpu::Device, _queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Frame Viewer Shader"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(include_str!(
@@ -170,7 +84,6 @@ impl shader::Pipeline for Pipeline {
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
-
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Frame Viewer Pipeline"),
             layout: Some(&pipeline_layout),
@@ -199,7 +112,6 @@ impl shader::Pipeline for Pipeline {
             multiview: None,
             cache: None,
         });
-
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -208,19 +120,10 @@ impl shader::Pipeline for Pipeline {
             ..Default::default()
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Frame Viewer Uniforms"),
-            size: std::mem::size_of::<Uniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        Self { pipeline, sampler, bind_group_layout, frames: FrameCache::new(device, queue) }
+    }
 
-        Self {
-            pipeline,
-            sampler,
-            bind_group_layout,
-            uniform_buffer,
-            cache: std::sync::Mutex::new(HashMap::new()),
-        }
+    fn trim(&mut self) {
+        self.frames.trim();
     }
 }

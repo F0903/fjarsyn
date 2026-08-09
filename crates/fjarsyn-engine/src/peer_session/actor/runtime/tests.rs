@@ -5,11 +5,11 @@ use tokio::{
     time::Instant,
 };
 
-use super::super::{Command, Control, Handle};
+use super::super::{ActorInstanceId, Command, Control, Handle};
 use crate::{
     identity::PeerId,
     peer_session::{
-        LocalShareState, Phase, RemoteShareState, SessionId, SessionSnapshot, ShareEpoch,
+        LocalShareState, Phase, RemoteShareState, SessionId, SessionState, ShareEpoch,
         media::{encoded_video_channel, remote_video_channel},
     },
 };
@@ -20,7 +20,7 @@ async fn first_remote_video_source_keeps_samples_sent_before_subscription() {
     let peer_id = PeerId::new("peer").unwrap();
     let (command_tx, _command_rx) = mpsc::channel(1);
     let (restart_tx, _restart_rx) = mpsc::channel(1);
-    let (_snapshot_tx, snapshot_rx) = watch::channel(SessionSnapshot {
+    let (_snapshot_tx, snapshot_rx) = watch::channel(SessionState {
         session_id,
         peer_id,
         phase: Phase::Connected,
@@ -33,7 +33,7 @@ async fn first_remote_video_source_keeps_samples_sent_before_subscription() {
     let (fatal_tx, _fatal_rx) = watch::channel(None);
     let handle = Handle {
         session_id,
-        generation: uuid::Uuid::new_v4(),
+        instance_id: ActorInstanceId::new(),
         command_tx,
         restart_tx,
         snapshot_rx,
@@ -68,7 +68,7 @@ async fn fatal_control_bypasses_a_full_session_command_queue() {
     let (restart_tx, _restart_rx) = mpsc::channel(1);
     let (reply, _reply_rx) = oneshot::channel();
     command_tx.send(Command::Accept(reply)).await.unwrap();
-    let (_snapshot_tx, snapshot_rx) = watch::channel(SessionSnapshot {
+    let (_snapshot_tx, snapshot_rx) = watch::channel(SessionState {
         session_id,
         peer_id,
         phase: Phase::Connected,
@@ -81,7 +81,7 @@ async fn fatal_control_bypasses_a_full_session_command_queue() {
     let (fatal_tx, mut fatal_rx) = watch::channel(None);
     let handle = Handle {
         session_id,
-        generation: uuid::Uuid::new_v4(),
+        instance_id: ActorInstanceId::new(),
         command_tx,
         restart_tx,
         snapshot_rx,
@@ -105,7 +105,7 @@ async fn shutdown_control_bypasses_a_full_session_command_queue() {
     let (restart_tx, _restart_rx) = mpsc::channel(1);
     let (reply, _reply_rx) = oneshot::channel();
     command_tx.send(Command::Accept(reply)).await.unwrap();
-    let (_snapshot_tx, snapshot_rx) = watch::channel(SessionSnapshot {
+    let (_snapshot_tx, snapshot_rx) = watch::channel(SessionState {
         session_id,
         peer_id,
         phase: Phase::Connected,
@@ -118,7 +118,7 @@ async fn shutdown_control_bypasses_a_full_session_command_queue() {
     let (fatal_tx, mut fatal_rx) = watch::channel(None);
     let handle = Handle {
         session_id,
-        generation: uuid::Uuid::new_v4(),
+        instance_id: ActorInstanceId::new(),
         command_tx,
         restart_tx,
         snapshot_rx,
@@ -143,7 +143,7 @@ async fn trust_revocation_bypasses_a_full_session_command_queue() {
     let (restart_tx, _restart_rx) = mpsc::channel(1);
     let (reply, _reply_rx) = oneshot::channel();
     command_tx.send(Command::Accept(reply)).await.unwrap();
-    let (_snapshot_tx, snapshot_rx) = watch::channel(SessionSnapshot {
+    let (_snapshot_tx, snapshot_rx) = watch::channel(SessionState {
         session_id,
         peer_id,
         phase: Phase::Connected,
@@ -156,7 +156,7 @@ async fn trust_revocation_bypasses_a_full_session_command_queue() {
     let (fatal_tx, mut fatal_rx) = watch::channel(None);
     let handle = Handle {
         session_id,
-        generation: uuid::Uuid::new_v4(),
+        instance_id: ActorInstanceId::new(),
         command_tx,
         restart_tx,
         snapshot_rx,

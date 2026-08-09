@@ -5,14 +5,14 @@ use tokio::{sync::mpsc, time::Instant};
 
 use crate::{
     Services,
-    config::Config,
     contacts::{self, ContactsService},
     deferred_resolver::DeferredResolver,
     error::{ShutdownError, StartError, StartupStage},
-    identity::PeerId,
+    identity::{LocalIdentity, PeerId, Store as IdentityStore},
     media::codec,
     messaging, peer_session, presence, screen_share,
     service_host::{ServiceHost, ServicePolicy, ShutdownContext},
+    settings::Settings,
 };
 
 const ENGINE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
@@ -33,7 +33,7 @@ enum ShutdownPhase {
 /// snapshot handles. Concrete stores, service owners, and the database pool do
 /// not cross the engine boundary.
 pub struct Engine {
-    active_config: Config,
+    active_settings: Settings,
     local_peer_id: PeerId,
     local_public_key: String,
     services: Services,
@@ -42,16 +42,20 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub async fn start(mut config: Config) -> Result<Self, StartError> {
+    pub async fn start(settings: Settings) -> Result<Self, StartError> {
+        let settings = settings
+            .validated()
+            .map_err(|error| StartError::new(StartupStage::Settings, error, None))?;
+        let local_identity = load_local_identity().await?;
         let database = crate::database::init()
             .await
             .map_err(|error| StartError::new(StartupStage::Database, error, None))?;
         let mut startup = Startup::new(database);
-        let initialized = Self::init_services(&mut config, &mut startup).await?;
+        let initialized = Self::init_services(&settings, local_identity, &mut startup).await?;
         let Startup { database, host: hosted_services } = startup;
 
         Ok(Self {
-            active_config: config,
+            active_settings: settings,
             local_peer_id: initialized.local_peer_id,
             local_public_key: initialized.local_public_key,
             services: initialized.services,
@@ -61,7 +65,8 @@ impl Engine {
     }
 
     async fn init_services(
-        config: &mut Config,
+        settings: &Settings,
+        local_identity: LocalIdentity,
         startup: &mut Startup,
     ) -> Result<InitializedServices, StartError> {
         let directory_result = contacts::Directory::load(Arc::new(contacts::SqliteStore::new(
@@ -72,26 +77,23 @@ impl Engine {
 
         let endpoints = Arc::new(DeferredResolver::default());
         let (session_event_tx, session_event_rx) = mpsc::channel(messaging::SESSION_EVENT_CAPACITY);
-        let mut session_config = peer_session::Config::new(directory.clone(), endpoints.clone());
+        let mut session_config = peer_session::Config::new(
+            local_identity,
+            directory.clone(),
+            endpoints.clone(),
+            peer_session::NetworkScope::AllInterfaces,
+        );
         session_config.mandatory_event_sink = Some(session_event_tx);
-        session_config.local_peer_id = config.identity.peer_id.clone();
-        session_config.identity_keypair = config.identity.signing_key.clone();
         session_config.max_depacket_latency =
-            Duration::from_millis(u64::from(config.network.max_depacket_latency));
+            Duration::from_millis(u64::from(settings.network.max_depacket_latency_ms));
 
         let sessions_result = peer_session::PeerSessionService::start(session_config).await;
         let sessions = startup.require(StartupStage::PeerSessions, sessions_result).await?;
         let local_peer_id = sessions.local_peer_id().clone();
         let local_public_key = sessions.local_public_key();
-        let stored_identity = sessions.stored_identity_keypair();
         let signaling_port = sessions.signaling_port();
         let session_handle =
             startup.host.install(sessions, ServicePolicy::new(ShutdownPhase::PeerSessions));
-
-        config.identity.peer_id = Some(local_peer_id.clone());
-        config.identity.signing_key = Some(stored_identity);
-        let identity_save_result = config.save();
-        startup.require(StartupStage::IdentityPersistence, identity_save_result).await?;
 
         let presence_result = presence::PresenceService::start(presence::Config::new(
             local_peer_id.clone(),
@@ -119,7 +121,7 @@ impl Engine {
         let codec_handle =
             startup.host.install(codecs, ServicePolicy::new(ShutdownPhase::Codecs).prepare_early());
         let screen_share = screen_share::ScreenShareService::start(
-            screen_share::Config::from(&*config),
+            screen_share::Config::from(settings),
             session_handle.clone(),
             codec_handle.clone(),
         );
@@ -142,8 +144,8 @@ impl Engine {
 
     /// Configuration captured when the engine graph was started. Persisted UI
     /// settings may differ until a restart applies service-level changes.
-    pub fn active_config(&self) -> &Config {
-        &self.active_config
+    pub fn active_settings(&self) -> &Settings {
+        &self.active_settings
     }
 
     pub fn local_peer_id(&self) -> &PeerId {
@@ -163,14 +165,14 @@ impl Engine {
     pub async fn shutdown(self) -> Result<(), ShutdownError> {
         let deadline = Instant::now() + ENGINE_SHUTDOWN_TIMEOUT;
         let Self {
-            active_config,
+            active_settings,
             local_peer_id,
             local_public_key,
             services,
             mut hosted_services,
             database,
         } = self;
-        drop((active_config, local_peer_id, local_public_key, services));
+        drop((active_settings, local_peer_id, local_public_key, services));
 
         match shutdown_resources(&mut hosted_services, &database, deadline).await {
             Some(error) => Err(error),
@@ -188,6 +190,13 @@ impl fmt::Debug for Engine {
             .field("hosted_services", &self.hosted_services)
             .finish_non_exhaustive()
     }
+}
+
+async fn load_local_identity() -> Result<LocalIdentity, StartError> {
+    let loaded = tokio::task::spawn_blocking(|| IdentityStore::user().load_or_create())
+        .await
+        .map_err(|error| StartError::new(StartupStage::Identity, error, None))?;
+    loaded.map_err(|error| StartError::new(StartupStage::Identity, error, None))
 }
 
 struct InitializedServices {
@@ -263,6 +272,16 @@ mod tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     use super::*;
+
+    #[tokio::test]
+    async fn invalid_settings_fail_at_the_engine_boundary() {
+        let mut settings = Settings::default();
+        settings.video.target_bitrate_bps = 0;
+
+        let error = Engine::start(settings).await.unwrap_err();
+
+        assert_eq!(error.stage(), StartupStage::Settings);
+    }
 
     #[tokio::test]
     async fn shared_deadline_bounds_database_drain_and_closes_admission() {

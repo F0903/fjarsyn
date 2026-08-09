@@ -4,7 +4,7 @@ use super::{CodecDirection, LocalState, RemoteState, ShareBinding, Update};
 use crate::{media::frame::Frame, peer_session};
 
 #[derive(Debug, Clone, Default)]
-pub struct SessionSnapshot {
+pub struct SessionMedia {
     pub local: LocalState,
     pub remote: RemoteState,
     pub local_frame: Option<Arc<Frame>>,
@@ -17,7 +17,7 @@ pub struct SessionSnapshot {
 mod tests {
     use std::sync::Arc;
 
-    use super::{CodecDirection, LocalState, RemoteState, ShareBinding, Snapshot, Update};
+    use super::{CodecDirection, LocalState, RemoteState, ShareBinding, Shares, Update};
     use crate::{
         identity::PeerId,
         media::{
@@ -43,7 +43,7 @@ mod tests {
         session_id: SessionId,
         local_share: PeerLocalShareState,
         remote_share: PeerRemoteShareState,
-    ) -> peer_session::Snapshot {
+    ) -> peer_session::Sessions {
         peer_snapshot_with_phase(
             session_id,
             local_share,
@@ -57,9 +57,9 @@ mod tests {
         local_share: PeerLocalShareState,
         remote_share: PeerRemoteShareState,
         phase: peer_session::Phase,
-    ) -> peer_session::Snapshot {
-        peer_session::Snapshot {
-            sessions: Arc::new(vec![peer_session::SessionSnapshot {
+    ) -> peer_session::Sessions {
+        peer_session::Sessions {
+            sessions: Arc::new(vec![peer_session::SessionState {
                 session_id,
                 peer_id: PeerId::new("peer-a").unwrap(),
                 phase,
@@ -78,7 +78,7 @@ mod tests {
             PeerLocalShareState::Active { share_id: binding.share_id(), epoch: binding.epoch() },
             PeerRemoteShareState::Active { share_id: binding.share_id(), epoch: binding.epoch() },
         );
-        let mut snapshot = Snapshot::default();
+        let mut snapshot = Shares::default();
         snapshot.reconcile_shares(&shares);
         snapshot.apply(Update::LocalState { session_id, state: LocalState::Active });
         snapshot.apply(Update::RemoteState { session_id, state: RemoteState::Active });
@@ -131,7 +131,7 @@ mod tests {
             PeerLocalShareState::Inactive,
             PeerRemoteShareState::Inactive,
         );
-        let mut snapshot = Snapshot::default();
+        let mut snapshot = Shares::default();
 
         snapshot.reconcile_shares(&active(binding_a));
         snapshot.apply(Update::RemoteFrame { session_id, binding: binding_a, frame: frame() });
@@ -169,7 +169,7 @@ mod tests {
                 PeerRemoteShareState::Inactive,
             )
         };
-        let mut snapshot = Snapshot::default();
+        let mut snapshot = Shares::default();
 
         snapshot.reconcile_shares(&active(binding_a));
         snapshot.apply(Update::LocalFrame { session_id, binding: binding_a, frame: frame() });
@@ -198,7 +198,7 @@ mod tests {
             PeerRemoteShareState::Inactive,
             peer_session::Phase::Disconnecting,
         );
-        let mut snapshot = Snapshot::default();
+        let mut snapshot = Shares::default();
         snapshot.reconcile_shares(&connected);
         snapshot.apply(Update::LocalState { session_id, state: LocalState::Selecting });
         assert!(snapshot.sessions().contains_key(&session_id));
@@ -210,20 +210,20 @@ mod tests {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct Snapshot {
-    sessions: Arc<BTreeMap<peer_session::SessionId, SessionSnapshot>>,
+pub struct Shares {
+    sessions: Arc<BTreeMap<peer_session::SessionId, SessionMedia>>,
     active_local_shares: BTreeMap<peer_session::SessionId, ShareBinding>,
     active_remote_shares: BTreeMap<peer_session::SessionId, ShareBinding>,
     encoder_restart_required: bool,
     decoder_restart_required: bool,
 }
 
-impl Snapshot {
-    pub fn sessions(&self) -> &BTreeMap<peer_session::SessionId, SessionSnapshot> {
+impl Shares {
+    pub fn sessions(&self) -> &BTreeMap<peer_session::SessionId, SessionMedia> {
         &self.sessions
     }
 
-    pub fn session(&self, session_id: peer_session::SessionId) -> SessionSnapshot {
+    pub fn session(&self, session_id: peer_session::SessionId) -> SessionMedia {
         self.sessions.get(&session_id).cloned().unwrap_or_default()
     }
 
@@ -322,9 +322,9 @@ impl Snapshot {
         }
     }
 
-    /// Removes frames whose exact authenticated share generation is no longer active.
-    pub(super) fn reconcile_shares(&mut self, snapshot: &peer_session::Snapshot) -> bool {
-        self.active_local_shares = snapshot
+    /// Removes frames whose exact authenticated share identity is no longer active.
+    pub(super) fn reconcile_shares(&mut self, sessions: &peer_session::Sessions) -> bool {
+        self.active_local_shares = sessions
             .sessions
             .iter()
             .filter(|session| super::retains_media_session(session.phase))
@@ -335,7 +335,7 @@ impl Snapshot {
                 peer_session::LocalShareState::Inactive => None,
             })
             .collect();
-        self.active_remote_shares = snapshot
+        self.active_remote_shares = sessions
             .sessions
             .iter()
             .filter(|session| super::retains_media_session(session.phase))
@@ -347,7 +347,7 @@ impl Snapshot {
             })
             .collect();
 
-        let live_sessions = snapshot
+        let live_sessions = sessions
             .sessions
             .iter()
             .filter(|session| super::retains_media_session(session.phase))

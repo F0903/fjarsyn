@@ -2,7 +2,7 @@ use std::{fmt, time::Instant};
 
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
-use super::{Error, Event, Snapshot, actor::Command};
+use super::{Conversations, Error, Event, actor::Command};
 use crate::{
     identity::PeerId,
     peer_session::{MessageId, SessionId},
@@ -11,7 +11,7 @@ use crate::{
 #[derive(Clone)]
 pub struct ServiceHandle {
     command_tx: mpsc::Sender<Command>,
-    snapshot_rx: watch::Receiver<Snapshot>,
+    snapshot_rx: watch::Receiver<Conversations>,
     event_tx: broadcast::Sender<Event>,
     command_start_timeout: std::time::Duration,
 }
@@ -19,18 +19,18 @@ pub struct ServiceHandle {
 impl ServiceHandle {
     pub(super) fn new(
         command_tx: mpsc::Sender<Command>,
-        snapshot_rx: watch::Receiver<Snapshot>,
+        snapshot_rx: watch::Receiver<Conversations>,
         event_tx: broadcast::Sender<Event>,
         command_start_timeout: std::time::Duration,
     ) -> Self {
         Self { command_tx, snapshot_rx, event_tx, command_start_timeout }
     }
 
-    pub fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> Conversations {
         self.snapshot_rx.borrow().clone()
     }
 
-    pub fn subscribe(&self) -> watch::Receiver<Snapshot> {
+    pub fn subscribe(&self) -> watch::Receiver<Conversations> {
         self.snapshot_rx.clone()
     }
 

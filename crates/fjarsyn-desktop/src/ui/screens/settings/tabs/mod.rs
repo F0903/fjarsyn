@@ -5,10 +5,12 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use fjarsyn_engine::config::Config;
 use iced::Element;
 
-use crate::ui::message::{Message, screen::settings::TabId};
+use crate::ui::{
+    message::{Message, screen::settings::TabId},
+    screens::settings::SettingsDraft,
+};
 
 mod capture;
 mod network;
@@ -18,7 +20,7 @@ pub(super) trait Tab: Debug + Send + Sync {
     fn id(&self) -> TabId;
     fn label(&self) -> &'static str;
     fn icon(&self) -> iced::widget::Text<'static>;
-    fn view(&self, config: &Config) -> Element<'_, Message>;
+    fn view<'a>(&self, draft: &'a SettingsDraft) -> Element<'a, Message>;
 }
 
 static TABS: LazyLock<Vec<Arc<dyn Tab>>> = LazyLock::new(|| {

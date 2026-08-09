@@ -1,6 +1,6 @@
 //! Encoder session channels, supervision, and dedicated worker-thread ownership.
 
-use crate::media::{CodecDeviceLease, PixelFormat, codec::TranscodeType, video::TargetResolution};
+use crate::media::{CodecDeviceLease, codec::TranscodeType, video::TargetResolution};
 
 mod session;
 mod supervisor;
@@ -11,7 +11,6 @@ pub struct EncoderWorkerConfig {
     pub bitrate: u32,
     pub target_framerate_hz: f32,
     pub target_resolution: TargetResolution,
-    pub input_format: PixelFormat,
     pub device: Option<CodecDeviceLease>,
     pub transcoding_type: TranscodeType,
 }

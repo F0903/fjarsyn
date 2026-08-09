@@ -20,9 +20,9 @@ pub(super) struct Runtime {
     command_rx: mpsc::Receiver<Command>,
     commands_closed: bool,
     config_rx: watch::Receiver<Config>,
-    session_snapshots: watch::Receiver<peer_session::Snapshot>,
+    sessions_state: watch::Receiver<peer_session::Sessions>,
     session_events: tokio::sync::broadcast::Receiver<peer_session::Event>,
-    codec_snapshots: watch::Receiver<codec::Snapshot>,
+    codec_health: watch::Receiver<codec::Health>,
     sessions: peer_session::ServiceHandle,
     output: Output,
     local: Option<local::Controller>,
@@ -44,8 +44,8 @@ impl Runtime {
         output: Output,
         shutdown_rx: watch::Receiver<Option<tokio::time::Instant>>,
     ) -> Self {
-        let codec_snapshots = codecs.subscribe();
-        let initial_codec = codec_snapshots.borrow().clone();
+        let codec_health = codecs.subscribe();
+        let initial_codec = codec_health.borrow().clone();
         let encoder_restart_required =
             matches!(initial_codec.encode, DirectionState::RestartRequired(_));
         let decoder_restart_required =
@@ -64,9 +64,9 @@ impl Runtime {
             command_rx,
             commands_closed: false,
             config_rx,
-            session_snapshots: sessions.subscribe(),
+            sessions_state: sessions.subscribe(),
             session_events: sessions.events(),
-            codec_snapshots,
+            codec_health,
             sessions: sessions.clone(),
             output: output.clone(),
             local: Some(local),
@@ -119,14 +119,14 @@ impl Runtime {
                         None => self.commands_closed = true,
                     }
                 }
-                changed = self.session_snapshots.changed() => {
+                changed = self.sessions_state.changed() => {
                     if changed.is_err() {
                         break (
                             tokio::time::Instant::now() + super::PIPELINE_SHUTDOWN_TIMEOUT,
                             Err("peer-session snapshot source closed".into()),
                         );
                     }
-                    let snapshot = self.session_snapshots.borrow_and_update().clone();
+                    let snapshot = self.sessions_state.borrow_and_update().clone();
                     self.cancel_start_if_session_is_not_live(&snapshot);
                     self.reconcile(&snapshot).await;
                 }
@@ -149,14 +149,14 @@ impl Runtime {
                         );
                     }
                 },
-                changed = self.codec_snapshots.changed() => {
+                changed = self.codec_health.changed() => {
                     if changed.is_err() {
                         break (
                             tokio::time::Instant::now() + super::PIPELINE_SHUTDOWN_TIMEOUT,
                             Err("codec snapshot source closed".into()),
                         );
                     }
-                    let snapshot = self.codec_snapshots.borrow_and_update().clone();
+                    let snapshot = self.codec_health.borrow_and_update().clone();
                     self.apply_codec_health(&snapshot).await;
                 }
                 _ = reconcile_tick.tick() => {
@@ -439,7 +439,7 @@ impl Runtime {
         self.sessions.snapshot().session(session_id).is_some_and(super::permits_local_share_start)
     }
 
-    fn cancel_start_if_session_is_not_live(&self, snapshot: &peer_session::Snapshot) {
+    fn cancel_start_if_session_is_not_live(&self, snapshot: &peer_session::Sessions) {
         if let Some(operation) = &self.start_operation
             && !snapshot
                 .session(operation.selection().session_id())
@@ -449,13 +449,13 @@ impl Runtime {
         }
     }
 
-    async fn reconcile(&mut self, snapshot: &peer_session::Snapshot) {
+    async fn reconcile(&mut self, snapshot: &peer_session::Sessions) {
         let config = self.config_rx.borrow().clone();
         self.reconciler.reconcile(self.local.as_mut(), &mut self.remote, snapshot, &config).await;
         self.output.reconcile_shares(snapshot);
     }
 
-    async fn apply_codec_health(&mut self, snapshot: &codec::Snapshot) {
+    async fn apply_codec_health(&mut self, snapshot: &codec::Health) {
         if matches!(snapshot.encode, DirectionState::RestartRequired(_)) {
             let newly_required = !self.encoder_restart_required;
             self.encoder_restart_required = true;

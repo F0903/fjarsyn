@@ -1056,16 +1056,20 @@ version = "0.4.0"
 dependencies = [
  "bytemuck",
  "bytes",
+ "directories",
  "fjarsyn-engine",
  "futures",
  "iced",
  "iced_core",
  "iced_fonts",
  "iced_wgpu",
+ "serde",
+ "serde_json",
  "thiserror 2.0.19",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "wgpu",
  "windows",
  "winres",
@@ -1100,6 +1104,7 @@ dependencies = [
  "webrtc",
  "wgpu",
  "windows",
+ "zeroize",
 ]
 
 [[package]]

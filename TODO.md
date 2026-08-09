@@ -1,119 +1,81 @@
 # TODO
 
-Here you can find the current TODOs for the project. The TODOs are approximately listed by priority.
+This file contains only active work. Completed rework and audit history remains
+available in version control and in the architecture documents. Items are
+approximately ordered by architectural and release risk.
 
-Each TODO is somewhat abstract and may require a lot of work to implement.
+## Current rework findings
 
-## Explicit peer-session rework
+Findings from the full architecture and maintainability scan on 2026-08-08.
 
-Clean-break implementation of the accepted architecture in
-`docs/architecture/peer-sessions.md`. The old call, address-based messaging and
-global WebRTC paths are removed rather than supported in parallel.
+### Media ownership and pipeline correctness
 
-- [x] Define the peer-session ownership, state, protocol and UI boundaries.
-- [x] Make contacts trusted identities only; remove saved network addresses.
-- [x] Separate unauthenticated mDNS presence into a hosted `PresenceService`.
-- [x] Implement the hosted `PeerSessionService` and per-peer WebRTC sessions.
-- [x] Move chat and receipts exclusively onto the authenticated messaging data channel.
-- [x] Keep screen sharing on WebRTC media tracks under an application-owned media runtime.
-- [x] Replace call/message screens with the contact-oriented
-  `ui::screens::peer::Screen` flow.
-- [x] Delete all legacy call, signaling-chat and global mutable WebRTC paths.
-- [x] Pass state-machine, protocol, persistence, lifecycle, UI projection and loopback tests.
+- [ ] Replace per-frame shared-texture allocation with a bounded, measured GPU frame pool.
+  - Reuse a slot only after an explicit D3D12 consumer-completion signal; producer readiness alone is insufficient.
+  - Define backpressure/drop behavior when every slot is still in use and verify memory/handle bounds at 1080p and 4K target framerates.
+  - Measure and remove per-frame texture/handle creation, repeated shared-fence opening, and the current empty queue submission/completion-callback overhead as part of the pooled release protocol.
+- [ ] Make encoded-video loss explicitly keyframe-aware.
+  - Never silently discard an arbitrary encoded H.264 frame and continue publishing dependent P-frames as if the stream were intact.
+  - Retain the WebRTC sender and consume RTCP loss feedback so the encoder can force a new IDR.
+  - After a discontinuity, withhold dependent input until the decoder has a valid SPS/PPS plus keyframe boundary.
+- [ ] Extract local and remote screen-share pipeline construction into real pipeline owners.
+  - Keep controllers focused on selection, bindings, durable state and reconciliation.
+  - Make capture teardown an exactly-once ownership transition; normal stop currently can schedule detached cleanup more than once for the same provider.
+  - Isolate synchronous WGC/D3D/COM setup and teardown behind a dedicated capture host thread so a stalled driver call cannot pin a Tokio worker beyond the advertised deadline.
+- [ ] Introduce a validated `FrameLayout`/dimension boundary used by capture, codec and GPU-import paths.
+  - Reject non-positive or excessive dimensions before casts or allocation.
+  - Use checked pixel counts, exact plane sizes and strides for formats such as NV12, and explicit allocation ceilings.
+  - Drain all FFmpeg outputs per input, distinguish `EAGAIN`, EOF and terminal errors in both directions, and flush delayed output during shutdown.
+  - Add codec contract tests for `EAGAIN`, multiple outputs, delayed output and terminal errors.
+- [ ] Propagate WGC capture-item closure and terminal capture failures into screen-share state instead of leaving an active but permanently frozen share.
 
-### Peer-session follow-ups
+### Targeted organization follow-ups
 
-- [x] Add reciprocal, versioned text pairing invites with explicit full-fingerprint comparison over an independent trusted channel. A QR renderer remains optional transport only.
-- [x] Add bounded fallback across all current mDNS endpoint hints and an IPv6 signaling listener. Presence hints remain unauthenticated, so never treat endpoint selection as identity.
-- [x] Add an application-level cap for presence peers/advertisements and explicit signaling authentication rate limits.
-- [x] Encrypt signaling with TLS 1.3-only WSS, pin the listener's RFC 7250 Ed25519 raw public key to the trusted contact identity and retain signed initiator/session authentication with no plaintext fallback.
-- [x] Add actor-owned, generation-fenced ICE restart over fresh identity-pinned WSS while preserving the existing session, peer connection, channels, media tracks and share state.
-- [x] Fence every encoded sample with a negotiated, monotonic share epoch so buffered tail frames can never cross a rapid share restart.
-- [x] Move FFmpeg codec calls onto watchdog-supervised, service-owned OS threads with bounded application shutdown, late-output suppression and sticky quarantine of only the affected encode/decode direction until restart.
+- [ ] Split accepted-connection TLS/WebSocket authentication and routing out of the negotiation listener; keep socket-set ownership, admission and listener lifecycle together.
+- [ ] Move the tests in `screen_share/shares.rs` after the production declarations (or into a cohesive tests module) so `SessionMedia` and `Shares` remain contiguous.
+- [ ] Replace FFmpeg-backend inherent implementations on the public `TranscodeType` with backend-owned mapping functions or an `EncoderInfo` lookup beside the backend.
+- [ ] Move very large inline UI test suites, such as contacts workflow scenarios, into cohesive test modules while leaving directly-bound production helpers and implementations with their owning types.
 
-- Exercise Windows Graphics Capture device-loss and resize/recreate behavior on real hardware.
-- Implement real software pixel conversion before enabling RGBA10, RGBA16 or NV12 preview paths.
-- Expand coverage for high-risk behavior.
-  - Capture resize/device-reset paths.
-  - FFmpeg/D3D interop fallback behavior.
-  - UI workflow regressions for peer sessions, messaging, and startup recovery.
-- Keep clippy clean under `cargo clippy --workspace --all-targets -- -D warnings`.
-- Revisit `ui/shell/handlers` and consolidate routing/dispatch further if it keeps growing noisier.
-- Add more focused lifecycle/startup/retry sequencing tests now that the app event/command boundary is stable.
-- Audio capture, streaming and playback.
+## Remaining engineering work
 
-## Audit remediation (2026-07-15)
+### Media capabilities and native isolation
 
-Findings from the full project security, correctness, media-pipeline, dependency and build audit. Items are grouped approximately by release risk.
-
-### P0 - Security and session integrity
-
-- [x] Move chat, receipts and screen-share control onto encrypted WebRTC data channels.
-- [x] Bind signed signaling, answers, ICE candidates, rejection and readiness to the exact local peer, remote peer and random session ID; reject replay.
-- [x] Bind data-channel messages and receipts to the authenticated session/peer capability that delivered them.
-- [x] Keep outgoing sessions in `Requesting`/`Negotiating` until authenticated negotiation, DTLS and required channels complete; enforce phase timeouts.
-- [x] Bound signaling frames, handshakes, idle time, global/per-IP connections and authentication-failure closure.
-- [x] Store contacts as peer ID plus required trusted key only; never persist an mDNS address as identity.
-- [x] Expose a copyable canonical pairing invite and its full identity fingerprint.
-- [x] Require a parsed invite and explicit independent-channel fingerprint confirmation before contact creation or key replacement.
-- [x] Add TLS 1.3 WSS signaling confidentiality with exact peer-identity pinning, bounded authentication and downgrade regression coverage.
-- [x] Add explicit authentication-attempt rate limiting in addition to connection limits.
-
-### P1 - Lifecycle, session state and media correctness
-
-- [x] Give signaling, WebRTC and listener tasks explicit ownership, cancellation and bounded joined shutdown.
-- [x] Replace mutable reusable peer connections with one actor-owned connection per immutable session.
-- [x] Serialize connect, accept, reject and disconnect operations and tag transport events with an actor generation so stale callbacks cannot affect a newer session.
-- [x] Treat transient WebRTC `Disconnected` separately from terminal `Failed`/`Closed`, with a bounded recovery grace period.
-- [x] Require the corresponding remote description before accepting ICE candidates, bind each candidate to its exact ICE username fragment, cap the full per-generation stream, and report application failures.
-- [ ] Replace copyable raw shared GPU handles with owned RAII handles that always call `CloseHandle`; keep the underlying texture alive for every submitted frame.
-- [ ] Redesign D3D11-to-D3D12/wgpu texture sharing around a documented synchronization contract.
-  - Use the correct shared-resource flags.
-  - Add per-slot keyed-mutex or fence synchronization and explicit frame leases before reusing ring-buffer textures.
 - [ ] Implement real hardware scaling and pixel-format conversion for NVENC; use direct texture copies only when source and destination dimensions and formats match exactly.
-- [ ] Make hardware encoder/decoder capability probing and failure explicit.
-  - Preserve or restore CPU readback when falling back to software.
-  - Track capture-device generations and rebuild dependent encoders/importers after WGC device recovery.
-- [ ] Finish buffer-pool and allocation-size hardening.
-  - [x] Never expose a safe slice before all bytes are initialized.
-  - [ ] Use exact checked sizes for planar formats such as NV12.
-- [x] Surface capture closure, encoder/decoder initialization failure and worker termination to session/UI state instead of leaving an apparently active but frozen stream.
-- [ ] Correct the FFmpeg send/receive state machines: drain all available frames/packets, distinguish `EAGAIN` from terminal errors and flush delayed data during shutdown.
-- [x] Move synchronous codec work off Tokio's blocking pool onto owned encoder/decoder threads with a 10-second active-call watchdog, late-output suppression, independent sticky direction quarantine and participation in one shared three-second engine-shutdown deadline.
+- [ ] Make hardware encoder/decoder capability probing and fallback explicit.
+  - Preserve or restore CPU readback when a configured hardware encoder falls back to software.
+  - Match the desktop renderer backend/DXGI adapter to capture and decoder resources, or dynamically switch to CPU/software output after persistent typed import failures.
+  - Track capture-device generations and rebuild dependent codecs/importers after WGC device recovery; an encoder must never copy a new-device frame through its stale device context.
 - [ ] Run codec workers in supervised child processes so an already-running FFmpeg FFI call can be forcibly terminated and native faults are contained.
-- [x] Tag media with a share epoch so rapid stop/restart cannot attribute an old buffered SPS/IDR tail to a new `ShareId`.
+- [ ] Stop publishing and projecting local preview frames at capture rate while the preview is hidden.
+- [ ] Add correct CPU preview conversion for high-bit-depth and planar formats before advertising software-preview support for RGBA10, RGBA16 or NV12.
 
-### P2 - Privacy, resilience and resource limits
+### Privacy and local data
 
-- [ ] Store the Ed25519 private key using Windows-protected secret storage, with restrictive permissions and atomic temp-file/fsync/rename recovery where files remain necessary.
-- [ ] Decide and document the local chat-history privacy model; add database encryption, retention controls and secure deletion if local confidentiality is required.
-- [x] Add checked limits for chat/control payloads, signaling frames and bitrate conversions.
-- [ ] Add strict decoded-video dimension, pixel-count and allocation limits before codec/frame allocation.
-- [x] Tie delivery receipts to the authenticated conversation peer and session, not only a message UUID.
-- [x] Persist distinct pending, sent, delivery-unknown, delivered and failed outcomes without unsafe automatic retries.
-- [x] Buffer only the bounded final-readiness race and otherwise explicitly reject application/control data before required channels are ready.
-- [ ] Give each GPU frame viewer its own aspect-ratio uniform state, or use correctly isolated dynamic offsets for multi-view rendering.
-- [ ] Surface GPU import failures and provide a controlled CPU fallback instead of rendering a silent blank frame.
-- [ ] Stop hidden local previews from continuing to drive capture-rate UI updates and rendering work.
-- [x] Replace capture-picker `yield_now` busy polling with bounded backoff.
-- [x] Refresh discovery metadata and remove advertisements on `mdns-sd` TTL/removal events.
-- [x] Bound application-level presence registry/advertisement cardinality under a LAN flood.
-- [x] Check affected-row counts for contact update/delete operations so stale IDs cannot leave the UI cache inconsistent with SQLite.
-- [x] Use checked arithmetic when converting configured bitrate units.
+- [ ] Decide and document the local chat-history privacy model.
+  - Define retention, user deletion, database/WAL handling and the forensic limits of best-effort deletion.
+  - Add database encryption or encryption-key destruction if the product requires meaningful local confidentiality.
 
-### P3 - Dependencies, portability and release gates
+### Dependencies, portability and release gates
 
-- [ ] Complete remediation of the RustSec-flagged dependency paths.
-  - [x] Remove the unused `quick-xml` and `paste` paths through renderer/platform
-    feature pruning; neither remains in `Cargo.lock`.
-  - [ ] Upgrade or replace active `bincode` (WebRTC DTLS) and `ttf-parser`
-    (Iced text rendering) paths.
-  - [ ] Document or eliminate lock-only `rsa`, which is retained by SQLx's
-    inactive MySQL package but is absent from the all-target dependency graph.
-- [ ] Add `cargo audit`/OSV and dependency-policy checks to CI, including all supported target graphs.
+- [ ] Resolve the active unmaintained `bincode` and `ttf-parser` dependency paths by replacing the upstream path, upgrading when upstream migrates, or recording a time-bounded policy waiver.
+- [ ] Add `cargo audit`/OSV and dependency-policy checks to CI for the resolved build graph; document why lockfile-only inactive packages do not represent shipped code.
 - [ ] Check in a `vcpkg.json` with a baseline so the exact native FFmpeg build is reproducible and auditable.
-- [ ] Pin the Rust toolchain instead of following floating `nightly`; determine whether nightly is still required.
+- [ ] Pin a stable Rust toolchain version and declare the supported `rust-version`; the workspace currently builds on stable without source-level nightly features.
 - [ ] Add CI for formatting, workspace/all-target tests, documentation tests, clippy with warnings denied and a locked release build.
-- [ ] Add native/UI tests and hardware-backed integration coverage for capture, resize/device loss, zero-copy synchronization, codec fallback, source closure and repeated/multi-peer session workflows.
-- [ ] Either make non-Windows capture imports compile correctly behind target gates or explicitly document and enforce Windows-only support in manifests and setup instructions.
-- [ ] Expand regression tests for peer/session binding, replay handling, listener resource limits, ICE credential/candidate fencing, lifecycle shutdown and stale-event isolation.
+- [ ] Enforce the documented Windows-only target through manifest metadata, target-scoped dependencies and a clear unsupported-target compile error.
+
+### Verification
+
+- [ ] Add Windows adapter-backed coverage for the shared GPU-frame contract
+  across capture and decoder producers: immutable import,
+  D3D11-fence-to-D3D12-queue ordering, resource and handle lifetime across
+  reset/recovery, and CPU-upload/placeholder fallback. Also cover WGC
+  resize/device loss/source closure, hardware codec scaling/fallback and
+  repeated capture teardown.
+- [ ] Add focused screen-share controller/runtime tests for start rollback, pipeline failure, exact-once teardown and shutdown ordering.
+- [ ] Add full shell integration tests for `EngineAdapter`/coordinator failure and disposal of stale successful initialization owners.
+- [ ] Add peer-session integration tests proving live global/per-IP admission permits remain held and are released correctly, and that stale RTC callbacks cannot affect a replacement/restarted transport.
+
+## Future features
+
+- [ ] Audio capture, streaming and playback.

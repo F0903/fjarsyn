@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    super::{Limits, NearbyAdvertisement, NearbyPeer, Snapshot},
+    super::{Limits, NearbyAdvertisement, NearbyPeer, NearbyPeers},
     Observation, ResolvedAdvertisement, normalize_endpoint_hints,
 };
 use crate::identity::PeerId;
@@ -50,7 +50,7 @@ impl Registry {
         true
     }
 
-    pub(in crate::presence) fn snapshot(&self) -> Snapshot {
+    pub(in crate::presence) fn snapshot(&self) -> NearbyPeers {
         let mut grouped = HashMap::<PeerId, Vec<NearbyAdvertisement>>::new();
         for resolved in self.by_instance.values() {
             grouped
@@ -88,7 +88,7 @@ impl Registry {
             .collect::<Vec<_>>();
         peers.sort_by(|left, right| left.peer_id.cmp(&right.peer_id));
 
-        Snapshot::new(self.revision, peers.into())
+        NearbyPeers::new(self.revision, peers.into())
     }
 
     fn upsert(&mut self, mut resolved: ResolvedAdvertisement) -> bool {

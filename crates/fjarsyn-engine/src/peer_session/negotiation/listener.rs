@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     panic::AssertUnwindSafe,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -34,12 +34,64 @@ use super::{
 use crate::{
     identity::{LocalPeerIdentity, PeerId, TrustedPeerIdentity},
     peer_session::{
-        Error, SessionId, TrustedPeerResolver,
+        Error, NetworkScope, SessionId, TrustedPeerResolver,
         protocol::{
             EnvelopeVerification, NegotiationSignal, SessionReplayCache, SignedSessionEnvelope,
         },
     },
 };
+
+enum ListenerSockets {
+    AllInterfaces(TcpListener),
+    Loopback { ipv4: TcpListener, ipv6: TcpListener },
+}
+
+impl ListenerSockets {
+    fn bind(port: u16, scope: NetworkScope) -> Result<Self, Error> {
+        match scope {
+            NetworkScope::AllInterfaces => bind_dual_stack_listener(port).map(Self::AllInterfaces),
+            NetworkScope::LoopbackOnly => {
+                let (ipv4, ipv6) = bind_loopback_listeners(port)?;
+                Ok(Self::Loopback { ipv4, ipv6 })
+            }
+        }
+    }
+
+    fn port(&self) -> Result<u16, Error> {
+        let address = match self {
+            Self::AllInterfaces(listener) | Self::Loopback { ipv4: listener, .. } => {
+                listener.local_addr()
+            }
+        };
+        address.map(|address| address.port()).map_err(|error| Error::Listener(error.to_string()))
+    }
+
+    async fn accept(&self) -> std::io::Result<(TcpStream, SocketAddr)> {
+        match self {
+            Self::AllInterfaces(listener) => listener.accept().await,
+            Self::Loopback { ipv4, ipv6 } => tokio::select! {
+                accepted = ipv4.accept() => accepted,
+                accepted = ipv6.accept() => accepted,
+            },
+        }
+    }
+
+    #[cfg(test)]
+    fn local_addresses(&self) -> Result<Vec<SocketAddr>, Error> {
+        match self {
+            Self::AllInterfaces(listener) => listener
+                .local_addr()
+                .map(|address| vec![address])
+                .map_err(|error| Error::Listener(error.to_string())),
+            Self::Loopback { ipv4, ipv6 } => [ipv4, ipv6]
+                .iter()
+                .map(|listener| {
+                    listener.local_addr().map_err(|error| Error::Listener(error.to_string()))
+                })
+                .collect(),
+        }
+    }
+}
 
 #[derive(Clone)]
 struct ConnectionContext {
@@ -63,16 +115,16 @@ pub(in crate::peer_session) struct Listener {
 impl Listener {
     pub(in crate::peer_session) async fn bind(
         port: u16,
+        network_scope: NetworkScope,
         local_peer_id: PeerId,
         local_identity: LocalPeerIdentity,
         trusted_peers: Arc<dyn TrustedPeerResolver>,
         limits: Limits,
         incoming_tx: mpsc::Sender<Incoming>,
     ) -> Result<Self, Error> {
-        let listener = bind_dual_stack_listener(port)?;
+        let listener = ListenerSockets::bind(port, network_scope)?;
         let tls_acceptor = tls::Acceptor::new(&local_identity)?;
-        let port =
-            listener.local_addr().map_err(|error| Error::Listener(error.to_string()))?.port();
+        let port = listener.port()?;
         let (shutdown_tx, mut shutdown_rx) = watch::channel(None);
         let semaphore = Arc::new(Semaphore::new(limits.max_connections.max(1)));
         let per_ip = Arc::new(Mutex::new(HashMap::<IpAddr, usize>::new()));
@@ -252,6 +304,62 @@ fn bind_dual_stack_listener(port: u16) -> Result<TcpListener, Error> {
         .listen(1024)
         .map_err(|error| Error::Listener(format!("listen on dual-stack socket: {error}")))
 }
+
+fn bind_loopback_listeners(port: u16) -> Result<(TcpListener, TcpListener), Error> {
+    const EPHEMERAL_PORT_ATTEMPTS: usize = 32;
+
+    if port != 0 {
+        return bind_loopback_listeners_once(port);
+    }
+
+    let mut last_ipv6_error = None;
+    for _ in 0..EPHEMERAL_PORT_ATTEMPTS {
+        let ipv4 = bind_ipv4_loopback_listener(0)?;
+        let selected_port = ipv4
+            .local_addr()
+            .map_err(|error| Error::Listener(format!("read IPv4 loopback address: {error}")))?
+            .port();
+        match bind_ipv6_loopback_listener(selected_port) {
+            Ok(ipv6) => return Ok((ipv4, ipv6)),
+            Err(error) => last_ipv6_error = Some(error),
+        }
+    }
+
+    Err(last_ipv6_error.unwrap_or_else(|| {
+        Error::Listener("could not allocate paired IPv4 and IPv6 loopback listeners".into())
+    }))
+}
+
+fn bind_loopback_listeners_once(port: u16) -> Result<(TcpListener, TcpListener), Error> {
+    let ipv4 = bind_ipv4_loopback_listener(port)?;
+    let ipv6 = bind_ipv6_loopback_listener(port)?;
+    Ok((ipv4, ipv6))
+}
+
+fn bind_ipv4_loopback_listener(port: u16) -> Result<TcpListener, Error> {
+    let socket = TcpSocket::new_v4()
+        .map_err(|error| Error::Listener(format!("create IPv4 loopback socket: {error}")))?;
+    socket
+        .bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
+        .map_err(|error| Error::Listener(format!("bind IPv4 loopback socket: {error}")))?;
+    socket
+        .listen(1024)
+        .map_err(|error| Error::Listener(format!("listen on IPv4 loopback socket: {error}")))
+}
+
+fn bind_ipv6_loopback_listener(port: u16) -> Result<TcpListener, Error> {
+    let socket = TcpSocket::new_v6()
+        .map_err(|error| Error::Listener(format!("create IPv6 loopback socket: {error}")))?;
+    SockRef::from(&socket)
+        .set_only_v6(true)
+        .map_err(|error| Error::Listener(format!("isolate IPv6 loopback socket: {error}")))?;
+    socket
+        .bind(SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
+        .map_err(|error| Error::Listener(format!("bind IPv6 loopback socket: {error}")))?;
+    socket
+        .listen(1024)
+        .map_err(|error| Error::Listener(format!("listen on IPv6 loopback socket: {error}")))
+}
 async fn accept_connection(
     stream: TcpStream,
     context: ConnectionContext,
@@ -413,6 +521,18 @@ fn validate_signaling_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn loopback_scope_binds_both_families_to_one_local_port() {
+        let listeners = ListenerSockets::bind(0, NetworkScope::LoopbackOnly).unwrap();
+        let addresses = listeners.local_addresses().unwrap();
+
+        assert_eq!(addresses.len(), 2);
+        assert!(addresses.iter().all(|address| address.ip().is_loopback()));
+        assert_eq!(addresses[0].port(), addresses[1].port());
+        assert!(addresses.iter().any(SocketAddr::is_ipv4));
+        assert!(addresses.iter().any(SocketAddr::is_ipv6));
+    }
 
     #[test]
     fn websocket_request_target_is_exact() {

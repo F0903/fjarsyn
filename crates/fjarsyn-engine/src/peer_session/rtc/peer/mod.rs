@@ -9,6 +9,7 @@ mod data_channels;
 mod ice_credentials;
 #[path = "peer.rs"]
 mod implementation;
+mod network_policy;
 mod signaling;
 mod video;
 

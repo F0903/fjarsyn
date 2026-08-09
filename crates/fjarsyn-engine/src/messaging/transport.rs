@@ -7,7 +7,7 @@ use crate::peer_session::{self, MessageId, SessionId};
 
 #[async_trait]
 pub(in crate::messaging) trait SessionMessaging: Send + Sync {
-    fn snapshot(&self) -> peer_session::Snapshot;
+    fn snapshot(&self) -> peer_session::Sessions;
 
     async fn send_message(
         &self,
@@ -27,7 +27,7 @@ pub(in crate::messaging) trait SessionMessaging: Send + Sync {
 
 #[async_trait]
 impl SessionMessaging for peer_session::ServiceHandle {
-    fn snapshot(&self) -> peer_session::Snapshot {
+    fn snapshot(&self) -> peer_session::Sessions {
         peer_session::ServiceHandle::snapshot(self)
     }
 

@@ -51,12 +51,12 @@ pub enum DirectionState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Snapshot {
+pub struct Health {
     pub encode: DirectionState,
     pub decode: DirectionState,
 }
 
-impl Snapshot {
+impl Health {
     pub(in crate::media::codec) fn direction(&self, direction: Direction) -> &DirectionState {
         match direction {
             Direction::Encode => &self.encode,

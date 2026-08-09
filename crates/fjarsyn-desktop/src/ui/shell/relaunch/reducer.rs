@@ -2,6 +2,12 @@ use std::sync::Arc;
 
 use crate::ui::shell::Lifecycle;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::ui::shell) enum AfterShutdown {
+    LaunchReplacement,
+    Exit,
+}
+
 /// Admits one restart transition and takes the current runtime owner.
 ///
 /// The outer option reports admission. The inner option is absent when a
@@ -9,17 +15,26 @@ use crate::ui::shell::Lifecycle;
 /// down.
 pub(in crate::ui::shell) fn begin<Owner>(
     lifecycle: &mut Lifecycle,
-    codec_restart_required: bool,
+    restart_required: bool,
     runtime: &mut Option<Owner>,
 ) -> Option<Option<Owner>> {
-    let admitted = matches!(lifecycle, Lifecycle::RestartFailed(_))
-        || codec_restart_required && matches!(lifecycle, Lifecycle::Ready);
+    let admitted = matches!(lifecycle, Lifecycle::RestartFailed(_) | Lifecycle::Degraded(_))
+        || restart_required && matches!(lifecycle, Lifecycle::Ready);
     if !admitted {
         return None;
     }
 
     *lifecycle = Lifecycle::Restarting;
     Some(runtime.take())
+}
+
+/// Resolves the race between restart shutdown and an intervening close.
+pub(in crate::ui::shell) fn shutdown_finished(lifecycle: &Lifecycle) -> Option<AfterShutdown> {
+    match lifecycle {
+        Lifecycle::Restarting => Some(AfterShutdown::LaunchReplacement),
+        Lifecycle::ShuttingDown => Some(AfterShutdown::Exit),
+        _ => None,
+    }
 }
 
 /// Applies a replacement-launch completion.
@@ -34,7 +49,10 @@ pub(in crate::ui::shell) fn finish(
         return None;
     }
     match launch_result {
-        Ok(()) => Some(true),
+        Ok(()) => {
+            *lifecycle = Lifecycle::ShuttingDown;
+            Some(true)
+        }
         Err(error) => {
             *lifecycle = Lifecycle::RestartFailed(error.to_string());
             Some(false)
@@ -46,10 +64,10 @@ pub(in crate::ui::shell) fn finish(
 mod tests {
     use std::sync::Arc;
 
-    use super::{Lifecycle, begin, finish};
+    use super::{AfterShutdown, Lifecycle, begin, finish, shutdown_finished};
 
     #[test]
-    fn restart_can_only_begin_from_a_running_app_or_a_failed_relaunch() {
+    fn restart_can_only_begin_from_a_running_degraded_or_failed_relaunch_state() {
         let mut ready = Lifecycle::Ready;
         let mut runtime = Some("runtime");
         assert!(begin(&mut ready, true, &mut runtime).is_some());
@@ -57,6 +75,11 @@ mod tests {
         let mut ready_without_restart = Lifecycle::Ready;
         let mut runtime = Some("runtime");
         assert!(begin(&mut ready_without_restart, false, &mut runtime).is_none());
+
+        let mut degraded = Lifecycle::Degraded("engine adapter stopped".into());
+        let mut runtime = Some("runtime");
+        assert_eq!(begin(&mut degraded, false, &mut runtime), Some(Some("runtime")));
+        assert_eq!(degraded, Lifecycle::Restarting);
 
         let mut retry = Lifecycle::RestartFailed("launch failed".into());
         let mut no_runtime: Option<&str> = None;
@@ -66,7 +89,7 @@ mod tests {
 
         for mut lifecycle in [
             Lifecycle::Starting,
-            Lifecycle::Failed("startup failed".into()),
+            Lifecycle::StartupFailed("startup failed".into()),
             Lifecycle::ShuttingDown,
             Lifecycle::Restarting,
         ] {
@@ -105,7 +128,18 @@ mod tests {
         let should_exit = finish(&mut lifecycle, &Ok(()));
 
         assert_eq!(should_exit, Some(true));
-        assert_eq!(lifecycle, Lifecycle::Restarting);
+        assert_eq!(lifecycle, Lifecycle::ShuttingDown);
+        assert_eq!(shutdown_finished(&lifecycle), Some(AfterShutdown::Exit));
+    }
+
+    #[test]
+    fn close_while_restart_shutdown_is_running_suppresses_replacement_launch() {
+        assert_eq!(
+            shutdown_finished(&Lifecycle::Restarting),
+            Some(AfterShutdown::LaunchReplacement)
+        );
+        assert_eq!(shutdown_finished(&Lifecycle::ShuttingDown), Some(AfterShutdown::Exit));
+        assert_eq!(shutdown_finished(&Lifecycle::Ready), None);
     }
 
     #[test]

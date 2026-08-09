@@ -3,7 +3,7 @@ use std::sync::Arc;
 use fjarsyn_engine::{
     media::{frame::Frame, gpu_interop},
     messaging::{ConversationMessage, MessageDirection, MessageStatus},
-    peer_session::{LocalShareState, Phase, RemoteShareState, SessionId, SessionSnapshot},
+    peer_session::{LocalShareState, Phase, RemoteShareState, SessionId, SessionState},
     screen_share,
 };
 use iced::{
@@ -22,7 +22,10 @@ use crate::ui::{
 };
 
 impl Screen {
-    pub(super) fn render_view<'a>(&'a self, context: Context<'a>) -> Element<'a, Message> {
+    pub(in crate::ui::screens) fn render_view<'a>(
+        &'a self,
+        context: Context<'a>,
+    ) -> Element<'a, Message> {
         let session = context.session_for_peer(&self.peer_id);
         let session_id = session.map(|session| session.session_id);
         let share = session_id.map(|id| context.screen_share_session(id)).unwrap_or_default();
@@ -45,7 +48,7 @@ impl Screen {
     fn view_header<'a>(
         &'a self,
         context: Context<'a>,
-        session: Option<&SessionSnapshot>,
+        session: Option<&SessionState>,
     ) -> Element<'a, Message> {
         let name = context.display_name(&self.peer_id);
         let nearby = context.is_nearby(&self.peer_id);
@@ -121,8 +124,8 @@ impl Screen {
     fn view_video<'a>(
         &'a self,
         context: Context<'a>,
-        session: Option<&SessionSnapshot>,
-        share: &screen_share::SessionSnapshot,
+        session: Option<&SessionState>,
+        share: &screen_share::SessionMedia,
     ) -> iced::widget::Container<'a, Message> {
         let connected =
             project_peer(false, session.map(|session| session.phase)).capabilities_ready();
@@ -208,7 +211,7 @@ impl Screen {
             .into()
         };
 
-        let preview_enabled = context.config().capture.enable_ui_preview;
+        let preview_enabled = context.settings().engine.capture.enable_ui_preview;
         let encoder_restart_required = context.encoder_restart_required();
         let local_preview: Element<'_, Message> =
             if !encoder_restart_required && preview_enabled && self.local_preview_visible {
@@ -262,7 +265,7 @@ impl Screen {
         core_local_active: bool,
         preview_enabled: bool,
         encoder_restart_required: bool,
-        share: &screen_share::SessionSnapshot,
+        share: &screen_share::SessionMedia,
     ) -> Element<'_, Message> {
         let local_active = matches!(share.local, screen_share::LocalState::Active);
         let reconciling_stop = core_local_active
@@ -352,7 +355,7 @@ impl Screen {
     fn view_messages<'a>(
         &'a self,
         context: Context<'a>,
-        session: Option<&SessionSnapshot>,
+        session: Option<&SessionState>,
     ) -> iced::widget::Container<'a, Message> {
         let messages = context.messages_for_peer(&self.peer_id);
         let mut transcript = column![].spacing(10);
@@ -449,7 +452,7 @@ impl Screen {
     }
 
     fn frame_viewer(&self, frame: Arc<Frame>) -> Element<'static, Message> {
-        if frame.gpu_import_handle().is_some()
+        if frame.gpu_resource_id().is_some()
             && gpu_interop::supports_zero_copy_preview(frame.format)
         {
             GpuFrameViewer::new(frame).into()

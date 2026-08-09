@@ -59,6 +59,8 @@ Changing either the PeerId or any key bit changes the fingerprint.
 
 The invite is deliberately not self-signed: a substituted identity could
 self-sign its own substituted key, which would not establish human trust.
+The local private signing key is not part of an invite or settings document;
+its at-rest boundary is documented in [`local-data.md`](local-data.md).
 The listening peer proves possession of the saved key during the pinned TLS
 1.3 handshake. The initiating peer proves possession by signing the endpoint
 hello, session request and subsequent negotiation envelopes. Signed SDP also

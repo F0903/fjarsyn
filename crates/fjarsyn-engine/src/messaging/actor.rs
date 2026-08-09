@@ -6,9 +6,9 @@ use chrono::Utc;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use super::{
-    COMMAND_CAPACITY, ConversationMessage, EVENT_CAPACITY, Error, Event, MessageRecord,
-    MessageStatus, Snapshot, Store,
-    snapshot::{build, with_upserted_message},
+    COMMAND_CAPACITY, ConversationMessage, Conversations, EVENT_CAPACITY, Error, Event,
+    MessageRecord, MessageStatus, Store,
+    conversations::{build, with_upserted_message},
     transport::SessionMessaging,
 };
 use crate::{
@@ -39,15 +39,15 @@ pub(in crate::messaging) struct Actor {
     commands: mpsc::Receiver<Command>,
     session_events: mpsc::Receiver<peer_session::Event>,
     session_events_open: bool,
-    snapshot: Snapshot,
-    snapshot_tx: watch::Sender<Snapshot>,
+    snapshot: Conversations,
+    snapshot_tx: watch::Sender<Conversations>,
     event_tx: broadcast::Sender<Event>,
     shutdown_rx: watch::Receiver<bool>,
 }
 
 pub(super) struct Channels {
     pub(super) command_tx: mpsc::Sender<Command>,
-    pub(super) snapshot_rx: watch::Receiver<Snapshot>,
+    pub(super) snapshot_rx: watch::Receiver<Conversations>,
     pub(super) event_tx: broadcast::Sender<Event>,
     pub(super) shutdown_tx: watch::Sender<bool>,
 }
@@ -57,7 +57,7 @@ impl Actor {
         store: Arc<dyn Store>,
         sessions: Arc<dyn SessionMessaging>,
         session_events: mpsc::Receiver<peer_session::Event>,
-        snapshot: Snapshot,
+        snapshot: Conversations,
     ) -> (Self, Channels) {
         let (command_tx, commands) = mpsc::channel(COMMAND_CAPACITY);
         let (snapshot_tx, snapshot_rx) = watch::channel(snapshot.clone());
@@ -315,7 +315,7 @@ impl Actor {
 
     pub(in crate::messaging) async fn load_snapshot(
         store: &Arc<dyn Store>,
-    ) -> Result<Snapshot, Error> {
+    ) -> Result<Conversations, Error> {
         let messages = store
             .list()
             .await?

@@ -59,39 +59,117 @@ impl Screen {
         .into()
     }
 
-    pub(super) fn render_view<'a>(&'a self, context: Context<'a>) -> Element<'a, Message> {
-        let title = text("Settings").size(32).font(fonts::BOLD).style(text::primary);
+    fn startup_recovery_actions(&self, is_dirty: bool) -> Element<'_, Message> {
+        const SIZE: u32 = 13;
+
+        let back_button = button("Back to error")
+            .padding([6, 9])
+            .on_press(Message::Navigation(message::Navigation::Navigate(message::Route::Home)))
+            .style(|theme, status| theme::button_style(theme, status, false));
+        let retry_button = button(
+            row![lucide::refresh_cw().size(SIZE), text("Apply and retry").size(SIZE)]
+                .spacing(6)
+                .align_y(Alignment::Center),
+        )
+        .padding([6, 9])
+        .on_press(Message::Screen(message::Screen::Settings(SettingsMessage::SaveAndRetryStartup)))
+        .style(|theme, status| theme::button_style(theme, status, true));
+
+        let mut actions = row![back_button].spacing(8).align_y(Alignment::Center);
+        if is_dirty {
+            actions = actions.push(
+                button("Discard changes")
+                    .padding([6, 9])
+                    .on_press(Message::Screen(message::Screen::Settings(
+                        SettingsMessage::DiscardSettings,
+                    )))
+                    .style(|theme, status| theme::button_style(theme, status, false)),
+            );
+        }
+        actions = actions.push(retry_button);
+
+        container(actions)
+            .height(Length::Shrink)
+            .padding([6, 8])
+            .width(Length::Shrink)
+            .style(theme::section_container)
+            .into()
+    }
+
+    pub(in crate::ui::screens) fn render_view<'a>(
+        &'a self,
+        context: Context<'a>,
+    ) -> Element<'a, Message> {
+        self.render(context, None)
+    }
+
+    pub(in crate::ui::screens) fn render_startup_recovery_view<'a>(
+        &'a self,
+        context: Context<'a>,
+        startup_error: &'a str,
+    ) -> Element<'a, Message> {
+        self.render(context, Some(startup_error))
+    }
+
+    fn render<'a>(
+        &'a self,
+        context: Context<'a>,
+        startup_error: Option<&'a str>,
+    ) -> Element<'a, Message> {
+        let title = text(if startup_error.is_some() { "Startup settings" } else { "Settings" })
+            .size(32)
+            .font(fonts::BOLD)
+            .style(text::primary);
 
         let tab_content = scrollable(
-            container(self.active_tab.view(&self.working_config))
+            container(self.active_tab.view(&self.draft))
                 .max_width(SETTINGS_CONTENT_MAX_WIDTH)
                 .width(Length::Fill),
         );
 
-        let unsaved_changes_bar = if self.working_config != *context.config() {
-            self.unsaved_changes_bar()
-        } else {
-            Space::new().into()
+        let is_dirty = self.draft.is_dirty(context.settings());
+        let actions = match startup_error {
+            Some(_) => self.startup_recovery_actions(is_dirty),
+            None if is_dirty => self.unsaved_changes_bar(),
+            None => Space::new().into(),
         };
 
-        let header_content = row![
-            title,
-            container(unsaved_changes_bar).width(Length::Fill).align_x(Alignment::End),
-        ]
-        .spacing(20)
-        .align_y(Alignment::Center)
-        .width(Length::Fill);
+        let header_content =
+            row![title, container(actions).width(Length::Fill).align_x(Alignment::End),]
+                .spacing(20)
+                .align_y(Alignment::Center)
+                .width(Length::Fill);
 
-        let content = column![
-            header_content,
+        let mut content = column![].spacing(24).max_width(SETTINGS_PAGE_MAX_WIDTH);
+        if let Some(error) = startup_error {
+            content = content.push(
+                container(
+                    column![
+                        row![
+                            lucide::triangle_alert().size(16),
+                            text("Engine startup failed").size(14).font(fonts::SEMIBOLD),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                        text(error).size(12).style(text::secondary),
+                        text("If relevant, adjust the settings below, then apply them to start a fresh engine runtime.")
+                            .size(12)
+                            .style(text::secondary),
+                    ]
+                    .spacing(8),
+                )
+                .padding(14)
+                .width(Length::Fill)
+                .style(theme::warning_accent_container),
+            );
+        }
+        let content = content.push(header_content).push(
             row![
                 self.view_sidebar(),
                 container(tab_content).width(Length::Fill).padding(Padding::ZERO.left(8.0))
             ]
-            .spacing(18)
-        ]
-        .spacing(24)
-        .max_width(SETTINGS_PAGE_MAX_WIDTH);
+            .spacing(18),
+        );
 
         container(
             container(content)

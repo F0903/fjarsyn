@@ -43,20 +43,21 @@ impl<Message> shader::Program<Message> for Program {
         &self,
         _state: &Self::State,
         _cursor: mouse::Cursor,
-        _bounds: Rectangle,
+        bounds: Rectangle,
     ) -> Self::Primitive {
-        Primitive::new(self.frame.clone())
+        Primitive::new(self.frame.clone(), bounds)
     }
 }
 
 #[derive(Debug)]
 struct Primitive {
     frame: Arc<Frame>,
+    bounds: Rectangle,
 }
 
 impl Primitive {
-    fn new(frame: Arc<Frame>) -> Self {
-        Self { frame }
+    fn new(frame: Arc<Frame>, bounds: Rectangle) -> Self {
+        Self { frame, bounds }
     }
 }
 
@@ -68,13 +69,13 @@ impl shader::Primitive for Primitive {
         pipeline: &mut Self::Pipeline,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        bounds: &Rectangle,
+        _bounds: &Rectangle,
         _viewport: &Viewport,
     ) {
-        pipeline.prepare_frame(device, queue, bounds, &self.frame);
+        pipeline.prepare_frame(device, queue, &self.bounds, &self.frame);
     }
 
     fn draw(&self, pipeline: &Self::Pipeline, render_pass: &mut wgpu::RenderPass<'_>) -> bool {
-        pipeline.draw_frame(render_pass, &self.frame)
+        pipeline.draw_frame(render_pass, &self.frame, &self.bounds)
     }
 }

@@ -6,35 +6,37 @@ use super::{
     endpoint_resolver::EndpointResolver, limits::Limits, trusted_peer_resolver::TrustedPeerResolver,
 };
 use crate::{
-    identity::{PeerId, StoredIdentityKeypair},
-    peer_session::Event,
+    identity::LocalIdentity,
+    peer_session::{Event, NetworkScope},
 };
 
 #[derive(Clone)]
-pub struct Config {
-    pub local_peer_id: Option<PeerId>,
-    pub identity_keypair: Option<StoredIdentityKeypair>,
-    pub trusted_peers: Arc<dyn TrustedPeerResolver>,
-    pub endpoints: Arc<dyn EndpointResolver>,
-    pub signaling_port: u16,
-    pub ice_servers: Vec<String>,
-    pub max_depacket_latency: Duration,
-    pub limits: Limits,
+pub(crate) struct Config {
+    pub(crate) local_identity: LocalIdentity,
+    pub(crate) trusted_peers: Arc<dyn TrustedPeerResolver>,
+    pub(crate) endpoints: Arc<dyn EndpointResolver>,
+    pub(crate) network_scope: NetworkScope,
+    pub(crate) signaling_port: u16,
+    pub(crate) ice_servers: Vec<String>,
+    pub(crate) max_depacket_latency: Duration,
+    pub(crate) limits: Limits,
     /// Mandatory, ordered persistence/event consumer. If this bounded queue
     /// closes or fills, all sessions are failed rather than dropping events.
-    pub mandatory_event_sink: Option<mpsc::Sender<Event>>,
+    pub(crate) mandatory_event_sink: Option<mpsc::Sender<Event>>,
 }
 
 impl Config {
-    pub fn new(
+    pub(crate) fn new(
+        local_identity: LocalIdentity,
         trusted_peers: Arc<dyn TrustedPeerResolver>,
         endpoints: Arc<dyn EndpointResolver>,
+        network_scope: NetworkScope,
     ) -> Self {
         Self {
-            local_peer_id: None,
-            identity_keypair: None,
+            local_identity,
             trusted_peers,
             endpoints,
+            network_scope,
             signaling_port: 0,
             ice_servers: Vec::new(),
             max_depacket_latency: Duration::from_millis(100),
@@ -48,8 +50,8 @@ impl fmt::Debug for Config {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("Config")
-            .field("local_peer_id", &self.local_peer_id)
-            .field("has_identity_keypair", &self.identity_keypair.is_some())
+            .field("local_peer_id", self.local_identity.peer_id())
+            .field("network_scope", &self.network_scope)
             .field("signaling_port", &self.signaling_port)
             .field("ice_servers", &self.ice_servers)
             .field("max_depacket_latency", &self.max_depacket_latency)

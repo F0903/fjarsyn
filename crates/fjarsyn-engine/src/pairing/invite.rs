@@ -6,7 +6,7 @@ use base64::{
 };
 
 use super::{IdentityFingerprint, VerifiedPeerIdentity};
-use crate::identity::{self, LocalPeerIdentity, PeerId, PeerIdError, TrustedPeerIdentity};
+use crate::identity::{self, LocalIdentity, PeerId, PeerIdError, TrustedPeerIdentity};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -64,10 +64,11 @@ impl Invite {
     }
 
     /// Builds the invite published by this application instance.
-    pub fn from_local(peer_id: PeerId, identity: &LocalPeerIdentity) -> Self {
-        let public_key = identity.verifying_key().to_bytes();
-        debug_assert!(!identity.verifying_key().is_weak());
-        Self { peer_id, public_key }
+    pub fn from_local(identity: &LocalIdentity) -> Self {
+        let signing_identity = identity.signing_identity();
+        let public_key = signing_identity.verifying_key().to_bytes();
+        debug_assert!(!signing_identity.verifying_key().is_weak());
+        Self { peer_id: identity.peer_id().clone(), public_key }
     }
 
     pub fn peer_id(&self) -> &PeerId {

@@ -7,4 +7,4 @@ mod settings;
 
 mod active;
 
-pub(in crate::ui) use active::{Active, Screen};
+pub(in crate::ui) use active::Active;

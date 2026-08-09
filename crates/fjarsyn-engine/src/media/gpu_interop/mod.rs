@@ -1,12 +1,40 @@
-//! GPU frame import and preview/readback capability decisions.
+//! GPU frame import, producer-readiness synchronization, and preview policy.
 
 use crate::media::{PixelFormat, frame::Frame};
 
 #[cfg(target_os = "windows")]
 mod dx12;
+mod import_error;
 
+pub use import_error::ImportError;
+
+/// A wgpu texture imported from one exact immutable engine frame resource.
+///
+/// The import retains the native producer resource and shared fence for at
+/// least its own cached lifetime. Import also queues an internal readiness
+/// marker that retains those native owners until the producer wait completes,
+/// so a cloned wgpu view cannot outlive the synchronization it depends on.
 pub struct ImportedFrameTexture {
-    pub texture: wgpu::Texture,
+    texture: wgpu::Texture,
+    resource_id: crate::media::frame::GpuResourceId,
+    #[cfg(target_os = "windows")]
+    _source: std::sync::Arc<crate::media::frame::GpuResource>,
+    #[cfg(target_os = "windows")]
+    _ready_fence: windows::Win32::Graphics::Direct3D12::ID3D12Fence,
+}
+
+impl ImportedFrameTexture {
+    /// Creates a sampling view for this immutable imported texture.
+    ///
+    /// The view owns the imported D3D12 resource. Producer-side ownership and
+    /// readiness are independently retained until the queued wait completes.
+    pub fn create_view(&self) -> wgpu::TextureView {
+        self.texture.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    pub const fn resource_id(&self) -> crate::media::frame::GpuResourceId {
+        self.resource_id
+    }
 }
 
 pub fn supports_zero_copy_preview(format: PixelFormat) -> bool {
@@ -33,16 +61,25 @@ pub fn requires_cpu_readback(
             && format.supports_software_preview())
 }
 
-pub fn import_frame_texture(device: &wgpu::Device, frame: &Frame) -> Option<ImportedFrameTexture> {
+/// Imports `frame` and queues its producer-fence wait on the same D3D12 queue
+/// that will later sample it.
+///
+/// Import failures are typed so a renderer can upload retained CPU pixels or
+/// present an explicit degraded state instead of silently drawing nothing.
+pub fn import_frame_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    frame: &Frame,
+) -> Result<ImportedFrameTexture, ImportError> {
     #[cfg(target_os = "windows")]
     {
-        dx12::import_frame_texture(device, frame)
+        dx12::import_frame_texture(device, queue, frame)
     }
 
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = (device, frame);
-        None
+        let _ = (device, queue, frame);
+        Err(ImportError::UnsupportedBackend)
     }
 }
 

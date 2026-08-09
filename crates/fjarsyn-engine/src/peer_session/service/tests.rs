@@ -11,10 +11,10 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use super::{orchestration::Command, *};
 use crate::{
-    identity::{LocalPeerIdentity, PeerId, TrustedPeerIdentity},
+    identity::{LocalIdentity, LocalPeerIdentity, PeerId, TrustedPeerIdentity},
     peer_session::{
-        CloseReason, EndpointResolver, Error, Event, MessageId, RemoteVideoSource, SessionId,
-        TrustBarrierOwnerId, TrustedPeerResolver,
+        CloseReason, EndpointResolver, Error, Event, MessageId, NetworkScope, RemoteVideoSource,
+        SessionId, TrustBarrierOwnerId, TrustedPeerResolver,
     },
     service_host::{HostedService, ShutdownContext},
 };
@@ -84,17 +84,28 @@ impl EndpointResolver for BlockingDirectory {
     }
 }
 
+fn test_config(
+    local_peer_id: PeerId,
+    trusted_peers: Arc<dyn TrustedPeerResolver>,
+    endpoints: Arc<dyn EndpointResolver>,
+) -> Config {
+    Config::new(
+        LocalIdentity::generate(local_peer_id),
+        trusted_peers,
+        endpoints,
+        NetworkScope::LoopbackOnly,
+    )
+}
+
 async fn start_test_pair() -> (PeerSessionService, PeerSessionService, PeerId, PeerId) {
     let peer_a = PeerId::new("peer-a").unwrap();
     let peer_b = PeerId::new("peer-b").unwrap();
     let directory_a = Arc::new(TestDirectory::default());
     let directory_b = Arc::new(TestDirectory::default());
-    let mut config_a = Config::new(directory_a.clone(), directory_a.clone());
-    config_a.local_peer_id = Some(peer_a.clone());
+    let mut config_a = test_config(peer_a.clone(), directory_a.clone(), directory_a.clone());
     config_a.limits.request_timeout = Duration::from_secs(5);
     config_a.limits.negotiation_timeout = Duration::from_secs(10);
-    let mut config_b = Config::new(directory_b.clone(), directory_b.clone());
-    config_b.local_peer_id = Some(peer_b.clone());
+    let mut config_b = test_config(peer_b.clone(), directory_b.clone(), directory_b.clone());
     config_b.limits.request_timeout = Duration::from_secs(5);
     config_b.limits.negotiation_timeout = Duration::from_secs(10);
 
@@ -121,13 +132,10 @@ async fn connect_falls_back_after_a_wrong_peer_endpoint_fails_authentication() {
     let directory_a = Arc::new(TestDirectory::default());
     let directory_b = Arc::new(TestDirectory::default());
     let directory_c = Arc::new(TestDirectory::default());
-    let mut config_a = Config::new(directory_a.clone(), directory_a.clone());
-    config_a.local_peer_id = Some(peer_a.clone());
+    let mut config_a = test_config(peer_a.clone(), directory_a.clone(), directory_a.clone());
     config_a.limits.endpoint_attempt_timeout = Duration::from_millis(250);
-    let mut config_b = Config::new(directory_b.clone(), directory_b.clone());
-    config_b.local_peer_id = Some(peer_b.clone());
-    let mut config_c = Config::new(directory_c.clone(), directory_c.clone());
-    config_c.local_peer_id = Some(peer_c);
+    let config_b = test_config(peer_b.clone(), directory_b.clone(), directory_b.clone());
+    let config_c = test_config(peer_c, directory_c.clone(), directory_c.clone());
 
     let mut service_a = PeerSessionService::start(config_a).await.unwrap();
     let mut service_b = PeerSessionService::start(config_b).await.unwrap();
@@ -178,8 +186,7 @@ async fn exhausted_endpoint_hints_return_a_structured_error_without_a_session() 
     let local_peer = PeerId::new("local").unwrap();
     let remote_peer = PeerId::new("remote").unwrap();
     let directory = Arc::new(TestDirectory::default());
-    let mut config = Config::new(directory.clone(), directory.clone());
-    config.local_peer_id = Some(local_peer);
+    let mut config = test_config(local_peer, directory.clone(), directory.clone());
     config.limits.max_endpoint_attempts = 1;
     config.limits.endpoint_attempt_timeout = Duration::from_millis(500);
     let mut service = PeerSessionService::start(config).await.unwrap();
@@ -313,8 +320,7 @@ async fn suspending_trust_closes_the_session_blocks_connect_and_can_be_resumed()
 #[tokio::test]
 async fn independent_trust_barrier_owners_release_independently() {
     let directory = Arc::new(TestDirectory::default());
-    let mut config = Config::new(directory.clone(), directory);
-    config.local_peer_id = Some(PeerId::new("local").unwrap());
+    let config = test_config(PeerId::new("local").unwrap(), directory.clone(), directory);
     let mut service = PeerSessionService::start(config).await.unwrap();
     let handle = service.service_handle();
     let remote_peer = PeerId::new("remote").unwrap();
@@ -337,8 +343,7 @@ async fn independent_trust_barrier_owners_release_independently() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admitted_commands_queued_behind_connect_get_service_stopped_on_shutdown() {
     let directory = Arc::new(BlockingDirectory::default());
-    let mut config = Config::new(directory.clone(), directory.clone());
-    config.local_peer_id = Some(PeerId::new("local").unwrap());
+    let config = test_config(PeerId::new("local").unwrap(), directory.clone(), directory.clone());
     let mut service = PeerSessionService::start(config).await.unwrap();
     let handle = service.service_handle();
     let first_handle = handle.clone();
@@ -364,10 +369,8 @@ async fn mandatory_event_sink_overflow_fails_closed_and_blocks_new_sessions() {
     let peer_b = PeerId::new("peer-b").unwrap();
     let directory_a = Arc::new(TestDirectory::default());
     let directory_b = Arc::new(TestDirectory::default());
-    let mut config_a = Config::new(directory_a.clone(), directory_a.clone());
-    config_a.local_peer_id = Some(peer_a.clone());
-    let mut config_b = Config::new(directory_b.clone(), directory_b.clone());
-    config_b.local_peer_id = Some(peer_b.clone());
+    let config_a = test_config(peer_a.clone(), directory_a.clone(), directory_a.clone());
+    let mut config_b = test_config(peer_b.clone(), directory_b.clone(), directory_b.clone());
     let (sink_tx, _sink_rx) = mpsc::channel(1);
     config_b.mandatory_event_sink = Some(sink_tx);
 
@@ -418,10 +421,8 @@ async fn mandatory_event_sink_closure_proactively_terminates_an_idle_session() {
     let peer_b = PeerId::new("peer-b").unwrap();
     let directory_a = Arc::new(TestDirectory::default());
     let directory_b = Arc::new(TestDirectory::default());
-    let mut config_a = Config::new(directory_a.clone(), directory_a.clone());
-    config_a.local_peer_id = Some(peer_a.clone());
-    let mut config_b = Config::new(directory_b.clone(), directory_b.clone());
-    config_b.local_peer_id = Some(peer_b.clone());
+    let config_a = test_config(peer_a.clone(), directory_a.clone(), directory_a.clone());
+    let mut config_b = test_config(peer_b.clone(), directory_b.clone(), directory_b.clone());
     let (sink_tx, sink_rx) = mpsc::channel(16);
     config_b.mandatory_event_sink = Some(sink_tx);
 
@@ -471,12 +472,10 @@ async fn two_peer_loopback_covers_reject_message_receipt_share_and_reconnect() {
     let peer_b = PeerId::new("peer-b").unwrap();
     let directory_a = Arc::new(TestDirectory::default());
     let directory_b = Arc::new(TestDirectory::default());
-    let mut config_a = Config::new(directory_a.clone(), directory_a.clone());
-    config_a.local_peer_id = Some(peer_a.clone());
+    let mut config_a = test_config(peer_a.clone(), directory_a.clone(), directory_a.clone());
     config_a.limits.request_timeout = Duration::from_secs(5);
     config_a.limits.negotiation_timeout = Duration::from_secs(10);
-    let mut config_b = Config::new(directory_b.clone(), directory_b.clone());
-    config_b.local_peer_id = Some(peer_b.clone());
+    let mut config_b = test_config(peer_b.clone(), directory_b.clone(), directory_b.clone());
     config_b.limits.request_timeout = Duration::from_secs(5);
     config_b.limits.negotiation_timeout = Duration::from_secs(10);
 
@@ -870,13 +869,11 @@ async fn unreachable_restart_signaling_is_removed_within_the_attempt_deadline() 
     let peer_b = PeerId::new("peer-b").unwrap();
     let directory_a = Arc::new(TestDirectory::default());
     let directory_b = Arc::new(TestDirectory::default());
-    let mut config_a = Config::new(directory_a.clone(), directory_a.clone());
-    config_a.local_peer_id = Some(peer_a.clone());
+    let mut config_a = test_config(peer_a.clone(), directory_a.clone(), directory_a.clone());
     config_a.limits.ice_restart_timeout = Duration::from_millis(150);
     config_a.limits.endpoint_attempt_timeout = Duration::from_secs(5);
     config_a.limits.shutdown_timeout = Duration::from_millis(500);
-    let mut config_b = Config::new(directory_b.clone(), directory_b.clone());
-    config_b.local_peer_id = Some(peer_b.clone());
+    let mut config_b = test_config(peer_b.clone(), directory_b.clone(), directory_b.clone());
     config_b.limits.shutdown_timeout = Duration::from_millis(500);
     let mut service_a = PeerSessionService::start(config_a).await.unwrap();
     let mut service_b = PeerSessionService::start(config_b).await.unwrap();
@@ -901,10 +898,14 @@ async fn unreachable_restart_signaling_is_removed_within_the_attempt_deadline() 
     wait_for_connected(&mut events_b, session_id).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
+    // Keep a loopback endpoint open without accepting it so restart signaling
+    // stalls locally until the operation deadline, without touching the LAN.
+    let stalled_listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let stalled_endpoint = stalled_listener.local_addr().unwrap();
     directory_a.insert_peer_with_hints(
         peer_b,
         service_b.local_public_key(),
-        Arc::from([SocketAddr::from(([203, 0, 113, 1], 9))]),
+        Arc::from([stalled_endpoint]),
     );
     let started = Instant::now();
     handle_a.force_ice_restart(session_id).await.unwrap();

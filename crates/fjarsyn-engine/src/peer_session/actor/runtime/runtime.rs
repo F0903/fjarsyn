@@ -6,11 +6,11 @@ use tokio::{
 };
 
 use super::super::{
-    ApplicationDataGate, Command, Config, Control, Handle, Role, TaskExit, Terminal, Update,
-    restart, state_machine::StateMachine, task_supervision,
+    ActorInstanceId, ApplicationDataGate, Command, Config, Control, Handle, Role, TaskExit,
+    Terminal, Update, restart, state_machine::StateMachine, task_supervision,
 };
 use crate::peer_session::{
-    CloseReason, Error, LocalShareState, Phase, RemoteShareState, SessionSnapshot, ShareEpoch,
+    CloseReason, Error, LocalShareState, Phase, RemoteShareState, SessionState, ShareEpoch,
     ShareId,
     media::{encoded_video_channel, remote_video_channel},
     negotiation,
@@ -28,8 +28,8 @@ pub(in crate::peer_session) fn spawn(
         Role::Outgoing => StateMachine::outgoing(),
         Role::Incoming => StateMachine::incoming(),
     };
-    let generation = uuid::Uuid::new_v4();
-    let snapshot = SessionSnapshot {
+    let instance_id = ActorInstanceId::new();
+    let snapshot = SessionState {
         session_id: config.session_id,
         peer_id: config.remote_peer_id.clone(),
         phase: state.phase(),
@@ -49,7 +49,7 @@ pub(in crate::peer_session) fn spawn(
 
     let handle = Handle {
         session_id: config.session_id,
-        generation,
+        instance_id,
         command_tx,
         restart_tx,
         snapshot_rx,
@@ -86,7 +86,7 @@ pub(in crate::peer_session) fn spawn(
         terminal_tx,
         application_data,
         terminal_reason: None,
-        generation,
+        instance_id,
         phase_started: Instant::now(),
         disconnected_since: None,
         restart,
@@ -94,7 +94,7 @@ pub(in crate::peer_session) fn spawn(
     };
     let task = task_supervision::spawn(
         runtime.run(),
-        generation,
+        instance_id,
         handle.session_id,
         task_peer_id,
         task_exit_tx,
@@ -120,12 +120,12 @@ pub(super) struct Runtime {
     pub(super) rtc_fatal_tx: watch::Sender<Option<String>>,
     pub(super) rtc_fatal_rx: watch::Receiver<Option<String>>,
     pub(super) fatal_rx: watch::Receiver<Option<Control>>,
-    pub(super) snapshot_tx: watch::Sender<SessionSnapshot>,
+    pub(super) snapshot_tx: watch::Sender<SessionState>,
     pub(super) update_tx: mpsc::Sender<Update>,
     pub(super) terminal_tx: mpsc::UnboundedSender<Terminal>,
     pub(super) application_data: ApplicationDataGate,
     pub(super) terminal_reason: Option<CloseReason>,
-    pub(super) generation: uuid::Uuid,
+    pub(super) instance_id: ActorInstanceId,
     pub(super) phase_started: Instant,
     pub(super) disconnected_since: Option<Instant>,
     pub(super) restart: restart::Controller,
@@ -283,7 +283,7 @@ impl Runtime {
         );
         let reason = self.terminal_reason.unwrap_or(CloseReason::ServiceShutdown);
         let _ = self.terminal_tx.send(Terminal {
-            generation: self.generation,
+            instance_id: self.instance_id,
             session_id: self.config.session_id,
             peer_id: self.config.remote_peer_id.clone(),
             reason,

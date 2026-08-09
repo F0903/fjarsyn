@@ -17,7 +17,7 @@ use super::{
 use crate::{
     identity::PeerId,
     peer_session::{
-        Error, Event, Limits, SessionId, Snapshot, TrustedPeerResolver,
+        Error, Event, Limits, NetworkScope, SessionId, Sessions, TrustedPeerResolver,
         actor::{Handle as ActorHandle, TaskExit, Terminal, Update},
         negotiation,
         service::{Config, ServiceHandle},
@@ -47,6 +47,7 @@ pub(in crate::peer_session::service) struct Runtime {
     pub(super) local_peer_id: PeerId,
     pub(super) trusted_peers: Arc<dyn TrustedPeerResolver>,
     pub(super) negotiation: negotiation::Service,
+    pub(super) network_scope: NetworkScope,
     pub(super) ice_servers: Vec<String>,
     pub(super) max_depacket_latency: Duration,
     pub(super) limits: Limits,
@@ -62,7 +63,7 @@ pub(in crate::peer_session::service) struct Runtime {
     pub(super) terminal_rx: mpsc::UnboundedReceiver<Terminal>,
     pub(super) task_exit_tx: mpsc::UnboundedSender<TaskExit>,
     pub(super) task_exit_rx: mpsc::UnboundedReceiver<TaskExit>,
-    pub(super) snapshot_tx: watch::Sender<Snapshot>,
+    pub(super) snapshot_tx: watch::Sender<Sessions>,
     pub(super) event_tx: broadcast::Sender<Event>,
     pub(super) mandatory_event_sink: Option<mpsc::Sender<Event>>,
     pub(super) mandatory_event_sink_failed: bool,
@@ -85,7 +86,7 @@ impl Runtime {
         let (update_tx, update_rx) = mpsc::channel(config.limits.session_update_capacity.max(1));
         let (terminal_tx, terminal_rx) = mpsc::unbounded_channel();
         let (task_exit_tx, task_exit_rx) = mpsc::unbounded_channel();
-        let (snapshot_tx, snapshot_rx) = watch::channel(Snapshot::default());
+        let (snapshot_tx, snapshot_rx) = watch::channel(Sessions::default());
         let (event_tx, _) = broadcast::channel(config.limits.event_capacity.max(1));
         let operation_timeout =
             config.limits.service_operation_timeout.saturating_add(Duration::from_secs(1));
@@ -100,6 +101,7 @@ impl Runtime {
             local_peer_id,
             trusted_peers: config.trusted_peers,
             negotiation,
+            network_scope: config.network_scope,
             ice_servers: config.ice_servers,
             max_depacket_latency: config.max_depacket_latency,
             limits: config.limits,

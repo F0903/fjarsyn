@@ -13,7 +13,7 @@ use std::{
 use tokio::sync::{Mutex as AsyncMutex, watch};
 
 use super::{
-    Config, Direction, DirectionState, Error, Operation, Poison, PoisonReason, Snapshot,
+    Config, Direction, DirectionState, Error, Health, Operation, Poison, PoisonReason,
     backend::BackendFactory,
     registry::{WorkerDirective, WorkerId, WorkerReservation},
     worker::SupervisorTasks,
@@ -29,7 +29,7 @@ struct WorkerRecord {
 struct StateData {
     shutting_down: bool,
     next_worker_id: WorkerId,
-    snapshot: Snapshot,
+    snapshot: Health,
     workers: BTreeMap<WorkerId, WorkerRecord>,
     quarantined_workers: usize,
 }
@@ -37,7 +37,7 @@ struct StateData {
 pub(in crate::media::codec) struct State {
     config: Config,
     data: Mutex<StateData>,
-    snapshot_tx: watch::Sender<Snapshot>,
+    snapshot_tx: watch::Sender<Health>,
     backend: Arc<dyn BackendFactory>,
     supervisor_tasks: AsyncMutex<SupervisorTasks>,
 }
@@ -47,7 +47,7 @@ impl State {
         config: Config,
         backend: Arc<dyn BackendFactory>,
     ) -> Arc<Self> {
-        let snapshot = Snapshot::default();
+        let snapshot = Health::default();
         let (snapshot_tx, _) = watch::channel(snapshot.clone());
         Arc::new(Self {
             config,
@@ -121,11 +121,11 @@ impl State {
         self.backend.clone()
     }
 
-    pub(in crate::media::codec) fn snapshot(&self) -> Snapshot {
+    pub(in crate::media::codec) fn snapshot(&self) -> Health {
         self.data.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).snapshot.clone()
     }
 
-    pub(in crate::media::codec) fn subscribe(&self) -> watch::Receiver<Snapshot> {
+    pub(in crate::media::codec) fn subscribe(&self) -> watch::Receiver<Health> {
         self.snapshot_tx.subscribe()
     }
 

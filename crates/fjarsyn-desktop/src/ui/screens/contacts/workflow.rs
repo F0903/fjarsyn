@@ -356,18 +356,19 @@ pub(super) fn into_contact_operation(effect: Effect) -> Option<message::ContactO
 #[cfg(test)]
 mod tests {
     use fjarsyn_engine::{
-        identity::LocalPeerIdentity,
+        identity::LocalIdentity,
         pairing::{Invite, MAX_INVITE_BYTES},
     };
 
     use super::*;
 
-    fn local() -> (PeerId, LocalPeerIdentity) {
-        (PeerId::new("local").unwrap(), LocalPeerIdentity::generate())
+    fn local() -> (PeerId, LocalIdentity) {
+        let peer_id = PeerId::new("local").unwrap();
+        (peer_id.clone(), LocalIdentity::generate(peer_id))
     }
 
     fn invite(peer_id: &str) -> Invite {
-        Invite::from_local(PeerId::new(peer_id).unwrap(), &LocalPeerIdentity::generate())
+        Invite::from_local(&LocalIdentity::generate(PeerId::new(peer_id).unwrap()))
     }
 
     fn visible_screen() -> Screen {
@@ -622,7 +623,7 @@ mod tests {
     #[test]
     fn self_invite_is_rejected_before_persistence() {
         let (local_peer_id, identity) = local();
-        let local_invite = Invite::from_local(local_peer_id.clone(), &identity);
+        let local_invite = Invite::from_local(&identity);
         let mut screen = visible_screen();
 
         paste_new(&mut screen, &local_peer_id, Some(local_invite.to_string()));

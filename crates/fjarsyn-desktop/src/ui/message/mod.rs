@@ -9,7 +9,9 @@ mod aggregate;
 mod contact_operation;
 mod route;
 
-pub(in crate::ui) use aggregate::{Config, Lifecycle, Message, Navigation, Notification, Runtime};
+pub(in crate::ui) use aggregate::{
+    Lifecycle, Message, Navigation, Notification, Runtime, Settings,
+};
 pub(in crate::ui) use contact_operation::ContactOperation;
 pub(in crate::ui) use route::Route;
 pub(in crate::ui) use screen::Screen;

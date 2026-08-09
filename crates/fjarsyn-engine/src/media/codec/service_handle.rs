@@ -5,8 +5,8 @@ use std::{fmt, sync::Arc};
 use tokio::sync::watch;
 
 use crate::media::codec::{
-    DecoderSession, DecoderWorkerConfig, EncoderSession, EncoderWorkerConfig, Error, Snapshot,
-    State, decoder, encoder,
+    DecoderSession, DecoderWorkerConfig, EncoderSession, EncoderWorkerConfig, Error, Health, State,
+    decoder, encoder,
 };
 
 #[derive(Clone)]
@@ -19,11 +19,11 @@ impl ServiceHandle {
         Self { state }
     }
 
-    pub fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> Health {
         self.state.snapshot()
     }
 
-    pub fn subscribe(&self) -> watch::Receiver<Snapshot> {
+    pub fn subscribe(&self) -> watch::Receiver<Health> {
         self.state.subscribe()
     }
 

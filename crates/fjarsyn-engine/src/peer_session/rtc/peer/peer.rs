@@ -27,6 +27,7 @@ use webrtc::{
 use super::{
     super::{Config, Event, EventDispatcher, share_epoch},
     ice_credentials::IceCredentials,
+    network_policy::NetworkPolicy,
     rtc_operation,
 };
 use crate::peer_session::{Error, TransportGeneration, media::RemoteVideoSample};
@@ -63,6 +64,7 @@ fn register_h264_codecs(media_engine: &mut MediaEngine) -> Result<(), Error> {
 
 pub(in crate::peer_session) struct Peer {
     pub(super) pc: Arc<RTCPeerConnection>,
+    pub(super) network_policy: NetworkPolicy,
     pub(super) video_track: Arc<TrackLocalStaticSample>,
     pub(super) control: Option<Arc<RTCDataChannel>>,
     pub(super) messaging: Option<Arc<RTCDataChannel>>,
@@ -103,6 +105,7 @@ impl Peer {
         fatal_tx: watch::Sender<Option<String>>,
         remote_video_tx: broadcast::Sender<RemoteVideoSample>,
     ) -> Result<Self, Error> {
+        let network_policy = NetworkPolicy::new(config.network_scope, &config.ice_servers)?;
         let mut media_engine = MediaEngine::default();
         register_h264_codecs(&mut media_engine)?;
         share_epoch::register(&mut media_engine)?;
@@ -111,6 +114,7 @@ impl Peer {
         let api = APIBuilder::new()
             .with_media_engine(media_engine)
             .with_interceptor_registry(registry)
+            .with_setting_engine(network_policy.setting_engine())
             .build();
         let pc = Arc::new(
             rtc_operation(
@@ -151,6 +155,7 @@ impl Peer {
 
         Ok(Self {
             pc,
+            network_policy,
             video_track,
             control: None,
             messaging: None,
@@ -240,6 +245,7 @@ mod tests {
         let (offer_fatal_tx, _offer_fatal_rx) = watch::channel(None);
         let (offer_video_tx, _) = broadcast::channel(2);
         let config = Config {
+            network_scope: crate::peer_session::NetworkScope::LoopbackOnly,
             ice_servers: Vec::new(),
             max_depacket_latency: Duration::from_millis(100),
             max_candidates_per_generation: 1,
@@ -262,6 +268,14 @@ mod tests {
         let remote_ufrag = IceCredentials::from_sdp(&offer).unwrap().username_fragment().to_owned();
         peer.apply_offer_and_create_answer(offer).await.unwrap();
         let candidate = RTCIceCandidateInit { username_fragment: Some(remote_ufrag), ..candidate };
+        let non_loopback_candidate = RTCIceCandidateInit {
+            candidate: "candidate:2 1 udp 1 192.168.1.10 9 typ host".into(),
+            ..candidate.clone()
+        };
+        assert!(matches!(
+            peer.add_remote_candidate(TransportGeneration::INITIAL, non_loopback_candidate).await,
+            Err(Error::Protocol(_))
+        ));
         peer.add_remote_candidate(TransportGeneration::INITIAL, candidate.clone()).await.unwrap();
         assert!(matches!(
             peer.add_remote_candidate(TransportGeneration::INITIAL, candidate).await,
@@ -297,6 +311,7 @@ mod tests {
         let (video_tx, _) = broadcast::channel(2);
         let mut peer = Peer::new(
             Config {
+                network_scope: crate::peer_session::NetworkScope::LoopbackOnly,
                 ice_servers: Vec::new(),
                 max_depacket_latency: Duration::from_millis(100),
                 max_candidates_per_generation: 1,
@@ -327,6 +342,7 @@ mod tests {
         let (answer_fatal, _answer_fatal_rx) = watch::channel(None);
         let (answer_video, _) = broadcast::channel(2);
         let config = Config {
+            network_scope: crate::peer_session::NetworkScope::LoopbackOnly,
             ice_servers: Vec::new(),
             max_depacket_latency: Duration::from_millis(100),
             max_candidates_per_generation: 8,

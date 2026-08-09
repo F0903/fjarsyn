@@ -17,8 +17,7 @@ pub(super) fn send(
     peer_id: PeerId,
     body: String,
 ) -> Task<Message> {
-    let Some(messaging) =
-        app.runtime.application.as_ref().map(|runtime| runtime.messaging().clone())
+    let Some(messaging) = app.runtime.engine.as_ref().map(|runtime| runtime.messaging().clone())
     else {
         return runtime_unavailable(app);
     };

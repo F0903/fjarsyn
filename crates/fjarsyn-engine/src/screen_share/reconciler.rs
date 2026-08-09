@@ -29,7 +29,7 @@ impl Reconciler {
         &mut self,
         mut local: Option<&mut local::Controller>,
         remote: &mut remote::Controller,
-        snapshot: &peer_session::Snapshot,
+        snapshot: &peer_session::Sessions,
         config: &Config,
     ) {
         if let Some(local) = local.as_deref_mut() {
@@ -127,8 +127,8 @@ impl Reconciler {
                 if remote.is_running(session_id, binding) {
                     continue;
                 }
-                // A worker failure is terminal for this authenticated media
-                // generation. A new ShareId/epoch is required before retrying.
+                // A worker failure is terminal for this authenticated share
+                // identity. A new ShareId/epoch is required before retrying.
                 continue;
             }
             if !connected.contains(&session_id) {

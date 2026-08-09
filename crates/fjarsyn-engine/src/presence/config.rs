@@ -11,18 +11,18 @@ use crate::identity::PeerId;
 /// is never evicted merely because an unauthenticated newcomer arrived, and a
 /// later removal frees capacity for a subsequent observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Limits {
+pub(super) struct Limits {
     /// Maximum distinct peer IDs retained at once. Defaults to 256.
-    pub max_peers: usize,
+    pub(super) max_peers: usize,
     /// Maximum current mDNS instances retained for one claimed peer ID.
     /// Defaults to 4.
-    pub max_advertisements_per_peer: usize,
+    pub(super) max_advertisements_per_peer: usize,
     /// Maximum de-duplicated endpoints retained from one advertisement.
     /// Defaults to 16.
-    pub max_endpoints_per_advertisement: usize,
+    pub(super) max_endpoints_per_advertisement: usize,
     /// Maximum de-duplicated endpoints exposed for one aggregate nearby peer.
     /// Defaults to 32.
-    pub max_endpoints_per_peer: usize,
+    pub(super) max_endpoints_per_peer: usize,
 }
 
 impl Default for Limits {
@@ -50,17 +50,17 @@ impl Limits {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Config {
-    pub peer_id: PeerId,
-    pub signaling_port: u16,
-    pub instance_name: Option<String>,
-    pub hostname: Option<String>,
-    pub limits: Limits,
-    pub shutdown_timeout: Duration,
+pub(crate) struct Config {
+    pub(super) peer_id: PeerId,
+    pub(super) signaling_port: u16,
+    pub(super) instance_name: Option<String>,
+    pub(super) hostname: Option<String>,
+    pub(super) limits: Limits,
+    pub(super) shutdown_timeout: Duration,
 }
 
 impl Config {
-    pub fn new(peer_id: PeerId, signaling_port: u16) -> Self {
+    pub(crate) fn new(peer_id: PeerId, signaling_port: u16) -> Self {
         Self {
             peer_id,
             signaling_port,
@@ -71,22 +71,14 @@ impl Config {
         }
     }
 
-    pub fn with_instance_name(mut self, instance_name: impl Into<String>) -> Self {
-        self.instance_name = Some(instance_name.into());
-        self
-    }
-
-    pub fn with_hostname(mut self, hostname: impl Into<String>) -> Self {
-        self.hostname = Some(hostname.into());
-        self
-    }
-
-    pub fn with_limits(mut self, limits: Limits) -> Self {
+    #[cfg(test)]
+    pub(super) fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
         self
     }
 
-    pub fn with_shutdown_timeout(mut self, shutdown_timeout: Duration) -> Self {
+    #[cfg(test)]
+    pub(super) fn with_shutdown_timeout(mut self, shutdown_timeout: Duration) -> Self {
         self.shutdown_timeout = shutdown_timeout;
         self
     }

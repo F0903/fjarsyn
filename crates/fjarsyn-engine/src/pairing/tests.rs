@@ -1,7 +1,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
 use super::{Error, Invite, MAX_INVITE_BYTES};
-use crate::identity::{self, LocalPeerIdentity, PeerId, PeerIdError};
+use crate::identity::{self, LocalIdentity, PeerId, PeerIdError};
 
 const GOLDEN_PEER_ID: &str = "550e8400-e29b-41d4-a716-446655440000";
 const GOLDEN_PUBLIC_KEY_BASE64: &str = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=";
@@ -114,7 +114,7 @@ fn any_identity_mutation_changes_the_full_fingerprint() {
         GOLDEN_PUBLIC_KEY_BASE64,
     )
     .unwrap();
-    let changed_key = Invite::from_local(invite.peer_id().clone(), &LocalPeerIdentity::generate());
+    let changed_key = Invite::from_local(&LocalIdentity::generate(invite.peer_id().clone()));
 
     assert_ne!(invite.fingerprint(), changed_peer.fingerprint());
     assert_ne!(invite.fingerprint(), changed_key.fingerprint());
@@ -137,7 +137,7 @@ fn confirmation_preserves_the_exact_validated_identity() {
 #[test]
 fn local_invites_round_trip_through_the_text_format() {
     let peer_id = PeerId::new("local-peer_1.example").unwrap();
-    let invite = Invite::from_local(peer_id, &LocalPeerIdentity::generate());
+    let invite = Invite::from_local(&LocalIdentity::generate(peer_id));
 
     assert_eq!(invite.to_string().parse::<Invite>().unwrap(), invite);
 }

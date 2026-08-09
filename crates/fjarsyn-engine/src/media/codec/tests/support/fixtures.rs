@@ -35,7 +35,6 @@ pub(in crate::media::codec::tests) fn encoder_config() -> EncoderWorkerConfig {
         bitrate: 1_000_000,
         target_framerate_hz: 30.0,
         target_resolution: TargetResolution::Source,
-        input_format: PixelFormat::BGRA8,
         device: None,
         transcoding_type: TranscodeType::H264Software,
     }

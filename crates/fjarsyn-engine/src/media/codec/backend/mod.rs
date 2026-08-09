@@ -44,7 +44,6 @@ impl BackendFactory for FfmpegBackendFactory {
             config.bitrate,
             config.target_framerate_hz,
             config.target_resolution,
-            config.input_format,
             config.device,
             config.transcoding_type,
         )

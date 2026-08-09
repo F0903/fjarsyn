@@ -11,7 +11,7 @@ use crate::ui::{
 };
 
 pub(super) fn restart_required_banner<'a>(
-    screen_share: &screen_share::Snapshot,
+    screen_share: &screen_share::Shares,
 ) -> Option<Element<'a, Message>> {
     let copy = restart_required_copy(
         screen_share.encoder_restart_required(),

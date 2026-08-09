@@ -5,7 +5,7 @@ use super::{
     Runtime,
 };
 use crate::peer_session::{
-    CloseReason, Error, Event, Phase, SessionSnapshot, protocol::NegotiationSignal, rtc::Peer,
+    CloseReason, Error, Event, Phase, SessionState, protocol::NegotiationSignal, rtc::Peer,
 };
 
 impl Runtime {
@@ -110,7 +110,7 @@ impl Runtime {
     }
 
     pub(super) async fn publish_snapshot(&self) {
-        let snapshot = SessionSnapshot {
+        let snapshot = SessionState {
             session_id: self.config.session_id,
             peer_id: self.config.remote_peer_id.clone(),
             phase: self.state.phase(),
@@ -123,7 +123,7 @@ impl Runtime {
     }
 
     pub(super) async fn emit(&mut self, event: Event) {
-        let update = Update { generation: self.generation, event };
+        let update = Update { instance_id: self.instance_id, event };
         match tokio::time::timeout(self.config.event_delivery_timeout, self.update_tx.send(update))
             .await
         {

@@ -20,13 +20,13 @@ impl Encoder {
         let pixels =
             frame.software_pixels().ok_or(Error::Conversion(ffmpeg::Error::InvalidData))?;
 
-        input_frame.set_format(self.input_format.to_ffmpeg_pixel_format());
+        let (input_format, stride) = software_input_layout(frame, width);
+        input_frame.set_format(input_format);
         input_frame.set_width(width as u32);
         input_frame.set_height(height as u32);
 
         unsafe {
             let ptr = input_frame.as_mut_ptr();
-            let stride = width * self.input_format.bytes_per_pixel() as i32;
 
             (*ptr).data[0] = pixels.as_ptr() as *mut u8;
             (*ptr).linesize[0] = stride;
@@ -53,5 +53,26 @@ impl Encoder {
         self.frame_count += 1;
 
         encoder.send_frame(&dst_frame).map_err(Error::Encode)
+    }
+}
+
+fn software_input_layout(frame: &Frame, width: i32) -> (format::Pixel, i32) {
+    (frame.format.to_ffmpeg_pixel_format(), width * frame.format.bytes_per_pixel() as i32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::media::{Dimensions, PixelFormat, buffer_pool::Pool};
+
+    #[test]
+    fn software_encoder_uses_the_frames_converted_pixel_format() {
+        let pool = Pool::new(4, 1);
+        let mut pixels = pool.get(4);
+        pixels.copy_from_slice(&[10, 20, 30, 255]);
+        let frame = Frame::new_software(pixels, PixelFormat::BGRA8, Dimensions::new(1, 1), None);
+
+        assert_eq!(frame.format, PixelFormat::RGBA8);
+        assert_eq!(software_input_layout(&frame, 1), (format::Pixel::RGBA, 4));
     }
 }

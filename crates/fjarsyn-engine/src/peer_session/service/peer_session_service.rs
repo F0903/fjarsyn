@@ -11,14 +11,14 @@ use super::{
     service_handle::ServiceHandle,
 };
 use crate::{
-    identity::{LocalPeerIdentity, PeerId, StoredIdentityKeypair},
+    identity::{LocalIdentity, PeerId},
     peer_session::{Error, negotiation},
     service_host::{HostedService, ShutdownContext},
 };
 
-pub struct PeerSessionService {
+pub(crate) struct PeerSessionService {
     local_peer_id: PeerId,
-    identity: LocalPeerIdentity,
+    identity: LocalIdentity,
     signaling_port: u16,
     handle: ServiceHandle,
     listener: Option<negotiation::Listener>,
@@ -39,30 +39,26 @@ impl fmt::Debug for PeerSessionService {
 }
 
 impl PeerSessionService {
-    pub async fn start(config: Config) -> Result<Self, Error> {
-        let local_peer_id = match config.local_peer_id.clone() {
-            Some(peer_id) => peer_id,
-            None => PeerId::new(uuid::Uuid::new_v4().to_string())?,
-        };
-        let identity = match config.identity_keypair.as_ref() {
-            Some(stored) => LocalPeerIdentity::from_stored(stored)
-                .map_err(|error| Error::Protocol(error.to_string()))?,
-            None => LocalPeerIdentity::generate(),
-        };
+    pub(crate) async fn start(config: Config) -> Result<Self, Error> {
+        let identity = config.local_identity.clone();
+        let local_peer_id = identity.peer_id().clone();
+        let signing_identity = identity.signing_identity().clone();
         let negotiation_limits = negotiation_limits(&config.limits)?;
         let negotiation = negotiation::Service::new(
             local_peer_id.clone(),
-            identity.clone(),
+            signing_identity.clone(),
             config.trusted_peers.clone(),
             config.endpoints.clone(),
             negotiation_limits.clone(),
+            config.network_scope,
         );
         let (incoming_tx, incoming_rx) =
             mpsc::channel(config.limits.max_signaling_connections.max(1));
         let listener = negotiation::Listener::bind(
             config.signaling_port,
+            config.network_scope,
             local_peer_id.clone(),
-            identity.clone(),
+            signing_identity,
             config.trusted_peers.clone(),
             negotiation_limits.clone(),
             incoming_tx,
@@ -97,19 +93,15 @@ impl PeerSessionService {
         })
     }
 
-    pub fn local_peer_id(&self) -> &PeerId {
+    pub(crate) fn local_peer_id(&self) -> &PeerId {
         &self.local_peer_id
     }
 
-    pub fn local_public_key(&self) -> String {
+    pub(crate) fn local_public_key(&self) -> String {
         self.identity.public_key_base64()
     }
 
-    pub fn stored_identity_keypair(&self) -> StoredIdentityKeypair {
-        self.identity.to_stored()
-    }
-
-    pub fn signaling_port(&self) -> u16 {
+    pub(crate) fn signaling_port(&self) -> u16 {
         self.signaling_port
     }
 

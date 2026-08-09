@@ -31,7 +31,9 @@ mod worker;
 #[cfg(test)]
 mod tests;
 
-pub use codec_service::{CodecService, Config, ShutdownError};
+#[cfg(test)]
+use codec_service::ShutdownError;
+pub(crate) use codec_service::{CodecService, Config};
 pub use decoder::{
     DecoderInput, DecoderOutput, DecoderSession, DecoderSessionParts, DecoderWorkerConfig,
 };
@@ -40,7 +42,7 @@ pub use encoder::{
     EncoderWorkerConfig,
 };
 pub use error::Error;
-pub use health::{Direction, DirectionState, Operation, Poison, PoisonReason, Snapshot};
+pub use health::{Direction, DirectionState, Health, Operation, Poison, PoisonReason};
 pub use service_handle::ServiceHandle;
 pub(in crate::media::codec) use state::State;
 pub use transcode::TranscodeType;

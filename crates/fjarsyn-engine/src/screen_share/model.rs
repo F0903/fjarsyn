@@ -20,7 +20,7 @@ pub enum RemoteState {
     Failed(String),
 }
 
-/// Exact identity of one screen-share media generation.
+/// Exact identity of one authenticated screen share and its epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ShareBinding {
     pub(super) share_id: ShareId,

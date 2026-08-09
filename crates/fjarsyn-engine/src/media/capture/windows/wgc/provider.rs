@@ -69,7 +69,7 @@ impl Provider {
     const BUFFER_SIZE: usize = 16 * 1024 * 1024;
     const BUFFER_MAX_COUNT: usize = 8;
 
-    pub fn new(
+    pub(super) fn new(
         device: IDirect3DDevice,
         pixel_format: PixelFormat,
         record_cursor: bool,
@@ -238,6 +238,7 @@ impl ProviderContract for Provider {
                 match process_frame(
                     buffer,
                     frame,
+                    recovery.device(),
                     recovery.resources(),
                     pixel_format,
                     framerate.to_frametime(),

@@ -14,7 +14,7 @@ use super::{
     AdmissionControl, ContactRecord, ContactsService, Directory, Error, Store, StoreError,
 };
 use crate::{
-    identity::{LocalPeerIdentity, PeerId},
+    identity::{LocalIdentity, LocalPeerIdentity, PeerId},
     pairing::{Invite, VerifiedPeerIdentity},
     peer_session::{self, TrustBarrierOwnerId},
     service_host::{HostedService, ShutdownContext},
@@ -278,8 +278,12 @@ async fn start_coordinator(
     let local_peer = PeerId::new("local").unwrap();
     let contacts = Arc::new(Directory::new(store));
     contacts.refresh().await.unwrap();
-    let mut config = peer_session::Config::new(contacts.clone(), Arc::new(NoEndpoints));
-    config.local_peer_id = Some(local_peer.clone());
+    let config = peer_session::Config::new(
+        LocalIdentity::generate(local_peer.clone()),
+        contacts.clone(),
+        Arc::new(NoEndpoints),
+        peer_session::NetworkScope::LoopbackOnly,
+    );
     let sessions = peer_session::PeerSessionService::start(config).await.unwrap();
     let coordinator = ContactsService::new(contacts, sessions.service_handle(), local_peer.clone());
     (sessions, coordinator, remote_peer, local_peer)

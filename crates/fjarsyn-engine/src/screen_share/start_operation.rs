@@ -214,7 +214,7 @@ fn ensure_operation_current(
 }
 
 fn active_local_share(
-    snapshot: &peer_session::Snapshot,
+    snapshot: &peer_session::Sessions,
     session_id: peer_session::SessionId,
 ) -> Option<ShareId> {
     snapshot.session(session_id).and_then(|session| match session.local_share {

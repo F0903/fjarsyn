@@ -7,7 +7,7 @@ use tokio::{
 };
 
 use super::{
-    Backend, Config, Error, Limits, MdnsBackend, Observation, Registry, ServiceHandle, Snapshot,
+    Backend, Config, Error, Limits, MdnsBackend, NearbyPeers, Observation, Registry, ServiceHandle,
 };
 use crate::{
     identity::PeerId,
@@ -20,7 +20,7 @@ use crate::{
 /// [`ServiceHandle`] clones. [`HostedService::shutdown`] is the normal
 /// teardown path and waits for the worker to withdraw its advertisement and
 /// stop its mDNS daemon.
-pub struct PresenceService {
+pub(crate) struct PresenceService {
     handle: ServiceHandle,
     shutdown_tx: Option<oneshot::Sender<()>>,
     worker: Option<JoinHandle<Result<(), Error>>>,
@@ -28,7 +28,7 @@ pub struct PresenceService {
 }
 
 impl PresenceService {
-    pub fn start(config: Config) -> Result<Self, Error> {
+    pub(crate) fn start(config: Config) -> Result<Self, Error> {
         config.validate()?;
         let backend = MdnsBackend::start(&config)?;
         Ok(Self::start_with_backend(
@@ -45,7 +45,7 @@ impl PresenceService {
         shutdown_timeout: Duration,
         backend: Box<dyn Backend>,
     ) -> Self {
-        let (snapshot_tx, snapshot_rx) = watch::channel(Snapshot::default());
+        let (snapshot_tx, snapshot_rx) = watch::channel(NearbyPeers::default());
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let worker =
             tokio::spawn(run_worker(local_peer_id, limits, backend, snapshot_tx, shutdown_rx));
@@ -127,7 +127,7 @@ async fn run_worker(
     local_peer_id: PeerId,
     limits: Limits,
     mut backend: Box<dyn Backend>,
-    snapshot_tx: watch::Sender<Snapshot>,
+    snapshot_tx: watch::Sender<NearbyPeers>,
     mut shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), Error> {
     let mut registry = Registry::new(limits);
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_public_configuration() {
+    fn rejects_invalid_service_configuration() {
         assert!(matches!(
             Config::new(peer_id("peer-a"), 0).validate(),
             Err(Error::InvalidSignalingPort)

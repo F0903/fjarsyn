@@ -3,21 +3,22 @@ use std::sync::Mutex;
 use ffmpeg::{Codec, codec, frame, util::format};
 use ffmpeg_next as ffmpeg;
 use windows::{
-    Win32::Graphics::{
-        Direct3D11::{
-            D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_RESOURCE_MISC_SHARED,
-            D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_TEX2D_VPIV, D3D11_TEX2D_VPOV,
-            D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
-            D3D11_VIDEO_PROCESSOR_CONTENT_DESC, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC,
-            D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC,
-            D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0, D3D11_VIDEO_PROCESSOR_STREAM,
-            D3D11_VIDEO_USAGE_PLAYBACK_NORMAL, D3D11_VPIV_DIMENSION_TEXTURE2D,
-            D3D11_VPOV_DIMENSION_TEXTURE2D, ID3D11Device, ID3D11DeviceContext, ID3D11Resource,
-            ID3D11Texture2D, ID3D11VideoContext, ID3D11VideoContext1, ID3D11VideoDevice,
-            ID3D11VideoProcessor, ID3D11VideoProcessorEnumerator,
-        },
-        Dxgi::{
-            Common::{
+    Win32::{
+        Foundation::RECT,
+        Graphics::{
+            Direct3D11::{
+                D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_TEX2D_VPIV,
+                D3D11_TEX2D_VPOV, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+                D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE, D3D11_VIDEO_PROCESSOR_CONTENT_DESC,
+                D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0,
+                D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC, D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0,
+                D3D11_VIDEO_PROCESSOR_STREAM, D3D11_VIDEO_USAGE_PLAYBACK_NORMAL,
+                D3D11_VPIV_DIMENSION_TEXTURE2D, D3D11_VPOV_DIMENSION_TEXTURE2D, ID3D11Device,
+                ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D, ID3D11VideoContext,
+                ID3D11VideoContext1, ID3D11VideoDevice, ID3D11VideoProcessor,
+                ID3D11VideoProcessorEnumerator,
+            },
+            Dxgi::Common::{
                 DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, DXGI_COLOR_SPACE_TYPE,
                 DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P601,
                 DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P709,
@@ -25,9 +26,8 @@ use windows::{
                 DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601,
                 DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
                 DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P2020, DXGI_FORMAT_B8G8R8A8_UNORM,
-                DXGI_RATIONAL,
+                DXGI_RATIONAL, DXGI_SAMPLE_DESC,
             },
-            IDXGIResource1,
         },
     },
     core::Interface,
@@ -37,36 +37,51 @@ use super::super::{Error, Result};
 use crate::media::{
     Dimensions, PixelFormat,
     codec::backend::ffmpeg::D3d11vaDeviceContext,
-    frame::{Frame, GpuFrameResource, GpuImportHandle},
+    frame::{D3d11FrameProducer, D3d11FrameWriter, Frame},
 };
 
 #[derive(Default)]
-struct SharedTexturePool {
+struct OutputState {
     width: u32,
     height: u32,
-    frame_count: u64,
-    textures: Vec<ID3D11Texture2D>,
-    handles: Vec<GpuImportHandle>,
+    frame_producer: Option<D3d11FrameProducer>,
     video_enumerator: Option<ID3D11VideoProcessorEnumerator>,
     video_processor: Option<ID3D11VideoProcessor>,
 }
 
 struct OutputResources {
-    write_texture: ID3D11Texture2D,
-    completed_texture: ID3D11Texture2D,
-    completed_handle: GpuImportHandle,
+    frame_writer: D3d11FrameWriter,
     enumerator: ID3D11VideoProcessorEnumerator,
     processor: ID3D11VideoProcessor,
 }
 
+struct DeviceContextLock<'a> {
+    context: &'a D3d11vaDeviceContext,
+}
+
+impl<'a> DeviceContextLock<'a> {
+    unsafe fn new(context: &'a D3d11vaDeviceContext) -> Self {
+        if let Some(lock) = context.lock {
+            unsafe { lock(context.lock_ctx) };
+        }
+        Self { context }
+    }
+}
+
+impl Drop for DeviceContextLock<'_> {
+    fn drop(&mut self) {
+        if let Some(unlock) = self.context.unlock {
+            unsafe { unlock(self.context.lock_ctx) };
+        }
+    }
+}
+
 pub(super) struct Backend {
     device_ctx: *mut ffmpeg_next::ffi::AVBufferRef,
-    output_pool: Mutex<SharedTexturePool>,
+    output_state: Mutex<OutputState>,
 }
 
 impl Backend {
-    const OUTPUT_POOL_SIZE: usize = 3;
-
     pub(super) fn configure(codec: &Codec, context: &mut codec::Context) -> Option<Self> {
         if !Self::codec_supports_d3d11va(codec) {
             return None;
@@ -97,7 +112,7 @@ impl Backend {
                 return None;
             }
 
-            Some(Self { device_ctx, output_pool: Mutex::new(SharedTexturePool::default()) })
+            Some(Self { device_ctx, output_state: Mutex::new(OutputState::default()) })
         }
     }
 
@@ -159,10 +174,10 @@ impl Backend {
                 "D3D11VA video context",
             )?;
 
-            let mut src_desc = std::mem::zeroed::<D3D11_TEXTURE2D_DESC>();
-            src_texture.GetDesc(&mut src_desc);
-
-            let output_resources = self.ensure_output_resources(video_device, &src_desc)?;
+            let visible_width = decoded_frame.width();
+            let visible_height = decoded_frame.height();
+            let output_resources =
+                self.ensure_output_resources(video_device, visible_width, visible_height)?;
 
             let src_resource: ID3D11Resource = src_texture.cast().map_err(|err| {
                 Error::HardwareInterop(format!(
@@ -171,7 +186,7 @@ impl Backend {
                 ))
             })?;
             let dst_resource: ID3D11Resource =
-                output_resources.write_texture.cast().map_err(|err| {
+                output_resources.frame_writer.texture().cast().map_err(|err| {
                     Error::HardwareInterop(format!(
                         "Failed to cast destination texture to resource: {}",
                         err
@@ -224,7 +239,12 @@ impl Backend {
                 Error::HardwareInterop("Decoder output view creation returned no view".into())
             })?;
 
-            Self::configure_color_space(video_context, &output_resources.processor, decoded_frame);
+            let visible_rect = RECT {
+                left: 0,
+                top: 0,
+                right: visible_width as i32,
+                bottom: visible_height as i32,
+            };
 
             let stream = D3D11_VIDEO_PROCESSOR_STREAM {
                 Enable: true.into(),
@@ -240,33 +260,63 @@ impl Backend {
                 ppFutureSurfacesRight: std::ptr::null_mut(),
             };
 
-            self.lock(hw_device_ctx);
-            let blt_result = video_context.VideoProcessorBlt(
-                &output_resources.processor,
-                &output_view,
-                0,
-                &[stream],
-            );
-            self.unlock(hw_device_ctx);
+            let gpu_resource = {
+                // FFmpeg may use this immediate/video context concurrently.
+                // Keep the complete conversion and ready-signal transaction
+                // under its device lock so no work can interleave between the
+                // blit and the fence value published with this frame.
+                let _context_lock = DeviceContextLock::new(hw_device_ctx);
+                Self::configure_color_space(
+                    video_context,
+                    &output_resources.processor,
+                    decoded_frame,
+                );
+                video_context.VideoProcessorSetStreamSourceRect(
+                    &output_resources.processor,
+                    0,
+                    true,
+                    Some(&visible_rect),
+                );
+                video_context.VideoProcessorSetStreamDestRect(
+                    &output_resources.processor,
+                    0,
+                    true,
+                    Some(&visible_rect),
+                );
+                video_context.VideoProcessorSetOutputTargetRect(
+                    &output_resources.processor,
+                    true,
+                    Some(&visible_rect),
+                );
+                let blt_result = video_context.VideoProcessorBlt(
+                    &output_resources.processor,
+                    &output_view,
+                    0,
+                    std::slice::from_ref(&stream),
+                );
 
-            blt_result.map_err(|err| {
-                Error::HardwareInterop(format!(
-                    "Failed to convert decoded frame with D3D11 video processor: {}",
-                    err
-                ))
-            })?;
+                // The generated stream type uses ManuallyDrop for its COM
+                // input views and therefore does not release them itself.
+                drop(std::mem::ManuallyDrop::into_inner(stream.pInputSurface));
+                drop(std::mem::ManuallyDrop::into_inner(stream.pInputSurfaceRight));
 
-            device_context.Flush();
+                blt_result.map_err(|err| {
+                    Error::HardwareInterop(format!(
+                        "Failed to convert decoded frame with D3D11 video processor: {}",
+                        err
+                    ))
+                })?;
+
+                output_resources.frame_writer.finish(device_context).map_err(|err| {
+                    Error::HardwareInterop(format!("Failed to publish decoded GPU frame: {}", err))
+                })?
+            };
 
             Ok(Some(Frame::new_gpu(
-                // Expose the most recently completed shared texture instead of
-                // the surface we just wrote into this decode step.
-                GpuFrameResource::D3D11Texture(output_resources.completed_texture.clone()),
-                Some(output_resources.completed_handle),
-                None,
+                gpu_resource,
                 None,
                 PixelFormat::BGRA8,
-                Dimensions::new(decoded_frame.width() as i32, decoded_frame.height() as i32),
+                Dimensions::new(visible_width as i32, visible_height as i32),
                 None,
             )))
         }
@@ -297,21 +347,29 @@ impl Backend {
     unsafe fn ensure_output_resources(
         &self,
         video_device: &ID3D11VideoDevice,
-        src_desc: &D3D11_TEXTURE2D_DESC,
+        width: u32,
+        height: u32,
     ) -> Result<OutputResources> {
-        let mut pool = self.output_pool.lock().unwrap();
-        if pool.textures.is_empty()
-            || pool.width != src_desc.Width
-            || pool.height != src_desc.Height
+        if width == 0
+            || height == 0
+            || i32::try_from(width).is_err()
+            || i32::try_from(height).is_err()
         {
+            return Err(Error::HardwareInterop(format!(
+                "Invalid decoded-frame dimensions {width}x{height}"
+            )));
+        }
+
+        let mut state = self.output_state.lock().unwrap();
+        if state.frame_producer.is_none() || state.width != width || state.height != height {
             let content_desc = D3D11_VIDEO_PROCESSOR_CONTENT_DESC {
                 InputFrameFormat: D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE,
                 InputFrameRate: DXGI_RATIONAL { Numerator: 60, Denominator: 1 },
-                InputWidth: src_desc.Width,
-                InputHeight: src_desc.Height,
+                InputWidth: width,
+                InputHeight: height,
                 OutputFrameRate: DXGI_RATIONAL { Numerator: 60, Denominator: 1 },
-                OutputWidth: src_desc.Width,
-                OutputHeight: src_desc.Height,
+                OutputWidth: width,
+                OutputHeight: height,
                 Usage: D3D11_VIDEO_USAGE_PLAYBACK_NORMAL,
             };
 
@@ -327,94 +385,52 @@ impl Backend {
                     Error::HardwareInterop(format!("Failed to create video processor: {}", err))
                 })?;
 
-            pool.width = src_desc.Width;
-            pool.height = src_desc.Height;
-            pool.frame_count = 0;
-            pool.textures.clear();
-            pool.handles.clear();
-            pool.video_enumerator = Some(enumerator);
-            pool.video_processor = Some(processor);
-
             let hw_device_ctx = unsafe { self.hw_device_context() };
             let device = unsafe {
                 Self::borrow_interface::<ID3D11Device>(&hw_device_ctx.device, "D3D11VA device")
             }?;
+            let frame_producer = D3d11FrameProducer::new(device.clone()).map_err(|err| {
+                Error::HardwareInterop(format!(
+                    "Failed to create decoded-frame GPU timeline: {}",
+                    err
+                ))
+            })?;
 
-            for _ in 0..Self::OUTPUT_POOL_SIZE {
-                let desc = D3D11_TEXTURE2D_DESC {
-                    Width: src_desc.Width,
-                    Height: src_desc.Height,
-                    MipLevels: 1,
-                    ArraySize: 1,
-                    Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                    SampleDesc: src_desc.SampleDesc,
-                    Usage: D3D11_USAGE_DEFAULT,
-                    BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
-                    CPUAccessFlags: 0,
-                    MiscFlags: (D3D11_RESOURCE_MISC_SHARED.0
-                        | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0)
-                        as u32,
-                };
-
-                let texture = {
-                    let mut texture = None;
-                    unsafe { device.CreateTexture2D(&desc, None, Some(&mut texture)) }.map_err(
-                        |err| {
-                            Error::HardwareInterop(format!(
-                                "Failed to create shared decoder texture: {}",
-                                err
-                            ))
-                        },
-                    )?;
-                    texture.ok_or_else(|| {
-                        Error::HardwareInterop(
-                            "Decoder texture creation returned no texture".into(),
-                        )
-                    })?
-                };
-
-                let dxgi_resource: IDXGIResource1 = texture.cast().map_err(|err| {
-                    Error::HardwareInterop(format!(
-                        "Failed to cast decoder texture to IDXGIResource1: {}",
-                        err
-                    ))
-                })?;
-
-                let handle = unsafe {
-                    dxgi_resource.CreateSharedHandle(
-                        None,
-                        windows::Win32::Graphics::Dxgi::DXGI_SHARED_RESOURCE_READ.0
-                            | windows::Win32::Graphics::Dxgi::DXGI_SHARED_RESOURCE_WRITE.0,
-                        None,
-                    )
-                }
-                .map_err(|err| {
-                    Error::HardwareInterop(format!(
-                        "Failed to create shared decoder texture handle: {}",
-                        err
-                    ))
-                })?;
-
-                pool.textures.push(texture);
-                pool.handles.push(GpuImportHandle::from_windows_nt_handle(handle));
-            }
+            state.width = width;
+            state.height = height;
+            state.frame_producer = Some(frame_producer);
+            state.video_enumerator = Some(enumerator);
+            state.video_processor = Some(processor);
         }
 
-        let pool_len = pool.textures.len() as u64;
-        let write_index = (pool.frame_count % pool_len) as usize;
-        let preview_index = if pool.frame_count > 0 {
-            ((pool.frame_count - 1) % pool_len) as usize
-        } else {
-            write_index
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
         };
-        pool.frame_count += 1;
+        let frame_writer = state
+            .frame_producer
+            .as_mut()
+            .expect("decoded-frame producer was initialized")
+            .begin_frame(desc)
+            .map_err(|err| {
+                Error::HardwareInterop(format!(
+                    "Failed to create immutable decoded-frame texture: {}",
+                    err
+                ))
+            })?;
 
         Ok(OutputResources {
-            write_texture: pool.textures[write_index].clone(),
-            completed_texture: pool.textures[preview_index].clone(),
-            completed_handle: pool.handles[preview_index],
-            enumerator: pool.video_enumerator.as_ref().unwrap().clone(),
-            processor: pool.video_processor.as_ref().unwrap().clone(),
+            frame_writer,
+            enumerator: state.video_enumerator.as_ref().unwrap().clone(),
+            processor: state.video_processor.as_ref().unwrap().clone(),
         })
     }
 
@@ -456,18 +472,6 @@ impl Backend {
             (_, true, false) => DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601,
             (_, _, true) => DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P709,
             (_, _, false) => DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
-        }
-    }
-
-    unsafe fn lock(&self, hw_device_ctx: &D3d11vaDeviceContext) {
-        if let Some(lock) = hw_device_ctx.lock {
-            unsafe { lock(hw_device_ctx.lock_ctx) };
-        }
-    }
-
-    unsafe fn unlock(&self, hw_device_ctx: &D3d11vaDeviceContext) {
-        if let Some(unlock) = hw_device_ctx.unlock {
-            unsafe { unlock(hw_device_ctx.lock_ctx) };
         }
     }
 

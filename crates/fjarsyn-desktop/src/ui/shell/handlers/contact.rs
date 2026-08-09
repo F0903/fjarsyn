@@ -95,15 +95,18 @@ pub(in crate::ui::shell) fn handle_contact_operation(
                 })
             })
         }
-        message::ContactOperation::Saved { result, .. } => {
+        message::ContactOperation::Saved { operation_id, result } => {
+            app.active_screen.contact_save_finished(operation_id, result.is_ok());
             apply_mutation_result(app, result, "Contact saved.");
             Task::none()
         }
-        message::ContactOperation::Deleted { result, .. } => {
+        message::ContactOperation::Deleted { operation_id, id, result } => {
+            app.active_screen.contact_delete_finished(operation_id, id, result.is_ok());
             apply_mutation_result(app, result, "Contact deleted.");
             Task::none()
         }
-        message::ContactOperation::Updated { result, .. } => {
+        message::ContactOperation::Updated { operation_id, result } => {
+            app.active_screen.contact_identity_update_finished(operation_id, result.is_ok());
             apply_mutation_result(app, result, "Contact identity updated.");
             Task::none()
         }
@@ -111,7 +114,7 @@ pub(in crate::ui::shell) fn handle_contact_operation(
 }
 
 fn contact_service(app: &Fjarsyn) -> Option<fjarsyn_engine::contacts::ContactsService> {
-    app.runtime.application.as_ref().map(|runtime| runtime.contacts().clone())
+    app.runtime.engine.as_ref().map(|runtime| runtime.contacts().clone())
 }
 
 fn rejected_operation_task(message: message::screen::contacts::Message) -> Task<Message> {

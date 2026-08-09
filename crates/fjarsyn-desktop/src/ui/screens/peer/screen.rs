@@ -23,11 +23,11 @@ impl Screen {
         &self.peer_id
     }
 
-    fn handle_message(&mut self, context: Context<'_>, message: Message) -> Task<Message> {
-        let Message::Screen(message::Screen::Peer(message)) = message else {
-            return Task::none();
-        };
-
+    pub(in crate::ui::screens) fn update(
+        &mut self,
+        context: Context<'_>,
+        message: PeerMessage,
+    ) -> Task<Message> {
         match message {
             PeerMessage::DraftChanged(value) => {
                 self.draft = value;
@@ -55,19 +55,5 @@ impl Screen {
                 }))
             }
         }
-    }
-}
-
-impl crate::ui::screens::Screen for Screen {
-    fn update(
-        &mut self,
-        context: Context<'_>,
-        message: message::Message,
-    ) -> Task<message::Message> {
-        self.handle_message(context, message)
-    }
-
-    fn view<'a>(&'a self, context: Context<'a>) -> iced::Element<'a, message::Message> {
-        self.render_view(context)
     }
 }

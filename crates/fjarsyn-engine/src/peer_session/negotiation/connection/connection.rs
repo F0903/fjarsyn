@@ -17,7 +17,7 @@ use super::{
 use crate::{
     identity::{LocalPeerIdentity, PeerId, TrustedPeerIdentity},
     peer_session::{
-        Error, SessionId,
+        Error, NetworkScope, SessionId,
         negotiation::{Limits, tls},
         protocol::{
             EnvelopeVerification, NegotiationSignal, SessionReplayCache, SignedSessionEnvelope,
@@ -105,6 +105,7 @@ impl Connection {
 
     pub(in crate::peer_session::negotiation) async fn connect_from_hints(
         endpoint_hints: &[SocketAddr],
+        network_scope: NetworkScope,
         context: SessionConnectionContext,
     ) -> Result<Self, Error> {
         if context.trusted_peer.peer_id != context.remote_peer_id {
@@ -115,8 +116,11 @@ impl Connection {
         context.trusted_peer.validate().map_err(|error| Error::Protocol(error.to_string()))?;
         let tls_connector = tls::Connector::new(&context.trusted_peer)?;
 
-        let endpoint_hints =
-            plan_endpoint_hints(endpoint_hints, context.limits.max_endpoint_attempts);
+        let endpoint_hints = plan_endpoint_hints(
+            endpoint_hints,
+            network_scope,
+            context.limits.max_endpoint_attempts,
+        );
         let mut attempted = 0;
         for endpoint in endpoint_hints {
             attempted += 1;

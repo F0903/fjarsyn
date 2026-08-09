@@ -3,26 +3,27 @@
 use std::sync::Arc;
 
 use fjarsyn_engine::{
-    config::Config,
     contacts::Contact,
     identity::PeerId,
     messaging::{ConversationMap, ConversationMessage, ConversationSummary},
-    peer_session::{self, SessionId, SessionSnapshot},
+    peer_session::{self, SessionId, SessionState},
     presence, screen_share,
 };
+
+use crate::settings::Settings;
 
 /// Borrowed application projections used to construct a presentation context.
 #[derive(Clone, Copy)]
 pub(in crate::ui) struct Inputs<'a> {
-    pub(in crate::ui) config: &'a Config,
+    pub(in crate::ui) settings: &'a Settings,
     pub(in crate::ui) local_peer_id: Option<&'a PeerId>,
     pub(in crate::ui) local_public_key: Option<&'a str>,
     pub(in crate::ui) contacts: &'a [Contact],
-    pub(in crate::ui) presence: &'a presence::Snapshot,
-    pub(in crate::ui) sessions: &'a peer_session::Snapshot,
+    pub(in crate::ui) presence: &'a presence::NearbyPeers,
+    pub(in crate::ui) sessions: &'a peer_session::Sessions,
     pub(in crate::ui) conversation_summaries: &'a [ConversationSummary],
     pub(in crate::ui) conversations: &'a ConversationMap,
-    pub(in crate::ui) screen_share: &'a screen_share::Snapshot,
+    pub(in crate::ui) screen_share: &'a screen_share::Shares,
 }
 
 /// A deliberately narrow, immutable view of the projections rendered by the UI.
@@ -36,8 +37,8 @@ impl<'a> Context<'a> {
         Self { inputs }
     }
 
-    pub(in crate::ui) fn config(self) -> &'a Config {
-        self.inputs.config
+    pub(in crate::ui) fn settings(self) -> &'a Settings {
+        self.inputs.settings
     }
 
     pub(in crate::ui) fn local_peer_id(self) -> Option<&'a PeerId> {
@@ -65,7 +66,7 @@ impl<'a> Context<'a> {
         self.inputs.presence.is_nearby(peer_id)
     }
 
-    pub(in crate::ui) fn session_for_peer(self, peer_id: &PeerId) -> Option<&'a SessionSnapshot> {
+    pub(in crate::ui) fn session_for_peer(self, peer_id: &PeerId) -> Option<&'a SessionState> {
         self.inputs.sessions.session_for_peer(peer_id)
     }
 
@@ -89,7 +90,7 @@ impl<'a> Context<'a> {
     pub(in crate::ui) fn screen_share_session(
         self,
         session_id: SessionId,
-    ) -> screen_share::SessionSnapshot {
+    ) -> screen_share::SessionMedia {
         self.inputs.screen_share.session(session_id)
     }
 

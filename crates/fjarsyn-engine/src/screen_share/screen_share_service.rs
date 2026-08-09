@@ -4,7 +4,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::{Config, Output, PIPELINE_SHUTDOWN_TIMEOUT, Runtime, ServiceHandle, Snapshot};
+use super::{Config, Output, PIPELINE_SHUTDOWN_TIMEOUT, Runtime, ServiceHandle, Shares};
 use crate::{
     media::codec,
     peer_session,
@@ -29,7 +29,7 @@ impl ScreenShareService {
     ) -> Self {
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (config_tx, config_rx) = watch::channel(initial_config);
-        let (snapshot_tx, snapshot_rx) = watch::channel(Snapshot::default());
+        let (snapshot_tx, snapshot_rx) = watch::channel(Shares::default());
         let (event_tx, _) = broadcast::channel(EVENT_CAPACITY);
         let (shutdown_tx, shutdown_rx) = watch::channel(None);
         let output = Output::new(snapshot_tx, event_tx.clone(), sessions.subscribe());

@@ -9,11 +9,28 @@ use crate::ui::{
 };
 
 pub(in crate::ui) fn subscription(
-    runtime_events: super::Receiver<runtime::Event>,
+    engine_receivers: Option<runtime::EngineReceivers>,
     started_at: Instant,
     notification_deadline: Option<Instant>,
 ) -> Subscription<Message> {
-    let runtime = receiver::channel_subscription(runtime_events, map_runtime_event);
+    let runtime = engine_receivers
+        .map(|receivers| {
+            let runtime_id = receivers.runtime_id;
+            Subscription::batch([
+                receiver::retained_subscription(
+                    runtime_id,
+                    receivers.state,
+                    map_engine_state_changed,
+                ),
+                receiver::channel_subscription(runtime_id, receivers.notices, map_engine_notice),
+                receiver::channel_subscription(
+                    runtime_id,
+                    receivers.failures,
+                    map_engine_adapter_failure,
+                ),
+            ])
+        })
+        .unwrap_or_else(Subscription::none);
     let opened = iced::window::open_events()
         .map(|id| Message::WindowEvent(message::window::Event::WindowOpened(id)));
     let closed = iced::window::close_events()
@@ -26,8 +43,19 @@ pub(in crate::ui) fn subscription(
     Subscription::batch([runtime, opened, closed, window, deadline])
 }
 
-fn map_runtime_event(event: runtime::Event) -> Message {
-    Message::Runtime(message::Runtime::Event(event))
+fn map_engine_state_changed(runtime_id: runtime::RuntimeId) -> Message {
+    Message::Runtime(message::Runtime::EngineStateChanged { runtime_id })
+}
+
+fn map_engine_notice(runtime_id: runtime::RuntimeId, notice: runtime::EngineNotice) -> Message {
+    Message::Runtime(message::Runtime::EngineNotice { runtime_id, notice })
+}
+
+fn map_engine_adapter_failure(
+    runtime_id: runtime::RuntimeId,
+    failure: runtime::EngineAdapterFailure,
+) -> Message {
+    Message::Runtime(message::Runtime::EngineAdapterFailed { runtime_id, failure })
 }
 
 fn map_window_event(event: iced::Event) -> Option<Message> {

@@ -40,7 +40,11 @@ wgpu = { version = "27.0.1", default-features = false, features = [
     "wgsl",
 ] }
 windows = { version = "0.58.0", features = [
+    "Win32_Foundation",
+    "Win32_Security",
     "Win32_UI_Shell",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Dxgi_Common",
@@ -50,6 +54,7 @@ windows = { version = "0.58.0", features = [
     "Graphics_DirectX_Direct3D11",
     "Graphics_Capture",
 ] }
+zeroize = { version = "1", features = ["derive"] }
 
 [profile.release]
 opt-level = "z"

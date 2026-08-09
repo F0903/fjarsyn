@@ -1,9 +1,12 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard};
 
-use windows::Graphics::{
-    Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem},
-    DirectX::Direct3D11::IDirect3DDevice,
-    SizeInt32,
+use windows::{
+    Graphics::{
+        Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem},
+        DirectX::Direct3D11::IDirect3DDevice,
+        SizeInt32,
+    },
+    core::{IUnknown, Interface},
 };
 
 use super::{FRAME_BUFFER_COUNT, SessionSettings, SessionState};
@@ -31,6 +34,22 @@ pub(in crate::media::capture::windows::wgc) struct DeviceState {
     inner: Arc<RwLock<SendableDevice>>,
 }
 
+pub(in crate::media::capture::windows::wgc) struct CurrentDevice<'a> {
+    inner: RwLockReadGuard<'a, SendableDevice>,
+}
+
+impl CurrentDevice<'_> {
+    pub(in crate::media::capture::windows::wgc) fn matches_native(
+        &self,
+        device: &windows::Win32::Graphics::Direct3D11::ID3D11Device,
+    ) -> windows::core::Result<bool> {
+        let current = crate::media::capture::windows::winrt_to_native_d3d11device(&self.inner.0)?;
+        let current: IUnknown = current.cast()?;
+        let candidate: IUnknown = device.cast()?;
+        Ok(current.as_raw() == candidate.as_raw())
+    }
+}
+
 impl DeviceState {
     pub(in crate::media::capture::windows::wgc) fn new(device: IDirect3DDevice) -> Self {
         Self { inner: Arc::new(RwLock::new(SendableDevice(device))) }
@@ -38,6 +57,10 @@ impl DeviceState {
 
     pub(in crate::media::capture::windows::wgc) fn get(&self) -> IDirect3DDevice {
         self.inner.read().unwrap().handle()
+    }
+
+    pub(in crate::media::capture::windows::wgc) fn current(&self) -> CurrentDevice<'_> {
+        CurrentDevice { inner: self.inner.read().unwrap() }
     }
 
     fn replace(&self, device: IDirect3DDevice) {

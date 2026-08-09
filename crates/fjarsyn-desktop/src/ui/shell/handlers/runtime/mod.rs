@@ -1,4 +1,4 @@
-//! Runtime lifecycle completions and projection-event handling.
+//! Runtime lifecycle completions and engine-adapter output handling.
 
 mod event;
 mod lifecycle;

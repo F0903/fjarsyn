@@ -6,7 +6,7 @@ use super::{Runtime, SessionEntry};
 use crate::{
     identity::PeerId,
     peer_session::{
-        CloseReason, Error, Event, SessionId, Snapshot,
+        CloseReason, Error, Event, SessionId, Sessions,
         actor::{self, Role, TaskExit, Terminal, Update},
         negotiation, rtc,
     },
@@ -22,6 +22,7 @@ impl Runtime {
     ) -> Result<(), Error> {
         let remote_public_key = connection.authenticated_remote_public_key().to_owned();
         let rtc = rtc::Config {
+            network_scope: self.network_scope,
             ice_servers: self.ice_servers.clone(),
             max_depacket_latency: self.max_depacket_latency,
             max_candidates_per_generation: self.limits.max_ice_candidates_per_generation,
@@ -64,11 +65,11 @@ impl Runtime {
     }
 
     pub(super) async fn handle_update(&mut self, update: Update) {
-        let Update { generation, event } = update;
+        let Update { instance_id, event } = update;
         if self
             .sessions
             .get(&event.session_id())
-            .is_some_and(|entry| entry.handle.generation == generation)
+            .is_some_and(|entry| entry.handle.instance_id == instance_id)
         {
             self.emit(event).await;
         }
@@ -81,10 +82,10 @@ impl Runtime {
         for update in drain_pending_session_updates(&mut self.update_rx) {
             self.handle_update(update).await;
         }
-        let Terminal { generation, session_id, peer_id, reason } = terminal;
-        let current_generation =
-            self.sessions.get(&session_id).map(|entry| entry.handle.generation);
-        if current_generation != Some(generation) {
+        let Terminal { instance_id, session_id, peer_id, reason } = terminal;
+        let current_instance_id =
+            self.sessions.get(&session_id).map(|entry| entry.handle.instance_id);
+        if current_instance_id != Some(instance_id) {
             return;
         }
         if let Some(mut entry) = self.sessions.remove(&session_id) {
@@ -103,16 +104,16 @@ impl Runtime {
     }
 
     pub(super) async fn handle_task_exit(&mut self, task_exit: TaskExit) {
-        let (generation, session_id, peer_id, panic_reason) = task_exit.into_parts();
-        let current_generation =
-            self.sessions.get(&session_id).map(|entry| entry.handle.generation);
-        if current_generation != Some(generation) {
+        let (instance_id, session_id, peer_id, panic_reason) = task_exit.into_parts();
+        let current_instance_id =
+            self.sessions.get(&session_id).map(|entry| entry.handle.instance_id);
+        if current_instance_id != Some(instance_id) {
             return;
         }
 
         // A normal actor sends Terminal before its supervised future returns,
         // and the select loop prioritizes that semantic channel. Reaching this
-        // branch while the generation is still registered therefore means the
+        // branch while the actor instance is still registered therefore means the
         // actor escaped its normal cleanup path (usually through a panic).
         for update in drain_pending_session_updates(&mut self.update_rx) {
             self.handle_update(update).await;
@@ -163,7 +164,7 @@ impl Runtime {
         let mut sessions =
             self.sessions.values().map(|entry| entry.handle.snapshot()).collect::<Vec<_>>();
         sessions.sort_by_key(|session| session.session_id);
-        let next = Snapshot { sessions: Arc::new(sessions) };
+        let next = Sessions { sessions: Arc::new(sessions) };
         if *self.snapshot_tx.borrow() != next {
             self.snapshot_tx.send_replace(next);
         }
@@ -183,13 +184,13 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
-    use crate::peer_session::MessageId;
+    use crate::peer_session::{MessageId, actor::ActorInstanceId};
 
     #[tokio::test]
     async fn terminal_overtake_drains_semantic_updates_before_closed() {
         let session_id = SessionId::new();
         let peer_id = PeerId::new("peer").unwrap();
-        let generation = uuid::Uuid::new_v4();
+        let instance_id = ActorInstanceId::new();
         let message = Event::MessageReceived {
             session_id,
             peer_id: peer_id.clone(),
@@ -198,7 +199,7 @@ mod tests {
             sent_at: Utc::now(),
         };
         let (update_tx, mut update_rx) = mpsc::channel(2);
-        update_tx.send(Update { generation, event: message.clone() }).await.unwrap();
+        update_tx.send(Update { instance_id, event: message.clone() }).await.unwrap();
         // Model the unbounded terminal channel winning select before update_rx.
         let terminal = Event::Closed { session_id, peer_id, reason: CloseReason::RemoteDisconnect };
         let (sink_tx, mut sink_rx) = mpsc::channel(2);

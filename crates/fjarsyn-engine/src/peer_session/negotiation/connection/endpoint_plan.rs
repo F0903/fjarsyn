@@ -3,14 +3,22 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+use crate::peer_session::NetworkScope;
+
 pub(super) fn plan_endpoint_hints(
     endpoint_hints: &[SocketAddr],
+    network_scope: NetworkScope,
     max_attempts: usize,
 ) -> Vec<SocketAddr> {
     let limit = max_attempts.max(1);
     let mut seen = HashSet::with_capacity(endpoint_hints.len().min(limit.saturating_add(1)));
     let mut planned = Vec::with_capacity(endpoint_hints.len().min(limit));
-    for endpoint in endpoint_hints.iter().copied().filter_map(normalize_endpoint_hint) {
+    for endpoint in endpoint_hints
+        .iter()
+        .copied()
+        .filter_map(normalize_endpoint_hint)
+        .filter(|endpoint| network_scope.allows(endpoint.ip()))
+    {
         if !seen.insert(endpoint) {
             continue;
         }
@@ -92,9 +100,32 @@ mod tests {
         let third = SocketAddr::from((Ipv6Addr::LOCALHOST, 9000));
         let hints = [SocketAddr::from(([0, 0, 0, 0], 9000)), first, mapped, first, second, third];
 
-        assert_eq!(plan_endpoint_hints(&hints, 2), vec![first, third]);
-        assert_eq!(plan_endpoint_hints(&[first, second], 2), vec![first, second]);
-        assert_eq!(plan_endpoint_hints(&[first], usize::MAX), vec![first]);
+        assert_eq!(plan_endpoint_hints(&hints, NetworkScope::AllInterfaces, 2), vec![first, third]);
+        assert_eq!(
+            plan_endpoint_hints(&[first, second], NetworkScope::AllInterfaces, 2),
+            vec![first, second]
+        );
+        assert_eq!(
+            plan_endpoint_hints(&[first], NetworkScope::AllInterfaces, usize::MAX),
+            vec![first]
+        );
+    }
+
+    #[test]
+    fn loopback_scope_rejects_every_non_loopback_hint() {
+        let ipv4 = SocketAddr::from((Ipv4Addr::LOCALHOST, 9000));
+        let ipv6 = SocketAddr::from((Ipv6Addr::LOCALHOST, 9000));
+        let hints = [
+            SocketAddr::from(([203, 0, 113, 1], 9000)),
+            ipv4,
+            SocketAddr::from(([192, 168, 1, 10], 9000)),
+            ipv6,
+        ];
+
+        assert_eq!(
+            plan_endpoint_hints(&hints, NetworkScope::LoopbackOnly, usize::MAX),
+            vec![ipv4, ipv6]
+        );
     }
 
     #[test]

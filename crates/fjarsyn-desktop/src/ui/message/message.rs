@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
-use fjarsyn_engine::config;
-
 use super::{ContactOperation, Route, Screen, peer, window};
-use crate::ui::runtime;
+use crate::{settings, ui::runtime};
 
 #[derive(Debug, Clone)]
-pub(in crate::ui) enum Config {
-    SaveRequested(config::Config),
+pub(in crate::ui) enum Settings {
+    SaveRequested(settings::Settings),
+    SaveAndRetryRequested(settings::Settings),
 }
 
 #[derive(Debug, Clone)]
@@ -31,20 +30,30 @@ pub(in crate::ui) enum Notification {
 
 #[derive(Debug, Clone)]
 pub(in crate::ui) enum Runtime {
-    Initialized(Result<runtime::Slot, Arc<String>>),
-    Event(runtime::Event),
-    ShutdownFinished(Result<(), Arc<String>>),
-    RestartFinished {
-        shutdown_warning: Option<Arc<String>>,
-        launch_result: Result<(), Arc<String>>,
+    Initialized {
+        runtime_id: runtime::RuntimeId,
+        result: Result<runtime::RuntimeSlot, Arc<String>>,
     },
+    EngineStateChanged {
+        runtime_id: runtime::RuntimeId,
+    },
+    EngineNotice {
+        runtime_id: runtime::RuntimeId,
+        notice: runtime::EngineNotice,
+    },
+    EngineAdapterFailed {
+        runtime_id: runtime::RuntimeId,
+        failure: runtime::EngineAdapterFailure,
+    },
+    ShutdownFinished(Result<(), Arc<String>>),
+    RestartShutdownFinished(Result<(), Arc<String>>),
 }
 
 #[derive(Debug, Clone)]
 pub(in crate::ui) enum Message {
     Navigation(Navigation),
     Lifecycle(Lifecycle),
-    Config(Config),
+    Settings(Settings),
     Screen(Screen),
     PeerAction(peer::Action),
     Runtime(Runtime),

@@ -1,9 +1,6 @@
-use fjarsyn_engine::{
-    config::Config,
-    media::{
-        codec::TranscodeType,
-        video::{Framerate, TargetResolution},
-    },
+use fjarsyn_engine::media::{
+    codec::TranscodeType,
+    video::{Framerate, TargetResolution},
 };
 use iced::{
     Alignment, Element, Length,
@@ -14,7 +11,9 @@ use iced_fonts::lucide;
 use crate::ui::{
     message::{self, Message},
     screens::settings::{
+        SettingsDraft,
         components::{setting_row, settings_section},
+        settings_draft::{MAX_TARGET_BITRATE_KBPS, MIN_TARGET_BITRATE_KBPS},
         tabs::Tab,
     },
     theme,
@@ -36,7 +35,36 @@ impl Tab for Transcoding {
         lucide::arrow_right_left()
     }
 
-    fn view(&self, config: &Config) -> Element<'_, Message> {
+    fn view<'a>(&self, draft: &'a SettingsDraft) -> Element<'a, Message> {
+        let bitrate = row![
+            slider(
+                MIN_TARGET_BITRATE_KBPS..=MAX_TARGET_BITRATE_KBPS,
+                draft.video.target_bitrate_kbps.last_valid(),
+                |value| {
+                    Message::Screen(message::Screen::Settings(
+                        message::screen::settings::Message::TargetBitrateKbpsChanged(value),
+                    ))
+                }
+            )
+            .width(Length::Fill),
+            text_input("Bitrate", draft.video.target_bitrate_kbps.text())
+                .on_input(|value| {
+                    Message::Screen(message::Screen::Settings(
+                        message::screen::settings::Message::TargetBitrateKbpsInputChanged(value),
+                    ))
+                })
+                .padding(8)
+                .width(Length::Fixed(80.0))
+                .style(theme::text_input_style),
+            text("kbps").size(12).style(text::secondary)
+        ]
+        .spacing(15)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+        let mut bitrate = column![bitrate].spacing(5);
+        if let Some(error) = draft.video.target_bitrate_kbps.error() {
+            bitrate = bitrate.push(text(error).size(11).style(text::secondary));
+        }
         let content = column![
              settings_section(
                 lucide::arrow_right_left(),
@@ -45,7 +73,7 @@ impl Tab for Transcoding {
                     setting_row(
                         "Transcoder",
                         "Video codec and preferred encode path. Decoding uses GPU acceleration when available.",
-                        pick_list(TranscodeType::ALL, Some(config.video.transcoding_type), |val| {
+                        pick_list(TranscodeType::ALL, Some(draft.video.transcoding_type), |val| {
                             Message::Screen(message::Screen::Settings(
                                 message::screen::settings::Message::TranscodingTypeChanged(val),
                             ))
@@ -56,7 +84,7 @@ impl Tab for Transcoding {
                      setting_row(
                         "Resolution",
                         "Maximum streaming resolution",
-                        pick_list(TargetResolution::ALL, Some(config.video.target_resolution), |val| {
+                        pick_list(TargetResolution::ALL, Some(draft.video.target_resolution), |val| {
                             Message::Screen(message::Screen::Settings(
                                 message::screen::settings::Message::TargetResolutionChanged(val),
                             ))
@@ -67,7 +95,7 @@ impl Tab for Transcoding {
                     setting_row(
                         "Framerate",
                         "Target frames per second",
-                        pick_list(Framerate::ALL, Some(config.video.target_framerate), |val| {
+                        pick_list(Framerate::ALL, Some(draft.video.target_framerate), |val| {
                             Message::Screen(message::Screen::Settings(
                                 message::screen::settings::Message::TargetFramerateChanged(val),
                             ))
@@ -78,27 +106,7 @@ impl Tab for Transcoding {
                     setting_row(
                         "Bitrate",
                         "Target bitrate for the video stream",
-                        row![
-                            slider(100_000..=100_000_000, config.video.target_bitrate, |val| {
-                                Message::Screen(message::Screen::Settings(
-                                    message::screen::settings::Message::TargetBitrateChanged(val),
-                                ))
-                            })
-                            .width(Length::Fill),
-                            text_input("Bitrate", &format!("{}", config.video.target_bitrate / 1000))
-                                .on_input(|val| {
-                                    Message::Screen(message::Screen::Settings(
-                                        message::screen::settings::Message::TargetBitrateInputChanged(val),
-                                    ))
-                                })
-                                .padding(8)
-                                .width(Length::Fixed(80.0))
-                                .style(theme::text_input_style),
-                            text("kbps").size(12).style(text::secondary)
-                        ]
-                        .spacing(15)
-                        .align_y(Alignment::Center)
-                        .width(Length::Fill),
+                        bitrate,
                     ),
                 ]
                 .spacing(20),

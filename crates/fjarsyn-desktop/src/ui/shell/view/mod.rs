@@ -2,4 +2,5 @@
 
 mod application;
 mod codec;
+mod degraded;
 mod overlay;

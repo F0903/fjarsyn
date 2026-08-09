@@ -14,7 +14,10 @@ use crate::ui::{
 };
 
 impl Screen {
-    pub(super) fn render_view<'a>(&'a self, context: Context<'a>) -> Element<'a, Message> {
+    pub(in crate::ui::screens) fn render_view<'a>(
+        &'a self,
+        context: Context<'a>,
+    ) -> Element<'a, Message> {
         let nearby_contacts = context
             .contacts()
             .iter()

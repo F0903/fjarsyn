@@ -10,6 +10,7 @@ mod error;
 mod media;
 mod model;
 mod negotiation;
+mod network_scope;
 mod protocol;
 mod restart;
 mod rtc;
@@ -20,9 +21,10 @@ pub(crate) use media::{EncodedVideoSample, EncodedVideoSink, RemoteVideoRead, Re
 pub(in crate::peer_session) use model::TransportGeneration;
 pub use model::{
     CloseReason, Event, LocalShareState, MessageId, Phase, RemoteShareState, SessionId,
-    SessionSnapshot, ShareEpoch, ShareId, Snapshot,
+    SessionState, Sessions, ShareEpoch, ShareId,
 };
-pub(crate) use service::TrustBarrierOwnerId;
-pub use service::{
-    Config, EndpointResolver, Limits, PeerSessionService, ServiceHandle, TrustedPeerResolver,
+pub(crate) use network_scope::NetworkScope;
+pub use service::ServiceHandle;
+pub(crate) use service::{
+    Config, EndpointResolver, Limits, PeerSessionService, TrustBarrierOwnerId, TrustedPeerResolver,
 };

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::peer_session::Error;
 
-/// Monotonic media generation for one peer's screen shares within a session.
+/// Monotonic epoch for one peer's screen shares within a session.
 ///
 /// `ShareId` is the application identity presented to callers. `ShareEpoch` is
 /// the compact, ordered media-plane boundary carried on RTP packets so a

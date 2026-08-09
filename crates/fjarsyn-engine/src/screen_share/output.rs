@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::{broadcast, watch};
 
-use super::{CodecDirection, Event, LocalState, RemoteState, ShareBinding, Snapshot};
+use super::{CodecDirection, Event, LocalState, RemoteState, ShareBinding, Shares};
 use crate::{media::frame::Frame, peer_session::SessionId};
 
 #[derive(Debug, Clone)]
@@ -17,24 +17,24 @@ pub(super) enum Update {
 
 #[derive(Clone)]
 pub(super) struct Output {
-    snapshot_tx: watch::Sender<Snapshot>,
+    snapshot_tx: watch::Sender<Shares>,
     event_tx: broadcast::Sender<Event>,
-    session_snapshots: watch::Receiver<crate::peer_session::Snapshot>,
+    sessions: watch::Receiver<crate::peer_session::Sessions>,
 }
 
 impl Output {
     pub(super) fn new(
-        snapshot_tx: watch::Sender<Snapshot>,
+        snapshot_tx: watch::Sender<Shares>,
         event_tx: broadcast::Sender<Event>,
-        session_snapshots: watch::Receiver<crate::peer_session::Snapshot>,
+        sessions: watch::Receiver<crate::peer_session::Sessions>,
     ) -> Self {
-        Self { snapshot_tx, event_tx, session_snapshots }
+        Self { snapshot_tx, event_tx, sessions }
     }
 
     pub(super) fn publish(&self, update: Update) {
         if let Some(session_id) = update_session(&update)
             && !self
-                .session_snapshots
+                .sessions
                 .borrow()
                 .session(session_id)
                 .is_some_and(|session| super::retains_media_session(session.phase))
@@ -43,7 +43,7 @@ impl Output {
         }
         let event = transient_event(&update);
         if matches!(&update, Update::LocalFrame { .. } | Update::RemoteFrame { .. }) {
-            let sessions = self.session_snapshots.borrow().clone();
+            let sessions = self.sessions.borrow().clone();
             if !frame_matches(&update, &sessions) {
                 return;
             }
@@ -59,7 +59,7 @@ impl Output {
         }
     }
 
-    pub(super) fn reconcile_shares(&self, sessions: &crate::peer_session::Snapshot) {
+    pub(super) fn reconcile_shares(&self, sessions: &crate::peer_session::Sessions) {
         self.snapshot_tx.send_if_modified(|snapshot| snapshot.reconcile_shares(sessions));
     }
 }
@@ -74,10 +74,10 @@ fn update_session(update: &Update) -> Option<SessionId> {
     }
 }
 
-fn frame_matches(update: &Update, snapshot: &crate::peer_session::Snapshot) -> bool {
+fn frame_matches(update: &Update, sessions: &crate::peer_session::Sessions) -> bool {
     match update {
         Update::LocalFrame { session_id, binding, .. } => {
-            snapshot.session(*session_id).is_some_and(|session| {
+            sessions.session(*session_id).is_some_and(|session| {
                 super::retains_media_session(session.phase)
                     && match session.local_share {
                         crate::peer_session::LocalShareState::Active { share_id, epoch } => {
@@ -88,7 +88,7 @@ fn frame_matches(update: &Update, snapshot: &crate::peer_session::Snapshot) -> b
             })
         }
         Update::RemoteFrame { session_id, binding, .. } => {
-            snapshot.session(*session_id).is_some_and(|session| {
+            sessions.session(*session_id).is_some_and(|session| {
                 super::retains_media_session(session.phase)
                     && match session.remote_share {
                         crate::peer_session::RemoteShareState::Active { share_id, epoch } => {
@@ -123,7 +123,7 @@ mod tests {
 
     use tokio::sync::{broadcast, watch};
 
-    use super::{Output, ShareBinding, Snapshot, Update};
+    use super::{Output, ShareBinding, Shares, Update};
     use crate::{
         identity::PeerId,
         media::{
@@ -133,7 +133,7 @@ mod tests {
         peer_session::{self, LocalShareState, RemoteShareState, SessionId, ShareEpoch, ShareId},
     };
 
-    fn peer_snapshot(session_id: SessionId, binding: ShareBinding) -> peer_session::Snapshot {
+    fn peer_snapshot(session_id: SessionId, binding: ShareBinding) -> peer_session::Sessions {
         peer_snapshot_with_phase(session_id, binding, peer_session::Phase::Connected)
     }
 
@@ -141,9 +141,9 @@ mod tests {
         session_id: SessionId,
         binding: ShareBinding,
         phase: peer_session::Phase,
-    ) -> peer_session::Snapshot {
-        peer_session::Snapshot {
-            sessions: Arc::new(vec![peer_session::SessionSnapshot {
+    ) -> peer_session::Sessions {
+        peer_session::Sessions {
+            sessions: Arc::new(vec![peer_session::SessionState {
                 session_id,
                 peer_id: PeerId::new("peer-a").unwrap(),
                 phase,
@@ -175,7 +175,7 @@ mod tests {
             ShareEpoch::try_from(ShareEpoch::FIRST.value() + 1).unwrap(),
         );
         let (_session_tx, session_rx) = watch::channel(peer_snapshot(session_id, binding_b));
-        let (snapshot_tx, snapshot_rx) = watch::channel(Snapshot::default());
+        let (snapshot_tx, snapshot_rx) = watch::channel(Shares::default());
         let (event_tx, _) = broadcast::channel(1);
         let output = Output::new(snapshot_tx, event_tx, session_rx);
 
@@ -195,7 +195,7 @@ mod tests {
             binding,
             peer_session::Phase::Disconnecting,
         ));
-        let (snapshot_tx, snapshot_rx) = watch::channel(Snapshot::default());
+        let (snapshot_tx, snapshot_rx) = watch::channel(Shares::default());
         let (event_tx, _) = broadcast::channel(1);
         let output = Output::new(snapshot_tx, event_tx, session_rx);
 

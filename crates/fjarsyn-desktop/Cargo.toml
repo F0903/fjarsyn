@@ -12,12 +12,16 @@ path = "src/main.rs"
 winres = "0.1"
 
 [dependencies]
+directories = "6.0.0"
 fjarsyn-engine = { path = "../fjarsyn-engine" }
 futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
 iced = { version = "0.14.0", default-features = false, features = [
     "advanced",
     "crisp",
@@ -29,7 +33,7 @@ iced_core = { version = "0.14.0" }
 iced_wgpu = { version = "0.14.0", default-features = false }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
-windows = { workspace = true }
+windows = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 iced_fonts = { version = "0.3", features = ["lucide"] }
 
 [dev-dependencies]

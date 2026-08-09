@@ -1,22 +1,17 @@
-use fjarsyn_engine::config::{
-    Config, clamp_max_depacket_latency, parse_max_depacket_latency_input,
-    parse_target_bitrate_input,
-};
-
 use super::{Screen, tabs};
-use crate::ui::{message::screen::settings::Message, presentation::Context};
+use crate::{settings::Settings, ui::message::screen::settings::Message};
 
 #[derive(Debug, Clone)]
 pub(super) enum Effect {
-    NotifyError(String),
-    SaveConfig(Config),
+    SaveSettings(Settings),
+    SaveAndRetryStartup(Settings),
 }
 
 // The settings workflow keeps UI field mutations local and emits only the work
 // that needs runtime access, such as persistence or capture reconfiguration.
 pub(super) fn execute_settings_message(
     screen: &mut Screen,
-    context: Context<'_>,
+    current_settings: &Settings,
     message: Message,
 ) -> Vec<Effect> {
     match message {
@@ -25,69 +20,94 @@ pub(super) fn execute_settings_message(
             Vec::new()
         }
         Message::TranscodingTypeChanged(value) => {
-            screen.working_config.video.transcoding_type = value;
+            screen.draft.video.transcoding_type = value;
             Vec::new()
         }
         Message::TargetResolutionChanged(value) => {
-            screen.working_config.video.target_resolution = value;
+            screen.draft.video.target_resolution = value;
             Vec::new()
         }
         Message::TargetFramerateChanged(value) => {
-            screen.working_config.video.target_framerate = value;
+            screen.draft.video.target_framerate = value;
             Vec::new()
         }
-        Message::TargetBitrateChanged(value) => {
-            screen.working_config.video.target_bitrate = value;
+        Message::TargetBitrateKbpsChanged(value) => {
+            screen.draft.set_target_bitrate_kbps(value);
             Vec::new()
         }
-        Message::TargetBitrateInputChanged(value) => {
-            parse_bitrate(screen, value).into_iter().collect()
+        Message::TargetBitrateKbpsInputChanged(value) => {
+            screen.draft.set_target_bitrate_input(value);
+            Vec::new()
         }
         Message::RecordCursorChanged(value) => {
-            screen.working_config.capture.record_cursor = value;
+            screen.draft.capture.record_cursor = value;
             Vec::new()
         }
         Message::RecordingBorderIndicatorChanged(value) => {
-            screen.working_config.capture.recording_border_indicator = value;
+            screen.draft.capture.recording_border_indicator = value;
             Vec::new()
         }
         Message::EnableUiPreviewChanged(value) => {
-            screen.working_config.capture.enable_ui_preview = value;
+            screen.draft.capture.enable_ui_preview = value;
             Vec::new()
         }
-        Message::MaxDepacketLatencyChanged(value) => {
-            screen.working_config.network.max_depacket_latency = clamp_max_depacket_latency(value);
+        Message::MaxDepacketLatencyMsChanged(value) => {
+            screen.draft.set_max_depacket_latency_ms(value);
             Vec::new()
         }
-        Message::MaxDepacketLatencyInputChanged(value) => {
-            parse_max_depacket_latency(screen, value).into_iter().collect()
+        Message::MaxDepacketLatencyMsInputChanged(value) => {
+            screen.draft.set_max_depacket_latency_input(value);
+            Vec::new()
         }
-        Message::SaveSettings => {
-            vec![Effect::SaveConfig(screen.working_config.clone())]
-        }
+        Message::SaveSettings => screen
+            .draft
+            .validate()
+            .map(|settings| vec![Effect::SaveSettings(settings)])
+            .unwrap_or_default(),
+        Message::SaveAndRetryStartup => screen
+            .draft
+            .validate()
+            .map(|settings| vec![Effect::SaveAndRetryStartup(settings)])
+            .unwrap_or_default(),
         Message::DiscardSettings => {
-            screen.working_config = context.config().clone();
+            screen.draft = super::SettingsDraft::new(current_settings);
             Vec::new()
         }
     }
 }
 
-fn parse_bitrate(screen: &mut Screen, value: String) -> Option<Effect> {
-    match parse_target_bitrate_input(&value) {
-        Ok(target_bitrate) => {
-            screen.working_config.video.target_bitrate = target_bitrate;
-            None
-        }
-        Err(message) => Some(Effect::NotifyError(message)),
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn parse_max_depacket_latency(screen: &mut Screen, value: String) -> Option<Effect> {
-    match parse_max_depacket_latency_input(&value) {
-        Ok(latency) => {
-            screen.working_config.network.max_depacket_latency = latency;
-            None
-        }
-        Err(message) => Some(Effect::NotifyError(message)),
+    #[test]
+    fn valid_recovery_submission_emits_save_and_retry() {
+        let current = Settings::default();
+        let mut screen = Screen::new(&current);
+        screen.draft.capture.record_cursor = !screen.draft.capture.record_cursor;
+
+        let effects = execute_settings_message(&mut screen, &current, Message::SaveAndRetryStartup);
+
+        assert!(matches!(
+            effects.as_slice(),
+            [Effect::SaveAndRetryStartup(settings)]
+                if settings.engine.capture.record_cursor != current.engine.capture.record_cursor
+        ));
+    }
+
+    #[test]
+    fn invalid_recovery_submission_stays_in_the_draft() {
+        let current = Settings::default();
+        let mut screen = Screen::new(&current);
+        execute_settings_message(
+            &mut screen,
+            &current,
+            Message::TargetBitrateKbpsInputChanged(String::new()),
+        );
+
+        let effects = execute_settings_message(&mut screen, &current, Message::SaveAndRetryStartup);
+
+        assert!(effects.is_empty());
+        assert!(screen.draft.video.target_bitrate_kbps.error().is_some());
     }
 }

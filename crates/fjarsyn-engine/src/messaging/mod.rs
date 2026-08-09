@@ -5,11 +5,11 @@
 
 mod actor;
 mod conversation;
+mod conversations;
 mod error;
 mod event;
 mod messaging_service;
 mod service_handle;
-mod snapshot;
 mod sqlite_store;
 mod store;
 mod transport;
@@ -25,11 +25,11 @@ pub use conversation::{
     ConversationMap, ConversationMessage, ConversationSummary, MessageDirection,
     MessageRecordError, MessageStatus,
 };
+pub use conversations::Conversations;
 pub use error::Error;
 pub use event::Event;
 pub(crate) use messaging_service::{Config, Limits, MessagingService};
 pub use service_handle::ServiceHandle;
-pub use snapshot::Snapshot;
 pub(crate) use sqlite_store::SqliteStore;
 pub use store::StoreError;
 pub(crate) use store::{MessageRecord, Store};

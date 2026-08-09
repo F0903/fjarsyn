@@ -21,7 +21,7 @@ use super::*;
 use crate::{
     identity::{LocalPeerIdentity, PeerId, TrustedPeerIdentity},
     peer_session::{
-        Error, SessionId, TrustedPeerResolver,
+        Error, NetworkScope, SessionId, TrustedPeerResolver,
         protocol::{NegotiationSignal, SignedSessionEnvelope},
     },
 };
@@ -99,6 +99,7 @@ async fn listener_rate_limits_malformed_and_untrusted_attempts_before_trust_work
     let (incoming_tx, mut incoming_rx) = mpsc::channel(1);
     let mut listener = Listener::bind(
         0,
+        NetworkScope::LoopbackOnly,
         local_peer.clone(),
         local_identity,
         trusted.clone(),
@@ -155,6 +156,7 @@ async fn listener_rejects_plaintext_websocket_before_trust_resolution() {
     let (incoming_tx, mut incoming_rx) = mpsc::channel(1);
     let mut listener = Listener::bind(
         0,
+        NetworkScope::LoopbackOnly,
         local_peer,
         LocalPeerIdentity::generate(),
         trusted.clone(),
@@ -198,10 +200,17 @@ async fn signed_request_replay_is_rejected_across_websocket_connections() {
         remote_identity.public_key_base64(),
     )));
     let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
-    let mut listener =
-        Listener::bind(0, local_peer.clone(), local_identity, trusted, test_limits(), incoming_tx)
-            .await
-            .unwrap();
+    let mut listener = Listener::bind(
+        0,
+        NetworkScope::LoopbackOnly,
+        local_peer.clone(),
+        local_identity,
+        trusted,
+        test_limits(),
+        incoming_tx,
+    )
+    .await
+    .unwrap();
     let session_id = SessionId::new();
     let envelope = SignedSessionEnvelope::sign(
         &remote_identity,
@@ -291,6 +300,7 @@ async fn one_listener_authenticates_ipv4_and_ipv6_connections() {
     let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
     let mut listener = Listener::bind(
         0,
+        NetworkScope::LoopbackOnly,
         listener_peer.clone(),
         listener_identity,
         trusted_client,
@@ -308,6 +318,7 @@ async fn one_listener_authenticates_ipv4_and_ipv6_connections() {
         let session_id = SessionId::new();
         let connection = Connection::connect_from_hints(
             &[endpoint],
+            NetworkScope::LoopbackOnly,
             SessionConnectionContext {
                 session_id,
                 local_peer_id: client_peer.clone(),
@@ -346,6 +357,7 @@ async fn listener_shutdown_cancels_incomplete_handshakes() {
     let (incoming_tx, _incoming_rx) = mpsc::channel(1);
     let mut listener = Listener::bind(
         0,
+        NetworkScope::LoopbackOnly,
         PeerId::new("local").unwrap(),
         identity,
         trusted,

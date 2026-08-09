@@ -3,7 +3,7 @@ use std::{fmt, net::SocketAddr, sync::Arc};
 use async_trait::async_trait;
 use tokio::sync::watch;
 
-use super::{NearbyPeer, Snapshot};
+use super::{NearbyPeer, NearbyPeers};
 use crate::{identity::PeerId, peer_session};
 
 /// Cloneable, read-only access to live presence snapshots.
@@ -12,19 +12,19 @@ use crate::{identity::PeerId, peer_session};
 /// provides unauthenticated reachability hints.
 #[derive(Clone)]
 pub struct ServiceHandle {
-    snapshots: watch::Receiver<Snapshot>,
+    snapshots: watch::Receiver<NearbyPeers>,
 }
 
 impl ServiceHandle {
-    pub(super) fn new(snapshots: watch::Receiver<Snapshot>) -> Self {
+    pub(super) fn new(snapshots: watch::Receiver<NearbyPeers>) -> Self {
         Self { snapshots }
     }
 
-    pub fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> NearbyPeers {
         self.snapshots.borrow().clone()
     }
 
-    pub fn subscribe(&self) -> watch::Receiver<Snapshot> {
+    pub fn subscribe(&self) -> watch::Receiver<NearbyPeers> {
         self.snapshots.clone()
     }
 

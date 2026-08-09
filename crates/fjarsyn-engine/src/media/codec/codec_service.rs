@@ -1,4 +1,4 @@
-//! Application-owned codec service lifecycle.
+//! Engine-owned hosted codec-service lifecycle.
 
 use std::{sync::Arc, time::Duration};
 
@@ -13,9 +13,9 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct Config {
-    pub call_timeout: Duration,
-    pub stop_timeout: Duration,
+pub(crate) struct Config {
+    pub(crate) call_timeout: Duration,
+    pub(crate) stop_timeout: Duration,
 }
 
 impl Default for Config {
@@ -26,16 +26,16 @@ impl Default for Config {
 
 #[derive(Debug, thiserror::Error)]
 #[error("{remaining_workers} codec worker(s) did not stop before the shutdown deadline")]
-pub struct ShutdownError {
-    pub remaining_workers: usize,
+pub(crate) struct ShutdownError {
+    pub(crate) remaining_workers: usize,
 }
 
-pub struct CodecService {
+pub(crate) struct CodecService {
     state: Arc<State>,
 }
 
 impl CodecService {
-    pub fn start(config: Config) -> Self {
+    pub(crate) fn start(config: Config) -> Self {
         Self::start_with_backend(config, Arc::new(FfmpegBackendFactory))
     }
 

@@ -38,53 +38,58 @@ definition are documented in [`../security/pairing.md`](../security/pairing.md).
 ## Runtime ownership
 
 ```text
-UI
-`-- ui::runtime::Application
-    |-- fjarsyn_engine::Engine
-    |   |-- active configuration and local public identity
-    |   |-- SQLite pool (shared by private capability-owned stores)
-    |   |-- Services (passive typed capability facade)
-    |   |   |-- contacts::ContactsService
-    |   |   |   `-- contacts::Directory -> contacts::SqliteStore
-    |   |   |-- peer_session::ServiceHandle
-    |   |   |-- presence::ServiceHandle
-    |   |   |-- messaging::ServiceHandle
-    |   |   |-- media::codec::ServiceHandle
-    |   |   `-- screen_share::ServiceHandle
-    |   `-- service_host::ServiceHost
-    |       |-- PeerSessionService
-    |       |   |-- identity-pinned TLS 1.3 WSS signaling listener
-    |       |   |-- private session registry
-    |       |   `-- private session actor (one per peer)
-    |       |       |-- RTCPeerConnection
-    |       |       |-- reliable ordered control data channel
-    |       |       |-- reliable ordered messaging data channel
-    |       |       |-- H.264 media sender and receiver
-    |       |       `-- owned async/network tasks
-    |       |-- PresenceService
-    |       |-- MessagingService -> messaging::SqliteStore
-    |       |-- ScreenShareService
-    |       |   |-- local capture/encoding controller
-    |       |   |-- remote decoding controller
-    |       |   `-- session/share reconciler
-    |       `-- CodecService
-    |-- platform capture picker
-    `-- read-only presence, session, messaging and screen-share projections
+Fjarsyn shell
+|-- desktop settings (power preference + secret-free engine settings)
+|-- ui::runtime::EngineRuntime
+|   |-- EngineAdapter -> engine-output coordinator
+|   |-- EngineReceivers (canonical retained receiver bundle)
+|   `-- fjarsyn_engine::Engine
+|       |-- active runtime settings and local public identity
+|       |-- private DPAPI-protected local identity store
+|       |-- SQLite pool (shared by private capability-owned stores)
+|       |-- Services (passive typed capability facade)
+|       |   |-- contacts::ContactsService
+|       |   |   `-- contacts::Directory -> contacts::SqliteStore
+|       |   |-- peer_session::ServiceHandle
+|       |   |-- presence::ServiceHandle
+|       |   |-- messaging::ServiceHandle
+|       |   |-- media::codec::ServiceHandle
+|       |   `-- screen_share::ServiceHandle
+|       `-- service_host::ServiceHost
+|           |-- PeerSessionService (private owner)
+|           |   |-- identity-pinned TLS 1.3 WSS signaling listener
+|           |   |-- private session registry
+|           |   `-- private session actor (one per peer)
+|           |       |-- RTCPeerConnection
+|           |       |-- reliable ordered control data channel
+|           |       |-- reliable ordered messaging data channel
+|           |       |-- H.264 media sender and receiver
+|           |       `-- owned async/network tasks
+|           |-- PresenceService (private owner)
+|           |-- MessagingService (private owner) -> messaging::SqliteStore
+|           |-- ScreenShareService (private owner)
+|           |   |-- local capture/encoding controller
+|           |   |-- remote decoding controller
+|           |   `-- session/share reconciler
+|           `-- CodecService (private owner)
+|-- platform capture picker
+`-- read-only presence, session, messaging and screen-share projections
 ```
 
 `fjarsyn_engine::Engine` is the canonical headless aggregate and application
-composition root. Engine startup opens the database, then its private
-`init_services` operation loads and validates trusted contacts, resolves the
-session/presence startup cycle through a private root-level
-`DeferredResolver`, persists the active local identity, constructs the passive
-typed `Services` facade, and gives independently executing implementations to
-a generic `service_host::ServiceHost`. Capability-owned stores own SQL and
+composition root. Engine startup loads the private local identity, opens the
+database, and then uses its private `init_services` operation to load and
+validate trusted contacts, resolve the session/presence startup cycle through
+a private root-level `DeferredResolver`, construct the passive typed `Services`
+facade, and give independently executing implementations to a generic
+`service_host::ServiceHost`. Capability-owned stores own SQL and
 implement private persistence ports; neither their construction nor the
 database pool crosses into the desktop crate.
 
-The host-owned `PeerSessionService` retains the session runtime. Its private
-actor is the only writer of the session registry. A per-peer session actor is
-the only owner of its peer connection, channels, state and child tasks.
+The host-owned, crate-private `PeerSessionService` retains the session runtime.
+Its private actor is the only writer of the session registry. A per-peer
+session actor is the only owner of its peer connection, channels, state and
+child tasks.
 Application code uses `peer_session::ServiceHandle` clones containing command
 senders and read-only state receivers; they never expose `RTCPeerConnection`,
 mutable data-channel slots or shared task collections.
@@ -103,7 +108,7 @@ follow-up hardening for forcible termination and native-crash containment.
 
 ### `fjarsyn_engine::Engine`
 
-- Retain active configuration, local identity, the database, the typed
+- Retain active secret-free runtime settings, local identity, the database, the typed
   `Services` facade, and the generic service host as the canonical headless
   application boundary.
 - Compose concrete capabilities in explicit dependency order through the
@@ -143,13 +148,14 @@ not acquire a host merely to fit the abstraction. The host contains no
 knowledge of Fjarsyn's concrete capability graph and provides no dynamic
 lookup, command bus, or service locator.
 
-### `peer_session::PeerSessionService`
+### Private peer-session hosted implementation
 
-The service host retains `PeerSessionService`; application commands cross
-`peer_session::ServiceHandle`. Configuration and limits, immutable session
-state and identifiers, semantic events and errors, endpoint/trust resolver
-ports, and bounded encoded/remote-video capabilities remain cohesive within
-the same capability.
+The service host retains the crate-private `PeerSessionService`; application
+commands cross the public `peer_session::ServiceHandle`. Construction
+configuration, limits, and endpoint/trust resolver ports remain private to
+Engine composition. Immutable session state and identifiers, semantic events
+and errors, and bounded handle capabilities remain public where callers need
+them.
 
 - Initialize the local identity and identity-pinned WSS signaling listener.
 - Accept application commands to connect, accept, reject and disconnect.
@@ -160,7 +166,7 @@ the same capability.
 - Verify that every signal matches its registered peer and session.
 - Route restart signaling only to the exact authenticated active session, without
   creating another session or incoming-request prompt.
-- Publish immutable `peer_session::Snapshot` values and semantic
+- Publish immutable `peer_session::Sessions` values and semantic
   `peer_session::Event` values.
 - Route connected-session commands to the correct per-peer session actor.
 - Shut down and join every session and signaling task within the service deadline.
@@ -180,7 +186,7 @@ It does not encode frames, persist messages, render UI or expose transport objec
   open or recover.
 - Cancel and join its RTC/network child tasks on disconnect or failure.
 
-### `presence::PresenceService`
+### Private presence hosted implementation
 
 - Advertise the local peer and signaling port through mDNS.
 - Parse each claimed peer ID once at the mDNS ingress into a validated
@@ -212,7 +218,7 @@ and they are not a complete defense against denial of service by a hostile LAN.
   definitive outcome.
 - Prevent screens and other external callers from bypassing that barrier.
 
-### `messaging::MessagingService`
+### Private messaging hosted implementation
 
 - Persist and project local conversation history.
 - Send chat payloads only through a connected peer session.
@@ -220,13 +226,14 @@ and they are not a complete defense against denial of service by a hostile LAN.
 - Bind receipts to the authenticated peer and message ID.
 - Never dial endpoints, open signaling connections or retry across disconnected sessions.
 
-### `screen_share::ScreenShareService`
+### Private screen-share hosted implementation
 
-The engine service host retains `ScreenShareService`; application commands and
-read-only output cross `screen_share::ServiceHandle`. The service owns screen
-sharing as one session capability, including local capture/encoding, remote
-decoding, share reconciliation, and the transaction that coordinates a media
-pipeline with authenticated peer-session share state.
+The engine service host retains the crate-private `ScreenShareService`;
+application commands and read-only output cross the public
+`screen_share::ServiceHandle`. The service owns screen sharing as one session
+capability, including local capture/encoding, remote decoding, share
+reconciliation, and the transaction that coordinates a media pipeline with
+authenticated peer-session share state.
 
 The desktop owns the platform picker because choosing a window or display is an
 interactive UI operation. Before opening it, the desktop reserves the engine's
@@ -241,13 +248,48 @@ rollback; the desktop never obtains an `EncodedVideoSink` or assembles that
 transaction itself. Only a local user command may begin capture, while
 authenticated remote control events may only drive the remote-share side.
 
-The desktop subscribes to read-only session and screen-share projections and
-presents their states and latest frames. Screen-share snapshots cross the UI
-boundary through an overwriteable latest-value slot with only a lightweight
-notification in the general event queue; full frame snapshots must never build
-up in that FIFO. Navigating away must not create, destroy, or duplicate engine
-media workers. Presentation code does not own capture providers, codecs,
-WebRTC capabilities, or service task handles.
+The desktop subscribes to read-only presence, session, messaging, and
+screen-share projections and presents their states and latest frames. The
+desktop `EngineAdapter` owns a coordinator that seeds a retained aggregate
+before it starts polling the same watch receivers. The retained receiver
+travels with the runtime owner and is read before its Iced subscriptions become
+visible, so startup hydration uses the newest available state. Each startup
+attempt and all of its engine-adapter output carry one process-local runtime
+identity. The shell accepts initialization only from its expected attempt and
+accepts adapter output only from the active runtime, so late completion,
+shutdown, or process replacement cannot resurrect or mutate an obsolete owner.
+
+Post-start durable state is retained as one watch-backed `EngineState`. It is
+the latest desktop-visible aggregate assembled from independent capability
+streams, not an exhaustive description of the engine or an atomic snapshot
+across those streams. Iced messages carry only an `EngineStateChanged` wake;
+the shell then reads the newest retained value, so full presence,
+conversation-history, session, or frame states cannot accumulate in an event
+FIFO. Intermediate values coalesce inside the watch channel, and duplicate
+wakes may only reapply the same current state. Only notifications the desktop
+presents cross the transient notice channel: incoming requests, connections,
+non-local closes, incoming-message peers, and screen-share failure reasons.
+Message bodies, receipts, duplicate durable-state events, and ignored codec
+events do not cross that adapter boundary. Terminal engine-adapter failures
+have their own capacity-one channel, so source closure or panic cannot sit
+behind state or notice backpressure before the Iced boundary. Once forwarded
+into Iced, a failure shares the normal UI event queue and moves the UI out of
+its interactive ready state into an inert restart-required state;
+service-mutating controls never remain active against snapshots that can no
+longer advance.
+
+An engine startup failure leaves no live `EngineRuntime`. The desktop admits
+only its Home failure overview and Settings recovery route; peer, contact,
+messaging, and screen-share actions remain inert. Recovery validation and the
+atomic settings write complete before a fresh runtime ID is allocated.
+A failed validation or write starts nothing, another engine-start failure
+retains the editor and newest error, and success returns to Home. This path
+assumes the desktop settings document already parsed and validated: malformed
+persisted settings fail before Iced starts and require external correction.
+
+Navigating away must not create, destroy, or duplicate engine media workers.
+Presentation code does not own capture providers, codecs, WebRTC capabilities,
+or service task handles.
 
 All FFmpeg construction and codec calls execute on dedicated, owned OS threads.
 An active call has a ten-second watchdog. A completed call may publish output
@@ -263,9 +305,10 @@ automatically retried. The UI retains a restart-required failure for that
 direction across reconciliation and navigation; only restarting Fjarsyn clears
 it.
 
-Application shutdown first cancels and joins the desktop's read-only projection
-subscriptions, without taking ownership of any underlying capability. It then
-consumes `Engine` through `Engine::shutdown`. Engine shutdown establishes one
+`EngineRuntime` shutdown first cooperatively stops and joins its
+`EngineAdapter`, without taking ownership of any underlying capability. The
+runtime retains its canonical `EngineReceivers` until that join completes,
+then consumes its `Engine` through `Engine::shutdown`. Engine shutdown establishes one
 absolute three-second engine deadline and synchronously pre-signals the codec
 service so codec initialization cannot leave a screen-share command waiting.
 It then stops the hosted `ScreenShareService` before `CodecService`, allowing
@@ -282,6 +325,20 @@ shuts down the single `ScreenShareService` owner. Responsive workers close
 their bounded inputs, finish cleanup, and are joined. Owners that reach their
 deadline detach or cancel unfinished work without awaiting a new cleanup tail;
 late output remains suppressed.
+
+GPU-backed preview frames cross the engine/desktop boundary as immutable,
+owned resources rather than independently paired textures and raw handles. A
+shared D3D11 fence orders production before D3D12/wgpu sampling, and the
+desktop uses stable resource identity for bounded import and per-view caches.
+Import failure follows an explicit CPU-upload or unavailable-placeholder path.
+The complete producer-independent contract is documented in
+[`gpu-frame-resources.md`](gpu-frame-resources.md).
+
+A process restart first completes that same owned shutdown and only then lets
+the shell launch a replacement. Closing the window while shutdown is still in
+progress changes the pending terminal action to exit, so it cannot launch a
+replacement process after the user has cancelled the restart.
+
 WGC's synchronous COM close runs on a detached cleanup thread so a stalled
 driver cannot block the async deadline. `Drop` is still only an immediate
 best-effort cancellation path.
@@ -528,7 +585,17 @@ controls. It projects `Reconnecting` explicitly while retaining the session's
 screen-share state. The composer and sharing controls are enabled only when
 their connected-session capabilities are ready.
 
-Screens hold only presentation state such as the selected peer, draft text, selected panel and preview visibility. They do not own services, peer connections, channels, capture providers, codecs or task handles. Backend events never hijack navigation.
+Screens hold only presentation state such as the selected peer, draft text,
+selected panel and preview visibility. They do not own services, peer
+connections, channels, capture providers, codecs or task handles. Backend
+events never hijack navigation.
+
+The desktop settings screen owns an editable draft and persists only desktop
+preferences plus secret-free engine runtime settings. The engine owns the
+local peer identifier and signing key as one private record; only the peer
+identifier and public key are projected outward. See
+[`../security/local-data.md`](../security/local-data.md) for the local storage
+boundary.
 
 ## Dependency rules
 
@@ -612,8 +679,14 @@ compatibility into the new architecture.
 - Screen-share service verification must cover start/stop transaction rollback,
   exact session/share binding, read-only projection output, and shutdown before
   the codec phase after codec cancellation has been prepared.
+- Windows GPU verification must apply the same immutable resource, ownership,
+  ready-fence, import, and fallback invariants to every capture or decoder
+  producer, independent of its native source.
 - Repeated connect/disconnect and responsive-worker shutdown tests leave no
   owned tasks or routes; watchdog-timeout tests instead prove bounded
   detachment and quarantine without claiming native-thread reclamation.
 - Two-peer loopback tests cover connect, accept/reject, messages, receipts and disconnect.
-- UI projection tests cover every presence/session combination without navigation side effects.
+- Desktop engine-adapter unit tests cover retained-watch coalescing, harmless
+  duplicate wakes, stale runtime identities, source closure and panic, and
+  clean, failed, or timed-out `EngineAdapter` shutdown. Full shell integration
+  must additionally exercise startup recovery and stale-owner shutdown.

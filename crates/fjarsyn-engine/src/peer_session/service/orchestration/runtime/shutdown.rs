@@ -40,10 +40,10 @@ impl Runtime {
     }
 
     async fn shutdown_sessions(&mut self, deadline: TokioInstant) -> Result<(), Error> {
-        let active_generations = self
+        let active_instance_ids = self
             .sessions
             .iter()
-            .map(|(session_id, entry)| (*session_id, entry.handle.generation))
+            .map(|(session_id, entry)| (*session_id, entry.handle.instance_id))
             .collect::<HashMap<_, _>>();
         let sessions = std::mem::take(&mut self.sessions);
         self.peers.clear();
@@ -60,13 +60,13 @@ impl Runtime {
                 timed_out = true;
             }
         }
-        while let Ok(Update { generation, event }) = self.update_rx.try_recv() {
-            if active_generations.get(&event.session_id()) == Some(&generation) {
+        while let Ok(Update { instance_id, event }) = self.update_rx.try_recv() {
+            if active_instance_ids.get(&event.session_id()) == Some(&instance_id) {
                 self.emit(event).await;
             }
         }
         while let Ok(terminal) = self.terminal_rx.try_recv() {
-            if active_generations.get(&terminal.session_id) == Some(&terminal.generation) {
+            if active_instance_ids.get(&terminal.session_id) == Some(&terminal.instance_id) {
                 self.emit(Event::Closed {
                     session_id: terminal.session_id,
                     peer_id: terminal.peer_id,

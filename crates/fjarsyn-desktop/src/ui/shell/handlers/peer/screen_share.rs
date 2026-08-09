@@ -136,5 +136,5 @@ fn selection_failed(
 }
 
 fn screen_share_handle(app: &Fjarsyn) -> Option<screen_share::ServiceHandle> {
-    app.runtime.application.as_ref().map(|runtime| runtime.screen_share().clone())
+    app.runtime.engine.as_ref().map(|runtime| runtime.screen_share().clone())
 }

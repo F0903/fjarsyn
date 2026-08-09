@@ -225,10 +225,9 @@ impl Controller {
         let codec_device = capture.capture().read().await.codec_device();
         self.ensure_start_current(selection)?;
         let encoder_config = EncoderWorkerConfig {
-            bitrate: config.video.target_bitrate,
+            bitrate: config.video.target_bitrate_bps,
             target_framerate_hz: config.video.target_framerate.to_hz(),
             target_resolution: config.video.target_resolution,
-            input_format: PixelFormat::DEFAULT_CAPTURE,
             device: codec_device,
             transcoding_type: config.video.transcoding_type,
         };
@@ -423,7 +422,7 @@ impl Controller {
     pub(in crate::screen_share) async fn request_stop(
         &mut self,
         session_id: SessionId,
-        snapshot: &crate::peer_session::Snapshot,
+        snapshot: &crate::peer_session::Sessions,
     ) -> Option<LocalShareBinding> {
         if self
             .reservation
@@ -478,7 +477,7 @@ impl Controller {
 
     pub(in crate::screen_share) async fn reconciliation(
         &mut self,
-        snapshot: &crate::peer_session::Snapshot,
+        snapshot: &crate::peer_session::Sessions,
     ) -> Plan {
         let terminal_reservation = self.reservation.as_ref().and_then(|reservation| {
             if reservation.selection.is_cancelled()

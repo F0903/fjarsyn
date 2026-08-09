@@ -1,20 +1,20 @@
-use crate::config::{CaptureConfig, VideoConfig};
+use crate::settings::{Capture, Settings, Video};
 
-/// Configuration owned by the screen-sharing capability.
+/// Live screen-sharing configuration accepted by [`super::ServiceHandle`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Config {
-    pub capture: CaptureConfig,
-    pub video: VideoConfig,
+    pub capture: Capture,
+    pub video: Video,
 }
 
-impl From<&crate::config::Config> for Config {
-    fn from(config: &crate::config::Config) -> Self {
-        Self { capture: config.capture.clone(), video: config.video.clone() }
+impl From<&Settings> for Config {
+    fn from(settings: &Settings) -> Self {
+        Self { capture: settings.capture.clone(), video: settings.video.clone() }
     }
 }
 
-impl From<crate::config::Config> for Config {
-    fn from(config: crate::config::Config) -> Self {
-        Self { capture: config.capture, video: config.video }
+impl From<Settings> for Config {
+    fn from(settings: Settings) -> Self {
+        Self { capture: settings.capture, video: settings.video }
     }
 }

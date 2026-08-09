@@ -13,9 +13,7 @@ use tokio::sync::{Notify, mpsc, oneshot};
 use super::{actor::Command, transport::SessionMessaging, *};
 use crate::{
     identity::PeerId,
-    peer_session::{
-        self, LocalShareState, MessageId, RemoteShareState, SessionId, SessionSnapshot,
-    },
+    peer_session::{self, LocalShareState, MessageId, RemoteShareState, SessionId, SessionState},
     service_host::{HostedService, ShutdownContext},
 };
 
@@ -249,7 +247,7 @@ struct SentReceipt {
 }
 
 struct FakeSessions {
-    snapshot: peer_session::Snapshot,
+    snapshot: peer_session::Sessions,
     fail_send: AtomicBool,
     unknown_send: AtomicBool,
     sent: Mutex<Vec<SentMessage>>,
@@ -258,7 +256,7 @@ struct FakeSessions {
 
 #[async_trait]
 impl SessionMessaging for FakeSessions {
-    fn snapshot(&self) -> peer_session::Snapshot {
+    fn snapshot(&self) -> peer_session::Sessions {
         self.snapshot.clone()
     }
 
@@ -310,8 +308,8 @@ async fn harness_with_limits(connected: bool, limits: Limits) -> Harness {
     let store = Arc::new(FakeMessagesStore::default());
     let session_id = SessionId::new();
     let peer_id = PeerId::new("peer-a").unwrap();
-    let snapshot = peer_session::Snapshot {
-        sessions: Arc::new(vec![SessionSnapshot {
+    let snapshot = peer_session::Sessions {
+        sessions: Arc::new(vec![SessionState {
             session_id,
             peer_id: peer_id.clone(),
             phase: if connected {
@@ -580,7 +578,7 @@ async fn startup_marks_pending_rows_unknown_instead_of_retrying_them() {
     });
     let (receipt_tx, _) = mpsc::unbounded_channel();
     let sessions = Arc::new(FakeSessions {
-        snapshot: peer_session::Snapshot::default(),
+        snapshot: peer_session::Sessions::default(),
         fail_send: AtomicBool::new(false),
         unknown_send: AtomicBool::new(false),
         sent: Mutex::new(Vec::new()),
